@@ -1,0 +1,19 @@
+## Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+dist/
+build/
+venv/
+.venv/
+
+## IDE
+.vs/
+.vscode/
+.idea/
+*.swp
+*~
+*.user
+*.suo
+*.cache
