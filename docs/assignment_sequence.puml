@@ -1,0 +1,96 @@
+@startuml assignment_sequence
+!theme cerulean-outline
+
+title DiagFlow — Assignment Sequence
+skinparam backgroundColor #FEFEFE
+skinparam defaultFontName Inter
+skinparam shadowing false
+skinparam sequenceMessageAlign center
+
+actor "Secretariat\nOperator" as operator
+participant "Review\nDashboard" as ui #E8F5E9
+participant "FastAPI\nBackend" as api #E3F2FD
+participant "Rule\nEngine" as engine #BBDEFB
+participant "Comment\nParser (LLM)" as llm #FFF3E0
+database "Slis DB" as slisdb #FFE0B2
+database "Config\nTables" as configdb #B2EBF2
+
+== Fetch Pending Exams ==
+
+operator -> ui : Open dashboard
+ui -> api : GET /api/exams/pending
+api -> slisdb : Query unassigned exams
+slisdb --> api : List of pending exams
+api --> ui : Pending exams with details
+ui --> operator : Display exam list
+
+== Generate Suggestion ==
+
+operator -> ui : Click "Get Suggestion"\nfor exam #12345
+ui -> api : POST /api/assignments/suggest\n{ exam_id: "12345" }
+
+api -> slisdb : Fetch exam details\n(patient, doctor, lab, body_part, comments)
+slisdb --> api : Exam data
+
+api -> engine : run_pipeline(exam_data)
+
+group Hard Filters
+    engine -> llm : Parse comments:\n"Επείγον, ΟΧΙ ΝΑΤΣΙΚΑ"
+    llm --> engine : { exclude: ["Νάτσικα"],\nassign: null }
+
+    engine -> configdb : Get availability for today
+    configdb --> engine : Available diagnostician list
+
+    engine -> configdb : Get lab preferences
+    configdb --> engine : Lab-filtered list
+
+    engine -> engine : Apply modality filter (CT/MRI)
+end
+
+note over engine : 5 candidates remain\nafter hard filters
+
+group Weighted Scoring
+    engine -> configdb : Get capacity & today's counts
+    configdb --> engine : Quota data
+
+    engine -> configdb : Get skills for body_part
+    configdb --> engine : Skill matches
+
+    engine -> configdb : Get partnerships\nfor issuing doctor
+    configdb --> engine : Partnership data
+
+    engine -> slisdb : Get patient's past assignments
+    slisdb --> engine : History data
+
+    engine -> engine : Calculate composite scores\n+ subcategory penalties
+end
+
+engine -> engine : OR-Tools CP-SAT\noptimize assignment
+
+engine --> api : Suggestion:\n{ diagnostician: "Παπαδόπουλος",\nscore: 0.87,\nreasons: [...],\nalternatives: [...] }
+
+api -> configdb : Log suggestion\nto assignment_log
+api --> ui : Suggestion with\nscore breakdown
+
+ui --> operator : Show suggestion:\n"Παπαδόπουλος (87%)\n✓ Partnership match\n✓ Capacity: 8/15\n✓ Abdominal specialist"
+
+== Operator Decision ==
+
+alt Confirm suggestion
+    operator -> ui : Click "Confirm"
+    ui -> api : POST /api/assignments/confirm\n{ exam_id: "12345",\ndiagnostician_id: "papadopoulos" }
+    api -> slisdb : Write assignment to Slis
+    api -> configdb : Update log:\nwas_overridden = false
+    api --> ui : Assignment confirmed
+    ui --> operator : ✅ Assigned to Παπαδόπουλος
+
+else Override suggestion
+    operator -> ui : Click "Override"\nSelect "Κωνσταντίνου"
+    ui -> api : POST /api/assignments/override\n{ exam_id: "12345",\ndiagnostician_id: "konstantinou",\nreason: "Patient preference" }
+    api -> slisdb : Write override to Slis
+    api -> configdb : Update log:\nwas_overridden = true\noverride_reason = "Patient preference"
+    api --> ui : Override recorded
+    ui --> operator : ⚠️ Overridden → Κωνσταντίνου
+end
+
+@enduml

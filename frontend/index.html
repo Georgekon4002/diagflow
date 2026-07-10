@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="el">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="DiagFlow — Αυτόματη ανάθεση ακτινοδιαγνωστικών εξετάσεων CT/MRI">
+    <title>DiagFlow — Πίνακας Ελέγχου</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+    <!-- ─── Header ─── -->
+    <header class="app-header">
+        <div class="header-content">
+            <div class="header-left">
+                <div class="logo">
+                    <div class="logo-icon">
+                        <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
+                            <rect width="28" height="28" rx="8" fill="url(#logoGrad)"/>
+                            <path d="M8 14L12 18L20 10" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+                            <defs>
+                                <linearGradient id="logoGrad" x1="0" y1="0" x2="28" y2="28">
+                                    <stop stop-color="#6366F1"/>
+                                    <stop offset="1" stop-color="#8B5CF6"/>
+                                </linearGradient>
+                            </defs>
+                        </svg>
+                    </div>
+                    <h1>DiagFlow</h1>
+                </div>
+                <span class="header-subtitle">Πίνακας Ελέγχου Αναθέσεων</span>
+            </div>
+            <div class="header-right">
+                <div class="oncall-badge" id="oncall-badge">
+                    <span class="oncall-label">Εφημερία Παμ/στου:</span>
+                    <span class="oncall-name" id="oncall-name">—</span>
+                </div>
+                <div class="status-indicator" id="status-indicator">
+                    <div class="status-dot"></div>
+                    <span>Σύνδεση</span>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- ─── Main Content ─── -->
+    <main class="main-content">
+        <!-- Stats Bar -->
+        <div class="stats-bar">
+            <div class="stat-card">
+                <div class="stat-value" id="stat-pending">—</div>
+                <div class="stat-label">Εκκρεμείς</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value" id="stat-assigned">0</div>
+                <div class="stat-label">Ανατέθηκαν Σήμερα</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value" id="stat-overridden">0</div>
+                <div class="stat-label">Αλλαγές</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value" id="stat-accuracy">—</div>
+                <div class="stat-label">Ακρίβεια Μηχανής</div>
+            </div>
+        </div>
+
+        <!-- Exam List -->
+        <div class="exams-section">
+            <div class="section-header">
+                <h2>Εκκρεμείς Εξετάσεις</h2>
+                <button class="btn btn-secondary" id="btn-refresh" onclick="loadPendingExams()">
+                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                        <path d="M14 8A6 6 0 1 1 8 2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+                        <path d="M14 2v4h-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                    Ανανέωση
+                </button>
+            </div>
+
+            <div class="exams-table-container">
+                <table class="exams-table" id="exams-table">
+                    <thead>
+                        <tr>
+                            <th>Εξέταση</th>
+                            <th>Ασθενής</th>
+                            <th>Τύπος</th>
+                            <th>Περιοχή</th>
+                            <th>Εργαστήριο</th>
+                            <th>Παραπέμπων Ιατρός</th>
+                            <th>Σχόλια</th>
+                            <th>Πρόταση</th>
+                            <th>Ενέργειες</th>
+                        </tr>
+                    </thead>
+                    <tbody id="exams-tbody">
+                        <!-- Populated by JavaScript -->
+                    </tbody>
+                </table>
+                <div class="empty-state" id="empty-state" style="display: none;">
+                    <svg width="64" height="64" viewBox="0 0 64 64" fill="none">
+                        <circle cx="32" cy="32" r="30" stroke="var(--border-color)" stroke-width="2" stroke-dasharray="6 4"/>
+                        <path d="M22 32L28 38L42 24" stroke="var(--text-tertiary)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                    <p>Δεν υπάρχουν εκκρεμείς εξετάσεις</p>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- ─── Suggestion Modal ─── -->
+    <div class="modal-overlay" id="suggestion-modal" style="display: none;">
+        <div class="modal">
+            <div class="modal-header">
+                <h3 id="modal-title">Πρόταση Ανάθεσης</h3>
+                <button class="modal-close" onclick="closeModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <!-- Exam Summary -->
+                <div class="modal-exam-summary" id="modal-exam-summary"></div>
+
+                <!-- Suggested Diagnostician -->
+                <div class="suggestion-card" id="suggestion-card">
+                    <div class="suggestion-header">
+                        <div class="suggestion-name" id="suggestion-name">—</div>
+                        <div class="suggestion-score" id="suggestion-score">—</div>
+                    </div>
+                    <div class="suggestion-tag" id="suggestion-tag"></div>
+                </div>
+
+                <!-- Score Breakdown -->
+                <div class="score-breakdown" id="score-breakdown">
+                    <h4>Ανάλυση Βαθμολογίας</h4>
+                    <div class="breakdown-list" id="breakdown-list">
+                        <!-- Populated by JavaScript -->
+                    </div>
+                </div>
+
+                <!-- Alternatives -->
+                <div class="alternatives-section" id="alternatives-section">
+                    <h4>Εναλλακτικοί Ακτινοδιαγνώστες</h4>
+                    <div class="alternatives-list" id="alternatives-list">
+                        <!-- Populated by JavaScript -->
+                    </div>
+                </div>
+
+                <!-- Override Section -->
+                <div class="override-section" id="override-section">
+                    <h4>Αλλαγή Ανάθεσης</h4>
+                    <select class="override-select" id="override-select">
+                        <option value="">— Επιλέξτε εναλλακτικό —</option>
+                    </select>
+                    <input type="text" class="override-reason" id="override-reason" placeholder="Αιτιολογία αλλαγής (προαιρετικό)">
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeModal()">Ακύρωση</button>
+                <button class="btn btn-warning" id="btn-override" onclick="overrideAssignment()">
+                    Αλλαγή
+                </button>
+                <button class="btn btn-primary" id="btn-confirm" onclick="confirmAssignment()">
+                    ✓ Επιβεβαίωση
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ─── Toast Notification ─── -->
+    <div class="toast-container" id="toast-container"></div>
+
+    <script src="js/app.js"></script>
+</body>
+</html>

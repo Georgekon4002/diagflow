@@ -1,0 +1,79 @@
+@startuml architecture
+!theme cerulean-outline
+
+title DiagFlow — System Architecture
+skinparam backgroundColor #FEFEFE
+skinparam componentStyle rectangle
+skinparam defaultFontName Inter
+skinparam shadowing false
+
+' ─── External Systems ───
+package "External Systems" as ext #E8EAF6 {
+    database "Slis DB\n(MSSQL)" as slisdb {
+        collections "Exams / Requests"
+        collections "Patients"
+        collections "Doctors"
+        collections "Assignments"
+    }
+
+    component "LLM API\n(Comment Parser)" as llm #FFF3E0
+}
+
+' ─── DiagFlow Core ───
+package "DiagFlow Service" as core #E3F2FD {
+    component "FastAPI\nApplication" as api
+
+    package "Rule Engine" as engine #BBDEFB {
+        component "Hard Filters" as filters
+        component "Weighted Scoring" as scoring
+        component "OR-Tools\nCP-SAT Solver" as solver
+    }
+
+    package "Services" as services #B3E5FC {
+        component "Assignment\nService" as assign_svc
+        component "Diagnostician\nService" as diag_svc
+        component "Comment\nParser" as comment_svc
+        component "Παμακάριστος\nScheduler" as pam_svc
+    }
+
+    package "Data Layer" as data #B2EBF2 {
+        component "Slis Engine\n(read-only)" as slis_engine
+        component "Config Engine\n(read-write)" as config_engine
+    }
+
+    database "Config Tables" as configdb {
+        collections "diagnostician_skills"
+        collections "diagnostician_capacity"
+        collections "diagnostician_availability"
+        collections "partnerships"
+        collections "assignment_log"
+    }
+}
+
+' ─── Frontend ───
+package "Secretariat" as front #E8F5E9 {
+    component "Review\nDashboard" as dashboard
+    actor "Operator" as operator
+}
+
+' ─── Connections ───
+slisdb --> slis_engine : "read exams,\npatients, doctors"
+slis_engine --> services
+config_engine --> configdb : "read/write\nconfig & logs"
+config_engine --> services
+
+services --> engine : "run pipeline"
+comment_svc --> llm : "parse comments"
+filters --> scoring : "candidates"
+scoring --> solver : "scored list"
+
+api --> services : "orchestrate"
+api --> dashboard : "serve UI +\nREST API"
+dashboard --> operator : "show suggestions\n+ reasons"
+operator --> dashboard : "confirm /\noverride"
+dashboard --> api : "POST decision"
+
+assign_svc --> slisdb : "write-back\nfinal assignment"
+assign_svc --> configdb : "log decision\n+ audit trail"
+
+@enduml

@@ -17,3 +17,19 @@ venv/
 *.user
 *.suo
 *.cache
+
+## Environment
+.env
+
+## Database migrations
+alembic/versions/*.py
+!alembic/versions/__init__.py
+
+## OS
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+## Logs
+*.log
+logs/

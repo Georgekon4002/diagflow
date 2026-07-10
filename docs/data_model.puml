@@ -1,0 +1,147 @@
+@startuml data_model
+!theme cerulean-outline
+
+title DiagFlow — Data Model (Entity-Relationship)
+skinparam backgroundColor #FEFEFE
+skinparam defaultFontName Inter
+skinparam shadowing false
+skinparam linetype ortho
+
+' ─── DiagFlow Config Tables ───
+package "DiagFlow Tables" as diagflow_tables #E3F2FD {
+
+    entity "diagnosticians" as diag {
+        * **id** : int <<PK>>
+        --
+        * name : nvarchar(200)
+        * active : bit
+        can_ct : bit
+        can_mri : bit
+        created_at : datetime
+        updated_at : datetime
+    }
+
+    entity "diagnostician_skills" as skills {
+        * **id** : int <<PK>>
+        --
+        * diagnostician_id : int <<FK>>
+        * body_part : nvarchar(100)
+        * modality : nvarchar(10)
+        proficiency_level : float
+        notes : nvarchar(500)
+    }
+
+    entity "diagnostician_capacity" as capacity {
+        * **id** : int <<PK>>
+        --
+        * diagnostician_id : int <<FK>>
+        * daily_hard_quota : int
+        --
+        ""Optional sub-caps:""
+        abdomen_soft_cap : int
+        neuro_soft_cap : int
+        msk_soft_cap : int
+        chest_soft_cap : int
+    }
+
+    entity "diagnostician_lab_preference" as lab_pref {
+        * **id** : int <<PK>>
+        --
+        * diagnostician_id : int <<FK>>
+        * lab_id : nvarchar(50)
+        * lab_name : nvarchar(200)
+        accepted : bit
+    }
+
+    entity "diagnostician_availability" as avail {
+        * **id** : int <<PK>>
+        --
+        * diagnostician_id : int <<FK>>
+        * date : date
+        * status : nvarchar(50)
+        is_pamakristos_oncall : bit
+        notes : nvarchar(500)
+    }
+
+    entity "partnerships" as partners {
+        * **id** : int <<PK>>
+        --
+        * issuing_doctor_id : nvarchar(50)
+        * issuing_doctor_name : nvarchar(200)
+        * preferred_diagnostician_id : int <<FK>>
+        priority : int
+        notes : nvarchar(500)
+    }
+
+    entity "assignment_log" as log {
+        * **id** : int <<PK>>
+        --
+        * exam_id : nvarchar(50)
+        * patient_id : nvarchar(50)
+        * suggested_diagnostician_id : int <<FK>>
+        * final_diagnostician_id : int <<FK>>
+        * was_overridden : bit
+        * decision_timestamp : datetime
+        --
+        exam_modality : nvarchar(10)
+        exam_body_part : nvarchar(100)
+        issuing_doctor_id : nvarchar(50)
+        lab_id : nvarchar(50)
+        --
+        rules_fired : nvarchar(max)
+        score_breakdown : nvarchar(max)
+        alternative_candidates : nvarchar(max)
+        override_reason : nvarchar(500)
+        comment_raw : nvarchar(max)
+        comment_parsed : nvarchar(max)
+    }
+}
+
+' ─── Slis Tables (read-only, simplified) ───
+package "Slis Tables (Read-Only)" as slis_tables #FFF3E0 {
+
+    entity "slis_exams" as slis_exam {
+        * **exam_id** : nvarchar <<PK>>
+        --
+        patient_id : nvarchar
+        modality : nvarchar
+        body_part : nvarchar
+        lab_id : nvarchar
+        issuing_doctor_id : nvarchar
+        request_date : datetime
+        status : nvarchar
+        comments : nvarchar(max)
+    }
+
+    entity "slis_patients" as slis_patient {
+        * **patient_id** : nvarchar <<PK>>
+        --
+        name : nvarchar
+        date_of_birth : date
+    }
+
+    entity "slis_assignments" as slis_assign {
+        * **assignment_id** : nvarchar <<PK>>
+        --
+        exam_id : nvarchar
+        diagnostician_id : nvarchar
+        assigned_date : datetime
+        assigned_by : nvarchar
+    }
+}
+
+' ─── Relationships ───
+diag ||--o{ skills : "has skills"
+diag ||--o| capacity : "has capacity"
+diag ||--o{ lab_pref : "lab preferences"
+diag ||--o{ avail : "availability"
+diag ||--o{ partners : "preferred by"
+diag ||--o{ log : "suggested for"
+
+slis_exam }o--|| slis_patient : "belongs to"
+slis_exam ||--o{ slis_assign : "assigned via"
+
+log ..> slis_exam : "references exam"
+log ..> slis_patient : "references patient"
+
+@enduml

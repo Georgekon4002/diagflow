@@ -1,0 +1,118 @@
+@startuml rule_engine_flow
+!theme cerulean-outline
+
+title DiagFlow — Rule Engine Pipeline
+skinparam backgroundColor #FEFEFE
+skinparam defaultFontName Inter
+skinparam shadowing false
+
+start
+
+:Receive pending exam request;
+
+partition "**Stage 1: Hard Filters**" #E8EAF6 {
+    :Fetch all active diagnosticians;
+
+    :Parse comments/remarks via LLM;
+    note right
+        Priority 1: Comments
+        "ΟΧΙ ΝΑΤΣΙΚΑ" → exclude Νάτσικα
+        "ΝΑ ΤΟ ΠΑΡΕΙ Ο ΠΑΠΑΔΟΠΟΥΛΟΣ" → direct assign
+    end note
+
+    if (Direct assignment from comment?) then (yes)
+        :Assign directly to specified diagnostician;
+        :Log decision with reason: "direct_assignment_comment";
+        stop
+    else (no)
+        :Remove excluded diagnosticians;
+    endif
+
+    :Filter by **availability**;
+    note right: Priority 2: On leave? Day off?
+
+    :Filter by **lab preference**;
+    note right
+        Priority 5: Does the diagnostician
+        accept work from this lab?
+    end note
+
+    :Filter by **modality** (CT/MRI);
+    note right: Can they diagnose this type?
+
+    if (Candidates remaining?) then (no)
+        :Flag for manual assignment;
+        :Log "no_candidates_after_filters";
+        stop
+    else (yes)
+    endif
+}
+
+partition "**Stage 2: Weighted Scoring**" #E3F2FD {
+    :Calculate **capacity score**;
+    note right
+        Priority 3
+        Score = remaining_quota / max_quota
+        Higher remaining → higher score
+    end note
+
+    :Calculate **skills match score**;
+    note right
+        Priority 4
+        Body-part match strength
+        Exact match = 1.0, partial = 0.5
+    end note
+
+    :Calculate **partnership score**;
+    note right
+        Priority 6
+        Issuing doctor prefers this diagnostician?
+        Match = configurable bonus
+    end note
+
+    :Calculate **patient history score**;
+    note right
+        Priority 7
+        Same diagnostician for same patient's
+        past similar exams? Continuity bonus.
+    end note
+
+    :Apply **subcategory load penalty**;
+    note right
+        Soft load-balancing
+        Penalty grows with same-day count
+        of same body-part category
+    end note
+
+    :Compute composite weighted score
+    for each candidate;
+}
+
+partition "**Stage 3: Optimization**" #E8F5E9 {
+    :Feed scored candidates to
+    **OR-Tools CP-SAT solver**;
+    note right
+        Batch optimization when
+        multiple exams pending.
+        Maximizes total score across
+        all assignments.
+    end note
+
+    :Select highest-scoring assignment;
+}
+
+partition "**Output**" #FFF3E0 {
+    :Generate **suggestion** with:
+    - Proposed diagnostician
+    - Score breakdown
+    - Rules that fired
+    - Alternative candidates;
+
+    :Write to **assignment_log**;
+
+    :Send to **Review Dashboard**;
+}
+
+stop
+
+@enduml
