@@ -1,5 +1,4 @@
-@startuml architecture
-!theme cerulean-outline
+@startuml
 
 title DiagFlow — System Architecture
 skinparam backgroundColor #FEFEFE

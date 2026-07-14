@@ -2,13 +2,17 @@
 DiagFlow — Hard Filter Implementations
 
 Hard filters produce a pass/fail result. Any diagnostician failing
-a hard filter is removed from the candidate pool entirely.
+a hard filter is removed from the candidate pool — BUT they are still
+returned in the filter_results dict so the UI can show them in the
+alternatives list with a red indicator and the elimination reason.
 
 Filter order (by priority):
-1. Comment exclusions (LLM-parsed)
-2. Availability (on leave, day off)
-2. Modality (CT/MRI capability)
-5. Lab preference
+  1. Availability (on leave, day off)
+  4. Skills (zero proficiency recorded for this body-part/modality)
+
+NOTE: comment_exclusion filter code is preserved but NOT called in
+apply_hard_filters() during this implementation phase.
+Lab preference is now a WEIGHTED score, not a hard filter.
 """
 
 from dataclasses import dataclass
@@ -63,6 +67,7 @@ class CandidateDiagnostician:
     # Skills for the exam's body part/modality
     skill_proficiency: float = 0.0
     has_skill_match: bool = False
+    has_skill_data: bool = False  # True if any skill record exists for this modality/body-part
 
     # Lab preference
     accepts_lab: bool = True
@@ -75,7 +80,7 @@ class CandidateDiagnostician:
     has_patient_history: bool = False
     patient_history_count: int = 0
 
-    # Comment analysis results
+    # Comment analysis results (code preserved, not active)
     is_excluded_by_comment: bool = False
     is_directly_assigned_by_comment: bool = False
 
@@ -94,8 +99,10 @@ def filter_by_comment_exclusion(
     exam: ExamContext,
 ) -> FilterResult:
     """
-    Priority 1: Check if the candidate is excluded by parsed comments.
+    [DISABLED] Priority 0: Check if the candidate is excluded by parsed comments.
 
+    This function is preserved for future use but is NOT called by
+    apply_hard_filters() in the current implementation phase.
     The actual LLM parsing happens in the comment_parser service before
     this filter runs. This filter just checks the result.
     """
@@ -117,7 +124,7 @@ def filter_by_availability(
     exam: ExamContext,
 ) -> FilterResult:
     """
-    Priority 2: Check if the diagnostician is available today.
+    Priority 1: Check if the diagnostician is available today.
     """
     if not candidate.is_available:
         return FilterResult(
@@ -132,12 +139,48 @@ def filter_by_availability(
     )
 
 
+def filter_by_skills_hard(
+    candidate: CandidateDiagnostician,
+    exam: ExamContext,
+) -> FilterResult:
+    """
+    Priority 4: Hard filter on skills.
+
+    Eliminates a candidate ONLY if they have an explicit skill record
+    for this body-part/modality combination AND the proficiency is 0.
+
+    If no skill data exists, the candidate passes (they get a neutral 0.3
+    in the weighted scoring phase, not an elimination).
+    """
+    if candidate.has_skill_data and candidate.skill_proficiency == 0.0:
+        return FilterResult(
+            passed=False,
+            rule_name="skills",
+            reason=(
+                f"Ο/Η {candidate.name} δεν έχει εξειδίκευση "
+                f"σε '{exam.body_part}' ({exam.modality}) — καταγεγραμμένη επάρκεια: 0%"
+            ),
+        )
+    return FilterResult(
+        passed=True,
+        rule_name="skills",
+        reason=(
+            f"Εξειδίκευση '{exam.body_part}' ({exam.modality}): "
+            f"{candidate.skill_proficiency:.0%}"
+            if candidate.has_skill_data
+            else "Δεν υπάρχουν δεδομένα εξειδίκευσης (ουδέτερη βαθμολογία)"
+        ),
+    )
+
+
 def filter_by_modality(
     candidate: CandidateDiagnostician,
     exam: ExamContext,
 ) -> FilterResult:
     """
-    Priority 2: Check if the diagnostician can handle this exam's modality.
+    Modality check (CT/MRI capability).
+    Kept as a secondary check, used only for informational purposes.
+    This is separate from the skills hard filter.
     """
     modality = exam.modality.upper()
 
@@ -165,16 +208,16 @@ def filter_by_lab_preference(
     exam: ExamContext,
 ) -> FilterResult:
     """
-    Priority 5: Check if the diagnostician accepts work from this lab.
-
-    If the diagnostician has no lab preferences set, they accept all labs.
+    Lab preference check — informational only.
+    Lab is now a WEIGHTED scoring factor, not a hard filter.
+    This function is kept for reference but not called in apply_hard_filters().
     """
     if not candidate.accepts_lab:
         return FilterResult(
             passed=False,
             rule_name="lab_preference",
             reason=(
-                f"Ο/Η {candidate.name} δεν δέχεται εξετάσεις "
+                f"Ο/Η {candidate.name} δεν προτιμά εξετάσεις "
                 f"από το εργαστήριο '{exam.lab_name}'"
             ),
         )
@@ -190,17 +233,24 @@ def apply_hard_filters(
     exam: ExamContext,
 ) -> tuple[list[CandidateDiagnostician], dict[int, list[FilterResult]]]:
     """
-    Apply all hard filters to the candidate list.
+    Apply all active hard filters to the candidate list.
+
+    Active filters (per current business rules):
+      1. Availability
+      4. Skills (only eliminates if proficiency == 0 AND data exists)
 
     Returns:
-        - Filtered list of candidates that passed all hard filters
-        - Dictionary mapping candidate IDs to their filter results (for audit)
+        - Filtered list of candidates that passed ALL hard filters
+        - Dictionary mapping ALL candidate IDs to their filter results
+          (including eliminated ones, so the UI can show them in the
+           alternatives list with a red indicator and reason)
     """
-    all_filters = [
-        filter_by_comment_exclusion,
+    active_filters = [
         filter_by_availability,
-        filter_by_modality,
-        filter_by_lab_preference,
+        filter_by_modality,       # Keep modality as a basic sanity filter
+        filter_by_skills_hard,    # New: skills hard filter (priority 4)
+        # filter_by_comment_exclusion — DISABLED in this phase
+        # filter_by_lab_preference   — Now WEIGHTED, not hard
     ]
 
     passed_candidates: list[CandidateDiagnostician] = []
@@ -209,12 +259,16 @@ def apply_hard_filters(
     for candidate in candidates:
         results: list[FilterResult] = []
         passed_all = True
+        elimination_reason: str | None = None
 
-        for filter_fn in all_filters:
+        for filter_fn in active_filters:
             result = filter_fn(candidate, exam)
             results.append(result)
-            if not result.passed:
+            if not result.passed and passed_all:
+                # Record the first (primary) elimination reason but continue
+                # collecting all results for the audit trail
                 passed_all = False
+                elimination_reason = result.reason
                 logger.info(
                     "candidate_filtered_out",
                     candidate=candidate.name,
@@ -222,7 +276,6 @@ def apply_hard_filters(
                     reason=result.reason,
                     exam_id=exam.exam_id,
                 )
-                break  # No need to check remaining filters
 
         all_results[candidate.id] = results
         if passed_all:
@@ -237,3 +290,18 @@ def apply_hard_filters(
     )
 
     return passed_candidates, all_results
+
+
+def get_elimination_reason(
+    candidate_id: int,
+    filter_results: dict[int, list[FilterResult]],
+) -> str | None:
+    """
+    Return the first failed filter reason for a candidate, or None if they passed.
+    Used by the pipeline to populate the alternatives list with elimination reasons.
+    """
+    results = filter_results.get(candidate_id, [])
+    for result in results:
+        if not result.passed:
+            return result.reason
+    return None

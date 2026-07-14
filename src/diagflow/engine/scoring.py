@@ -5,12 +5,15 @@ Computes a composite score for each candidate diagnostician.
 Each scoring factor produces a 0.0–1.0 normalized score,
 which is then multiplied by its configurable weight.
 
-Scoring factors:
-3. Capacity (remaining quota ratio)
-4. Skills (body-part/modality proficiency match)
-6. Partnership (issuing doctor preference)
-7. Patient history (continuity of care)
-+ Subcategory load penalty (soft load-balancing)
+Scoring factors (in priority order per business rules):
+  b. Capacity (remaining quota ratio)         — weight_capacity
+  c. Partnership (issuing doctor preference)  — weight_partnership
+  e. Lab preference (weighted, not hard)      — weight_lab
+  f. Patient history (continuity of care)     — weight_patient_history
+  + Subcategory load penalty (soft)           — weight_subcategory_penalty
+
+Note: Skills is a HARD FILTER (handled in filters.py), not a weighted score.
+      If a candidate passes the skills hard filter, they get a weighted bonus here too.
 """
 
 from dataclasses import dataclass
@@ -48,7 +51,7 @@ class CandidateScore:
 
 def score_capacity(candidate: CandidateDiagnostician) -> ScoreComponent:
     """
-    Priority 3: Score based on remaining daily quota.
+    Priority b: Score based on remaining daily quota.
 
     Score = remaining_slots / total_quota
     At quota → 0.0, fully available → 1.0
@@ -73,36 +76,9 @@ def score_capacity(candidate: CandidateDiagnostician) -> ScoreComponent:
     )
 
 
-def score_skills(candidate: CandidateDiagnostician, exam: ExamContext) -> ScoreComponent:
-    """
-    Priority 4: Score based on body-part/modality skill match.
-
-    Uses the proficiency_level from diagnostician_skills table.
-    Exact match = proficiency (0.0-1.0), no skill data = 0.3 (neutral default).
-    """
-    if candidate.has_skill_match:
-        raw = candidate.skill_proficiency
-        explanation = (
-            f"Εξειδίκευση στο '{exam.body_part}' ({exam.modality}): "
-            f"{candidate.skill_proficiency:.0%}"
-        )
-    else:
-        raw = 0.3  # Neutral — no data doesn't mean they can't do it
-        explanation = f"Δεν υπάρχουν δεδομένα εξειδίκευσης για '{exam.body_part}'"
-
-    return ScoreComponent(
-        rule_name="skills",
-        display_name="Εξειδίκευση",
-        raw_score=raw,
-        weight=settings.weight_skills,
-        weighted_score=raw * settings.weight_skills,
-        explanation=explanation,
-    )
-
-
 def score_partnership(candidate: CandidateDiagnostician, exam: ExamContext) -> ScoreComponent:
     """
-    Priority 6: Score based on issuing doctor partnership.
+    Priority c: Score based on issuing doctor partnership.
 
     If the issuing doctor has a preferred diagnostician and this candidate matches,
     they get a full score. Higher partnership priority = higher score.
@@ -128,11 +104,63 @@ def score_partnership(candidate: CandidateDiagnostician, exam: ExamContext) -> S
     )
 
 
+def score_skills_weighted(candidate: CandidateDiagnostician, exam: ExamContext) -> ScoreComponent:
+    """
+    Skills weighted bonus (after passing the hard skills filter).
+
+    Candidates with high proficiency get a bonus here.
+    Candidates with no skill data (who passed the hard filter) get a neutral 0.3.
+    This is separate from the hard skills filter — it rewards expertise.
+    """
+    if candidate.has_skill_match and candidate.has_skill_data:
+        raw = candidate.skill_proficiency
+        explanation = (
+            f"Εξειδίκευση στο '{exam.body_part}' ({exam.modality}): "
+            f"{candidate.skill_proficiency:.0%}"
+        )
+    else:
+        raw = 0.3  # Neutral — no data doesn't mean they can't do it
+        explanation = f"Δεν υπάρχουν δεδομένα εξειδίκευσης για '{exam.body_part}' (ουδέτερο)"
+
+    return ScoreComponent(
+        rule_name="skills",
+        display_name="Εξειδίκευση",
+        raw_score=raw,
+        weight=settings.weight_skills,
+        weighted_score=raw * settings.weight_skills,
+        explanation=explanation,
+    )
+
+
+def score_lab_preference(candidate: CandidateDiagnostician, exam: ExamContext) -> ScoreComponent:
+    """
+    Priority e: Weighted score for lab preference (NOT a hard filter).
+
+    Diagnosticians who accept the lab get full score.
+    Those who don't prefer it still stay in the pool but get a lower score.
+    """
+    if candidate.accepts_lab:
+        raw = 1.0
+        explanation = f"Αποδέχεται εξετάσεις από '{exam.lab_name}'"
+    else:
+        raw = 0.1  # Low but not zero — they can still be manually overridden
+        explanation = f"Δεν προτιμά εξετάσεις από '{exam.lab_name}' (χαμηλή βαθμολογία)"
+
+    return ScoreComponent(
+        rule_name="lab_preference",
+        display_name="Προτίμηση Εργαστηρίου",
+        raw_score=raw,
+        weight=settings.weight_lab,
+        weighted_score=raw * settings.weight_lab,
+        explanation=explanation,
+    )
+
+
 def score_patient_history(
     candidate: CandidateDiagnostician, exam: ExamContext
 ) -> ScoreComponent:
     """
-    Priority 7: Score based on continuity of care.
+    Priority f: Score based on continuity of care.
 
     If this diagnostician has handled this patient's past similar exams,
     they get a bonus for consistency.
@@ -207,12 +235,19 @@ def compute_candidate_score(
     """
     Compute the complete composite score for a single candidate.
 
-    Combines all weighted scoring components and applies penalties.
+    Order matches business rule priority:
+      b. Capacity
+      c. Partnership
+      [d. Skills — hard filter in filters.py, bonus here]
+      e. Lab preference (weighted)
+      f. Patient history
+      + Subcategory penalty
     """
     components = [
         score_capacity(candidate),
-        score_skills(candidate, exam),
         score_partnership(candidate, exam),
+        score_skills_weighted(candidate, exam),
+        score_lab_preference(candidate, exam),
         score_patient_history(candidate, exam),
         penalty_subcategory_load(candidate, exam),
     ]

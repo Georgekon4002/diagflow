@@ -1,5 +1,4 @@
-@startuml assignment_sequence
-!theme cerulean-outline
+@startuml
 
 title DiagFlow — Assignment Sequence
 skinparam backgroundColor #FEFEFE

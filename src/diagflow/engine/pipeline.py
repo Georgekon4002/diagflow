@@ -3,7 +3,7 @@ DiagFlow — Assignment Pipeline Orchestrator
 
 This is the main entry point for the rule engine. It orchestrates:
 1. Loading exam and candidate data
-2. Parsing comments via LLM
+2. [DISABLED] Parsing comments via LLM (code preserved, not active)
 3. Running hard filters
 4. Computing weighted scores
 5. Running the solver (greedy or CP-SAT)
@@ -11,6 +11,11 @@ This is the main entry point for the rule engine. It orchestrates:
 
 The pipeline is designed to work with mock data during development
 and real Slis data once DB access is available.
+
+Key behavior: Diagnosticians eliminated by hard filters are NOT hidden.
+They are included in the alternatives list with a red indicator and
+the reason for their elimination, so the user can still manually
+override and choose them if needed.
 """
 
 import json
@@ -24,6 +29,7 @@ from diagflow.engine.filters import (
     ExamContext,
     FilterResult,
     apply_hard_filters,
+    get_elimination_reason,
 )
 from diagflow.engine.scoring import CandidateScore, score_all_candidates
 from diagflow.engine.solver import SolverResult, solve_single_assignment
@@ -50,8 +56,9 @@ class AssignmentSuggestion:
     # Scoring breakdown (for UI display)
     score_breakdown: list[dict]  # List of {rule, score, weight, explanation}
 
-    # Alternative candidates (top 3 for the override dropdown)
-    alternatives: list[dict]  # List of {id, name, score}
+    # Alternative candidates (includes hard-filtered ones with elimination reason)
+    # Format: {id, name, score, eliminated, elimination_reason}
+    alternatives: list[dict]
 
     # Audit trail
     rules_fired: list[str]
@@ -59,7 +66,7 @@ class AssignmentSuggestion:
     solver_status: str
     pipeline_timestamp: str
 
-    # Comment analysis
+    # Comment analysis (preserved for future use)
     comment_raw: str
     comment_parsed: str  # JSON from LLM analysis
 
@@ -94,7 +101,7 @@ class AssignmentPipeline:
             exam: The exam to assign
             candidates: All potentially eligible diagnosticians
             comment_analysis: Pre-parsed comment analysis (from LLM service)
-                              Format: {"exclude": ["name1"], "assign": "name2" or null, "reasoning": "..."}
+                              [DISABLED] Not used in current implementation phase.
 
         Returns:
             AssignmentSuggestion with the proposed assignment, or None if no candidates remain
@@ -107,21 +114,19 @@ class AssignmentPipeline:
             candidates=len(candidates),
         )
 
-        # ── Step 0: Apply comment analysis results to candidates ──
+        # ── Step 0: Comment analysis [DISABLED] ──
+        # Comment parsing is not active in this implementation phase.
+        # The code is preserved for future enablement.
         direct_assignment = None
         comment_parsed_str = ""
 
-        if comment_analysis:
-            comment_parsed_str = json.dumps(comment_analysis, ensure_ascii=False)
-            direct_assignment = self._apply_comment_analysis(
-                candidates, comment_analysis, exam
-            )
-
-        if direct_assignment:
-            # Comment specified a direct assignment — skip the engine
-            return self._build_direct_assignment_suggestion(
-                exam, direct_assignment, comment_parsed_str
-            )
+        # NOTE: comment_analysis is intentionally NOT applied here.
+        # When re-enabled, uncomment:
+        # if comment_analysis:
+        #     comment_parsed_str = json.dumps(comment_analysis, ensure_ascii=False)
+        #     direct_assignment = self._apply_comment_analysis(candidates, comment_analysis, exam)
+        # if direct_assignment:
+        #     return self._build_direct_assignment_suggestion(exam, direct_assignment, comment_parsed_str)
 
         # ── Step 1: Hard filters ──
         filtered_candidates, filter_results = apply_hard_filters(candidates, exam)
@@ -134,7 +139,7 @@ class AssignmentPipeline:
             )
             return None
 
-        # ── Step 2: Weighted scoring ──
+        # ── Step 2: Weighted scoring (on passed candidates only) ──
         scored_candidates = score_all_candidates(filtered_candidates, exam)
 
         # ── Step 3: Solver (greedy for single exam) ──
@@ -163,15 +168,15 @@ class AssignmentPipeline:
             for comp in best_score.components
         ]
 
-        # Top 3 alternatives (excluding the suggested one)
-        alternatives = [
-            {
-                "id": s.diagnostician_id,
-                "name": s.diagnostician_name,
-                "score": round(s.total_score, 3),
-            }
-            for s in scored_candidates[1:4]
-        ]
+        # ── Step 5: Build alternatives list ──
+        # Include ALL candidates: scored alternatives + hard-filtered (eliminated) ones
+        # So the UI can show eliminated candidates with a red box and reason
+        alternatives = self._build_alternatives(
+            best.diagnostician_id,
+            scored_candidates,
+            candidates,
+            filter_results,
+        )
 
         # Rules that contributed positively
         rules_fired = [
@@ -216,6 +221,55 @@ class AssignmentPipeline:
 
         return suggestion
 
+    def _build_alternatives(
+        self,
+        suggested_id: int,
+        scored_candidates: list[CandidateScore],
+        all_candidates: list[CandidateDiagnostician],
+        filter_results: dict[int, list[FilterResult]],
+    ) -> list[dict]:
+        """
+        Build the alternatives list for the UI.
+
+        Includes:
+          1. Top scored candidates (not the suggestion, not eliminated) — up to 3
+          2. Eliminated candidates — with red indicator and reason
+
+        This allows the secretariat to still manually select an eliminated
+        diagnostician if there is a valid business reason.
+        """
+        result = []
+
+        # ── Part 1: Scored (non-eliminated) alternatives ──
+        for cs in scored_candidates:
+            if cs.diagnostician_id == suggested_id:
+                continue  # Skip the suggestion itself
+            result.append({
+                "id": cs.diagnostician_id,
+                "name": cs.diagnostician_name,
+                "score": round(cs.total_score, 3),
+                "eliminated": False,
+                "elimination_reason": None,
+            })
+
+        # ── Part 2: Hard-filtered (eliminated) candidates ──
+        scored_ids = {cs.diagnostician_id for cs in scored_candidates}
+        for candidate in all_candidates:
+            if candidate.id == suggested_id:
+                continue
+            if candidate.id in scored_ids:
+                continue  # Already in the scored list
+            reason = get_elimination_reason(candidate.id, filter_results)
+            result.append({
+                "id": candidate.id,
+                "name": candidate.name,
+                "score": 0.0,
+                "eliminated": True,
+                "elimination_reason": reason or "Εξαιρέθηκε από φίλτρο",
+            })
+
+        return result
+
     def _apply_comment_analysis(
         self,
         candidates: list[CandidateDiagnostician],
@@ -223,7 +277,7 @@ class AssignmentPipeline:
         exam: ExamContext,
     ) -> CandidateDiagnostician | None:
         """
-        Apply LLM comment analysis results to candidates.
+        [PRESERVED — NOT ACTIVE] Apply LLM comment analysis results to candidates.
 
         Returns a CandidateDiagnostician if a direct assignment was specified,
         otherwise returns None and modifies candidates in-place.
@@ -262,7 +316,7 @@ class AssignmentPipeline:
         candidate: CandidateDiagnostician,
         comment_parsed: str,
     ) -> AssignmentSuggestion:
-        """Build a suggestion for a comment-directed assignment."""
+        """[PRESERVED — NOT ACTIVE] Build a suggestion for a comment-directed assignment."""
         exam_summary = (
             f"{exam.modality} {exam.body_part} — "
             f"Dr. {exam.issuing_doctor_name} — "

@@ -1,5 +1,4 @@
-@startuml data_model
-!theme cerulean-outline
+@startuml
 
 title DiagFlow — Data Model (Entity-Relationship)
 skinparam backgroundColor #FEFEFE

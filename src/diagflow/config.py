@@ -41,10 +41,12 @@ class Settings(BaseSettings):
 
     # ── Rule Engine Weights ──
     # These control the relative importance of each scoring factor.
-    # They should sum to roughly 1.0 for interpretability but are normalized internally.
+    # Rule hierarchy: availability(hard) → capacity → partnership → skills(hard+bonus) → lab → history → subcategory
+    # Sum ≈ 1.0 for interpretability; scores are clamped to [0, 1] internally.
     weight_capacity: float = Field(default=0.30, ge=0.0, le=1.0)
-    weight_skills: float = Field(default=0.25, ge=0.0, le=1.0)
     weight_partnership: float = Field(default=0.25, ge=0.0, le=1.0)
+    weight_skills: float = Field(default=0.15, ge=0.0, le=1.0)  # Weighted bonus (hard filter handled in filters.py)
+    weight_lab: float = Field(default=0.10, ge=0.0, le=1.0)  # Lab preference — now weighted, not hard filter
     weight_patient_history: float = Field(default=0.15, ge=0.0, le=1.0)
     weight_subcategory_penalty: float = Field(default=0.05, ge=0.0, le=1.0)
 

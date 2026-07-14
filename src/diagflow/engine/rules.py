@@ -4,6 +4,16 @@ DiagFlow — Rule Definitions & Registry
 Defines all assignment rules with their priority, type (hard/weighted/penalty),
 and weight configuration. Rules are registered here and referenced by the
 pipeline, filters, and scoring modules.
+
+Rule hierarchy (per business requirements):
+  a. Availability          — HARD FILTER, priority 1
+  b. Capacity              — WEIGHTED, priority 2
+  c. Partnerships          — WEIGHTED, priority 3
+  d. Skills                — HARD FILTER, priority 4
+  e. Lab preference        — WEIGHTED, priority 5
+  f. Patient history       — WEIGHTED, priority 6
+  + Subcategory load       — SOFT PENALTY, priority 7
+  [disabled] Comments      — Code kept but not active
 """
 
 from dataclasses import dataclass, field
@@ -50,45 +60,24 @@ class Rule:
 RULES: list[Rule] = [
     # ── Hard Filters (must satisfy) ──
     Rule(
-        name="comment_exclusion",
-        display_name="Σχόλια / Παρατηρήσεις",
-        rule_type=RuleType.HARD_FILTER,
-        priority=1,
-        description=(
-            "LLM parses free-text comments from the secretariat. "
-            "Can exclude specific diagnosticians or force a direct assignment. "
-            'Example: "ΟΧΙ ΝΑΤΣΙΚΑ" excludes Νάτσικα from candidates.'
-        ),
-    ),
-    Rule(
         name="availability",
         display_name="Διαθεσιμότητα",
         rule_type=RuleType.HARD_FILTER,
-        priority=2,
+        priority=1,
         description=(
             "Checks if the diagnostician is working today. "
             "Removes anyone on leave, day off, or otherwise unavailable."
         ),
     ),
     Rule(
-        name="lab_preference",
-        display_name="Προτίμηση Εργαστηρίου",
+        name="skills",
+        display_name="Εξειδίκευση (Φίλτρο)",
         rule_type=RuleType.HARD_FILTER,
-        priority=5,
+        priority=4,
         description=(
-            "Some diagnosticians only accept work from specific labs. "
-            "If a diagnostician has lab preferences set and the exam's lab "
-            "is not in their accepted list, they are removed."
-        ),
-    ),
-    Rule(
-        name="modality_filter",
-        display_name="Τύπος Εξέτασης (CT/MRI)",
-        rule_type=RuleType.HARD_FILTER,
-        priority=2,  # Same priority as availability — both are basic eligibility
-        description=(
-            "Checks if the diagnostician can handle this modality. "
-            "Some can do CT only, MRI only, or both."
+            "Hard filter on skills: if a diagnostician has a recorded proficiency "
+            "of 0 for the exam's body-part/modality, they are eliminated. "
+            "If no skill data exists, they pass through and get a neutral score."
         ),
     ),
     # ── Weighted Preferences (produce a score) ──
@@ -96,7 +85,7 @@ RULES: list[Rule] = [
         name="capacity",
         display_name="Χωρητικότητα",
         rule_type=RuleType.WEIGHTED_PREFERENCE,
-        priority=3,
+        priority=2,
         default_weight=0.30,
         description=(
             "Score based on remaining daily quota. "
@@ -105,21 +94,10 @@ RULES: list[Rule] = [
         ),
     ),
     Rule(
-        name="skills",
-        display_name="Εξειδίκευση",
-        rule_type=RuleType.WEIGHTED_PREFERENCE,
-        priority=4,
-        default_weight=0.25,
-        description=(
-            "How well the diagnostician's skills match the exam's body part. "
-            "Exact match = 1.0, partial/related match = 0.5, no data = 0.3."
-        ),
-    ),
-    Rule(
         name="partnership",
         display_name="Συνεργασία Ιατρού",
         rule_type=RuleType.WEIGHTED_PREFERENCE,
-        priority=6,
+        priority=3,
         default_weight=0.25,
         description=(
             "Whether the issuing doctor has a preferred diagnostician. "
@@ -127,10 +105,21 @@ RULES: list[Rule] = [
         ),
     ),
     Rule(
+        name="lab_preference",
+        display_name="Προτίμηση Εργαστηρίου",
+        rule_type=RuleType.WEIGHTED_PREFERENCE,
+        priority=5,
+        default_weight=0.10,
+        description=(
+            "Weighted score for whether a diagnostician accepts the exam's lab. "
+            "Not accepting = score penalty, but not a hard elimination."
+        ),
+    ),
+    Rule(
         name="patient_history",
         display_name="Ιστορικό Ασθενή",
         rule_type=RuleType.WEIGHTED_PREFERENCE,
-        priority=7,
+        priority=6,
         default_weight=0.15,
         description=(
             "Continuity of care — same diagnostician for same patient's "
@@ -142,7 +131,7 @@ RULES: list[Rule] = [
         name="subcategory_load",
         display_name="Ισορροπία Φόρτου Υποκατηγορίας",
         rule_type=RuleType.SOFT_PENALTY,
-        priority=8,
+        priority=7,
         default_weight=0.05,
         description=(
             "Penalty that grows as a diagnostician's same-day count of a "
@@ -150,6 +139,21 @@ RULES: list[Rule] = [
             "with repetitive work even when within hard quota. "
             "E.g., too many abdominal MRIs in one day."
         ),
+    ),
+    # ── DISABLED: Comment Exclusion ──
+    # Code is preserved but not active in the current implementation phase.
+    # Re-enable by setting enabled=True once comment parsing is production-ready.
+    Rule(
+        name="comment_exclusion",
+        display_name="Σχόλια / Παρατηρήσεις",
+        rule_type=RuleType.HARD_FILTER,
+        priority=0,  # Would be highest priority when enabled
+        description=(
+            "LLM parses free-text comments from the secretariat. "
+            "Can exclude specific diagnosticians or force a direct assignment. "
+            'Example: "ΟΧΙ ΝΑΤΣΙΚΑ" excludes Νάτσικα from candidates.'
+        ),
+        enabled=False,  # DISABLED — not active in current implementation phase
     ),
 ]
 

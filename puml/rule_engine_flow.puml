@@ -1,5 +1,4 @@
-@startuml rule_engine_flow
-!theme cerulean-outline
+@startuml
 
 title DiagFlow — Rule Engine Pipeline
 skinparam backgroundColor #FEFEFE

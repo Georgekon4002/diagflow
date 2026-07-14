@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="el">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="DiagFlow — Πίνακας Διαχείρισης">
+    <title>DiagFlow — Admin Panel</title>
+    <link rel="icon" type="image/png" href="media/logo_multiple.png">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+
+<div class="admin-layout">
+
+    <!-- ─── Sidebar ─── -->
+    <aside class="admin-sidebar">
+        <div class="admin-sidebar-header">
+            <div class="admin-sidebar-logo">
+                <img src="media/logo_multiple.png" alt="Logo">
+                <img src="media/textbox.png" alt="DiagFlow" style="height:18px;">
+            </div>
+            <div class="admin-sidebar-title">Admin Panel</div>
+        </div>
+
+        <nav class="admin-nav">
+            <button class="admin-nav-item active" id="nav-oncall" onclick="showSection('oncall')">
+                <span class="admin-nav-icon">🏥</span>
+                Εφημερία Παμμακάριστου
+            </button>
+            <button class="admin-nav-item" id="nav-diagnosticians" onclick="showSection('diagnosticians')">
+                <span class="admin-nav-icon">👨‍⚕️</span>
+                Ακτινοδιαγνώστες
+            </button>
+            <button class="admin-nav-item" id="nav-availability" onclick="showSection('availability')">
+                <span class="admin-nav-icon">📅</span>
+                Διαθεσιμότητα
+            </button>
+            <button class="admin-nav-item" id="nav-skills" onclick="showSection('skills')">
+                <span class="admin-nav-icon">🎯</span>
+                Δεξιότητες & Χωρητικότητα
+            </button>
+            <button class="admin-nav-item" id="nav-partnerships" onclick="showSection('partnerships')">
+                <span class="admin-nav-icon">🤝</span>
+                Συνεργασίες
+            </button>
+            <button class="admin-nav-item" id="nav-doctors" onclick="showSection('doctors')">
+                <span class="admin-nav-icon">🩺</span>
+                Ιατροί
+            </button>
+        </nav>
+
+        <div class="admin-sidebar-footer">
+            <button class="btn btn-secondary" style="width:100%;" onclick="goBack()">
+                ← Επιστροφή στην Αρχική
+            </button>
+        </div>
+    </aside>
+
+    <!-- ─── Main Content ─── -->
+    <div class="admin-main">
+        <div class="admin-top-bar">
+            <div class="admin-page-title" id="admin-page-title">Εφημερία Παμμακάριστου</div>
+            <div style="display:flex;align-items:center;gap:12px;">
+                <span class="admin-badge">
+                    <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                        <path d="M6 1a2 2 0 1 1 0 4 2 2 0 0 1 0-4zm0 5.5c2.2 0 4 .9 4 2V9H2v-.5c0-1.1 1.8-2 4-2z" fill="currentColor"/>
+                    </svg>
+                    Admin
+                </span>
+                <button class="btn btn-secondary btn-sm" onclick="adminLogout()">Έξοδος</button>
+            </div>
+        </div>
+
+        <div class="admin-content">
+
+            <!-- ════════════ SECTION: Εφημερία Παμμακάριστου ════════════ -->
+            <div id="section-oncall" class="admin-section">
+                <div class="admin-card">
+                    <div class="admin-card-title">
+                        🏥 Αλλαγή Εφημερεύοντος Παμμακάριστου
+                    </div>
+                    <p style="color:var(--text-secondary);font-size:var(--font-size-sm);margin-bottom:var(--space-lg);">
+                        Ορίστε ποιος ακτινοδιαγνώστης είναι υπεύθυνος για την εφημερία του Παμμακάριστου σήμερα.
+                        Αυτό εμφανίζεται στο header της κύριας οθόνης.
+                    </p>
+                    <div class="admin-form" style="grid-template-columns:1fr 1fr auto;align-items:end;">
+                        <div class="form-group" style="margin:0;">
+                            <label class="form-label">Ακτινοδιαγνώστης</label>
+                            <select id="oncall-diag-select" class="form-input filter-select" style="width:100%;">
+                                <option value="">— Επιλέξτε —</option>
+                            </select>
+                        </div>
+                        <div class="form-group" style="margin:0;">
+                            <label class="form-label">Ημερομηνία</label>
+                            <input type="date" id="oncall-date" class="form-input filter-select" style="width:100%;">
+                        </div>
+                        <button class="btn btn-primary" onclick="setOncall()">Αποθήκευση</button>
+                    </div>
+                </div>
+
+                <div class="admin-card">
+                    <div class="admin-card-title">Τρέχουσα Εφημερία</div>
+                    <div id="oncall-current" style="color:var(--text-secondary);font-size:var(--font-size-sm);">
+                        Φόρτωση…
+                    </div>
+                </div>
+            </div>
+
+            <!-- ════════════ SECTION: Ακτινοδιαγνώστες ════════════ -->
+            <div id="section-diagnosticians" class="admin-section" style="display:none;">
+                <div class="admin-card">
+                    <div class="admin-card-title">👨‍⚕️ Προσθήκη Νέου Ακτινοδιαγνώστη</div>
+                    <div class="admin-form">
+                        <div class="form-group" style="margin:0;">
+                            <label class="form-label">Ονοματεπώνυμο</label>
+                            <input type="text" id="new-diag-name" class="form-input" placeholder="π.χ. Παπαδόπουλος Γ.">
+                        </div>
+                        <div class="form-group" style="margin:0;">
+                            <label class="form-label">Ημερήσια Χωρητικότητα</label>
+                            <input type="number" id="new-diag-quota" class="form-input" value="15" min="1" max="50">
+                        </div>
+                        <div class="form-group" style="margin:0;">
+                            <label class="form-label">Δεξιότητες</label>
+                            <div style="display:flex;gap:12px;padding:10px 0;">
+                                <label style="display:flex;align-items:center;gap:6px;font-size:var(--font-size-sm);cursor:pointer;">
+                                    <input type="checkbox" id="new-diag-ct" checked style="accent-color:var(--accent-primary);"> CT
+                                </label>
+                                <label style="display:flex;align-items:center;gap:6px;font-size:var(--font-size-sm);cursor:pointer;">
+                                    <input type="checkbox" id="new-diag-mri" checked style="accent-color:var(--accent-primary);"> MRI
+                                </label>
+                                <label style="display:flex;align-items:center;gap:6px;font-size:var(--font-size-sm);cursor:pointer;">
+                                    <input type="checkbox" id="new-diag-active" checked style="accent-color:var(--accent-success);"> Ενεργός
+                                </label>
+                            </div>
+                        </div>
+                        <div class="form-group admin-form-actions" style="margin:0;">
+                            <button class="btn btn-primary" onclick="addDiagnostician()">+ Προσθήκη</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="admin-card">
+                    <div class="admin-card-title">Λίστα Ακτινοδιαγνωστών</div>
+                    <table class="admin-table" id="diag-table">
+                        <thead>
+                            <tr>
+                                <th>Ονοματεπώνυμο</th>
+                                <th>Κατάσταση</th>
+                                <th>CT</th>
+                                <th>MRI</th>
+                                <th>Ημερήσια Χωρητικότητα</th>
+                                <th>Ενέργειες</th>
+                            </tr>
+                        </thead>
+                        <tbody id="diag-tbody"></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- ════════════ SECTION: Διαθεσιμότητα ════════════ -->
+            <div id="section-availability" class="admin-section" style="display:none;">
+                <div class="admin-card">
+                    <div class="admin-card-title">📅 Ορισμός Διαθεσιμότητας</div>
+                    <div class="admin-form">
+                        <div class="form-group" style="margin:0;">
+                            <label class="form-label">Ακτινοδιαγνώστης</label>
+                            <select id="avail-diag" class="form-input filter-select" style="width:100%;"></select>
+                        </div>
+                        <div class="form-group" style="margin:0;">
+                            <label class="form-label">Ημερομηνία</label>
+                            <input type="date" id="avail-date" class="form-input filter-select" style="width:100%;">
+                        </div>
+                        <div class="form-group" style="margin:0;">
+                            <label class="form-label">Κατάσταση</label>
+                            <select id="avail-status" class="form-input filter-select" style="width:100%;">
+                                <option value="available">Διαθέσιμος/η</option>
+                                <option value="on_leave">Άδεια</option>
+                                <option value="half_day">Μισή Μέρα</option>
+                            </select>
+                        </div>
+                        <div class="form-group" style="margin:0;">
+                            <label class="form-label">Σημειώσεις</label>
+                            <input type="text" id="avail-notes" class="form-input" placeholder="Προαιρετικό">
+                        </div>
+                        <div class="form-group admin-form-actions" style="margin:0;">
+                            <button class="btn btn-primary" onclick="setAvailability()">Αποθήκευση</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="admin-card">
+                    <div class="admin-card-title">Εγγεγραμμένες Αποχές</div>
+                    <table class="admin-table">
+                        <thead>
+                            <tr>
+                                <th>Ακτινοδιαγνώστης</th>
+                                <th>Ημερομηνία</th>
+                                <th>Κατάσταση</th>
+                                <th>Σημειώσεις</th>
+                            </tr>
+                        </thead>
+                        <tbody id="avail-tbody"></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- ════════════ SECTION: Δεξιότητες ════════════ -->
+            <div id="section-skills" class="admin-section" style="display:none;">
+                <div class="admin-card">
+                    <div class="admin-card-title">🎯 Προσθήκη / Ενημέρωση Δεξιότητας</div>
+                    <div class="admin-form">
+                        <div class="form-group" style="margin:0;">
+                            <label class="form-label">Ακτινοδιαγνώστης</label>
+                            <select id="skill-diag" class="form-input filter-select" style="width:100%;"></select>
+                        </div>
+                        <div class="form-group" style="margin:0;">
+                            <label class="form-label">Περιοχή Σώματος</label>
+                            <select id="skill-body" class="form-input filter-select" style="width:100%;">
+                                <option value="abdomen">Κοιλία</option>
+                                <option value="chest">Θώρακας</option>
+                                <option value="neuro">Εγκέφαλος</option>
+                                <option value="msk">Μυοσκελετικό</option>
+                                <option value="spine">Σπονδυλική Στήλη</option>
+                                <option value="pelvis">Πύελος</option>
+                            </select>
+                        </div>
+                        <div class="form-group" style="margin:0;">
+                            <label class="form-label">Μέθοδος</label>
+                            <select id="skill-modality" class="form-input filter-select" style="width:100%;">
+                                <option value="CT">CT</option>
+                                <option value="MRI">MRI</option>
+                            </select>
+                        </div>
+                        <div class="form-group" style="margin:0;">
+                            <label class="form-label">Επάρκεια (0–100%)</label>
+                            <input type="number" id="skill-proficiency" class="form-input" value="80" min="0" max="100">
+                        </div>
+                        <div class="form-group admin-form-actions" style="margin:0;">
+                            <button class="btn btn-primary" onclick="setSkill()">Αποθήκευση</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="admin-card">
+                    <div class="admin-card-title">Καταγεγραμμένες Δεξιότητες</div>
+                    <table class="admin-table">
+                        <thead>
+                            <tr>
+                                <th>Ακτινοδιαγνώστης</th>
+                                <th>Περιοχή</th>
+                                <th>Μέθοδος</th>
+                                <th>Επάρκεια</th>
+                            </tr>
+                        </thead>
+                        <tbody id="skills-tbody"></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- ════════════ SECTION: Συνεργασίες ════════════ -->
+            <div id="section-partnerships" class="admin-section" style="display:none;">
+                <div class="admin-card">
+                    <div class="admin-card-title">🤝 Προσθήκη Συνεργασίας</div>
+                    <p style="color:var(--text-secondary);font-size:var(--font-size-sm);margin-bottom:var(--space-lg);">
+                        Μια συνεργασία ορίζει ότι ένας παραπέμπων ιατρός προτιμά έναν συγκεκριμένο ακτινοδιαγνώστη.
+                    </p>
+                    <div class="admin-form">
+                        <div class="form-group" style="margin:0;">
+                            <label class="form-label">Παραπέμπων Ιατρός (ID)</label>
+                            <input type="text" id="part-doctor-id" class="form-input" placeholder="π.χ. DR-101">
+                        </div>
+                        <div class="form-group" style="margin:0;">
+                            <label class="form-label">Ονοματεπώνυμο Ιατρού</label>
+                            <input type="text" id="part-doctor-name" class="form-input" placeholder="π.χ. Παπαδόπουλος Ν.">
+                        </div>
+                        <div class="form-group" style="margin:0;">
+                            <label class="form-label">Προτιμώμενος Ακτινοδιαγνώστης</label>
+                            <select id="part-diag" class="form-input filter-select" style="width:100%;"></select>
+                        </div>
+                        <div class="form-group" style="margin:0;">
+                            <label class="form-label">Προτεραιότητα (1–5)</label>
+                            <input type="number" id="part-priority" class="form-input" value="3" min="1" max="5">
+                        </div>
+                        <div class="form-group admin-form-actions" style="margin:0;">
+                            <button class="btn btn-primary" onclick="addPartnership()">+ Προσθήκη</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="admin-card">
+                    <div class="admin-card-title">Υπάρχουσες Συνεργασίες</div>
+                    <table class="admin-table">
+                        <thead>
+                            <tr>
+                                <th>Ιατρός</th>
+                                <th>Ακτινοδιαγνώστης</th>
+                                <th>Προτεραιότητα</th>
+                                <th>Ενέργειες</th>
+                            </tr>
+                        </thead>
+                        <tbody id="part-tbody"></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- ════════════ SECTION: Ιατροί ════════════ -->
+            <div id="section-doctors" class="admin-section" style="display:none;">
+                <div class="admin-card">
+                    <div class="admin-card-title">🩺 Προσθήκη Ιατρού</div>
+                    <div class="admin-form">
+                        <div class="form-group" style="margin:0;">
+                            <label class="form-label">Ονοματεπώνυμο</label>
+                            <input type="text" id="new-doc-name" class="form-input" placeholder="π.χ. Ιωάννου Ε.">
+                        </div>
+                        <div class="form-group" style="margin:0;">
+                            <label class="form-label">Ειδικότητα</label>
+                            <input type="text" id="new-doc-specialty" class="form-input" placeholder="π.χ. Καρδιολογία">
+                        </div>
+                        <div class="form-group admin-form-actions" style="margin:0;">
+                            <button class="btn btn-primary" onclick="addDoctor()">+ Προσθήκη</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="admin-card">
+                    <div class="admin-card-title">Λίστα Ιατρών</div>
+                    <table class="admin-table">
+                        <thead>
+                            <tr>
+                                <th>ID</th>
+                                <th>Ονοματεπώνυμο</th>
+                                <th>Ειδικότητα</th>
+                            </tr>
+                        </thead>
+                        <tbody id="doc-tbody"></tbody>
+                    </table>
+                </div>
+            </div>
+
+        </div> <!-- end admin-content -->
+    </div> <!-- end admin-main -->
+</div> <!-- end admin-layout -->
+
+<div class="toast-container" id="toast-container"></div>
+
+<script src="js/admin.js"></script>
+</body>
+</html>
