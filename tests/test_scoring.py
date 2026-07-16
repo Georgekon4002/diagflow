@@ -11,7 +11,7 @@ from diagflow.engine.scoring import (
     score_capacity,
     score_partnership,
     score_patient_history,
-    score_skills,
+    score_skills_weighted,
 )
 from diagflow.engine.filters import CandidateDiagnostician, ExamContext
 
@@ -47,14 +47,14 @@ class TestSkillsScoring:
 
     def test_skilled_candidate_scores_proficiency(self, sample_exam, sample_candidates):
         """Candidate with matching skill should score their proficiency level."""
-        candidate = sample_candidates[0]  # Νάτσικα: abdomen MRI, proficiency 0.9
-        result = score_skills(candidate, sample_exam)
-        assert result.raw_score == 0.9
+        candidate = sample_candidates[0]  # Νάτσικα: abdomen MRI, proficiency 1.0
+        result = score_skills_weighted(candidate, sample_exam)
+        assert result.raw_score == 1.0
 
     def test_no_skill_data_scores_neutral(self, sample_exam, sample_candidates):
         """Candidate without skill data should get a neutral 0.3 score."""
-        candidate = sample_candidates[2]  # Παπαδόπουλος: no skill match
-        result = score_skills(candidate, sample_exam)
+        candidate = CandidateDiagnostician(id=99, name="NoData")
+        result = score_skills_weighted(candidate, sample_exam)
         assert result.raw_score == 0.3
 
 

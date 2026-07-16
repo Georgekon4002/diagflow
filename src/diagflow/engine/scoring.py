@@ -81,14 +81,19 @@ def score_partnership(candidate: CandidateDiagnostician, exam: ExamContext) -> S
     Priority c: Score based on issuing doctor partnership.
 
     If the issuing doctor has a preferred diagnostician and this candidate matches,
-    they get a full score. Higher partnership priority = higher score.
+    they get a full score.
     """
-    if candidate.is_partnership_match:
-        # Normalize priority to 0.0–1.0 (assuming priority 1-5 scale)
-        raw = min(1.0, candidate.partnership_priority / 5.0) if candidate.partnership_priority > 0 else 1.0
+    if candidate.is_partnership_exclusive:
+        raw = 1.0
+        explanation = (
+            f"⚡ Αποκλειστική συνεργασία ιατρού '{exam.issuing_doctor_name}' → "
+            f"{candidate.name}"
+        )
+    elif candidate.is_partnership_match:
+        raw = 1.0
         explanation = (
             f"Προτίμηση ιατρού '{exam.issuing_doctor_name}' → "
-            f"{candidate.name} (προτεραιότητα: {candidate.partnership_priority})"
+            f"{candidate.name}"
         )
     else:
         raw = 0.0
@@ -113,11 +118,11 @@ def score_skills_weighted(candidate: CandidateDiagnostician, exam: ExamContext) 
     This is separate from the hard skills filter — it rewards expertise.
     """
     if candidate.has_skill_match and candidate.has_skill_data:
-        raw = candidate.skill_proficiency
-        explanation = (
-            f"Εξειδίκευση στο '{exam.body_part}' ({exam.modality}): "
-            f"{candidate.skill_proficiency:.0%}"
-        )
+        raw = candidate.skill_proficiency # Which is 1.0 if preferred, 0.5 if neutral
+        if raw >= 1.0:
+            explanation = f"Προτιμά εξετάσεις '{exam.body_part}' ({exam.modality})"
+        else:
+            explanation = f"Αποδεκτή εξέταση '{exam.body_part}' ({exam.modality}) (Ουδέτερο)"
     else:
         raw = 0.3  # Neutral — no data doesn't mean they can't do it
         explanation = f"Δεν υπάρχουν δεδομένα εξειδίκευσης για '{exam.body_part}' (ουδέτερο)"

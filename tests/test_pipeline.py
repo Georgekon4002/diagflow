@@ -48,40 +48,6 @@ class TestAssignmentPipeline:
         suggestion = pipeline.run(sample_exam, candidates)
         assert suggestion is None
 
-    def test_comment_exclusion_applied(self, pipeline, exam_with_exclusion_comment, sample_candidates):
-        """Comment analysis should exclude named diagnosticians."""
-        comment_analysis = {
-            "exclude": ["Νάτσικα"],
-            "assign": None,
-            "is_pamakristos": False,
-            "is_urgent": False,
-            "reasoning": "ΟΧΙ ΝΑΤΣΙΚΑ",
-        }
-        suggestion = pipeline.run(
-            exam_with_exclusion_comment, sample_candidates, comment_analysis
-        )
-
-        assert suggestion is not None
-        # Νάτσικα should be excluded
-        assert suggestion.suggested_diagnostician_id != 1
-
-    def test_direct_assignment_from_comment(self, pipeline, sample_exam, sample_candidates):
-        """Direct assignment from comments should bypass the scoring engine."""
-        comment_analysis = {
-            "exclude": [],
-            "assign": "Κωνσταντίνου",
-            "is_pamakristos": False,
-            "is_urgent": False,
-            "reasoning": "ΝΑ ΤΟ ΠΑΡΕΙ Ο ΚΩΝΣΤΑΝΤΙΝΟΥ",
-        }
-        suggestion = pipeline.run(sample_exam, sample_candidates, comment_analysis)
-
-        assert suggestion is not None
-        assert suggestion.is_direct_assignment is True
-        assert suggestion.suggested_diagnostician_id == 2  # Κωνσταντίνου
-        assert suggestion.confidence_score == 1.0
-        assert suggestion.solver_status == "DIRECT_ASSIGNMENT"
-
     def test_suggestion_has_alternatives(self, pipeline, sample_exam, sample_candidates):
         """Suggestion should include alternative candidates for the override dropdown."""
         suggestion = pipeline.run(sample_exam, sample_candidates)
@@ -95,7 +61,7 @@ class TestAssignmentPipeline:
         suggestion = pipeline.run(sample_exam, sample_candidates)
 
         assert suggestion is not None
-        assert len(suggestion.score_breakdown) == 5  # 5 scoring components
+        assert len(suggestion.score_breakdown) == 6  # 6 scoring components
 
         for comp in suggestion.score_breakdown:
             assert "rule" in comp

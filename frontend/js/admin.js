@@ -3,7 +3,7 @@
  *
  * Handles all admin CRUD operations:
  * - Εφημερία Παμμακάριστου (on-call override)
- * - Ακτινοδιαγνώστες (list, add, toggle active)
+ * - Διαγνώστες (list, add, toggle active)
  * - Διαθεσιμότητα (set per-date)
  * - Δεξιότητες (set proficiency per body-part/modality)
  * - Συνεργασίες (partnerships)
@@ -95,7 +95,7 @@ async function apiCall(endpoint, method = 'GET', body = null) {
 
 const SECTION_TITLES = {
     oncall: 'Εφημερία Παμμακάριστου',
-    diagnosticians: 'Ακτινοδιαγνώστες',
+    diagnosticians: 'Διαγνώστες',
     availability: 'Διαθεσιμότητα',
     skills: 'Δεξιότητες & Χωρητικότητα',
     partnerships: 'Συνεργασίες Ιατρών',
@@ -230,22 +230,24 @@ function renderAvailability() {
 function renderSkills() {
     const tbody = document.getElementById('skills-tbody');
     if (!skills.length) {
-        tbody.innerHTML = '<tr><td colspan="4" style="color:var(--text-tertiary);text-align:center;padding:20px;">Δεν υπάρχουν δεδομένα δεξιοτήτων</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="5" style="color:var(--text-tertiary);text-align:center;padding:20px;">Δεν υπάρχουν δεδομένα δεξιοτήτων</td></tr>';
         return;
     }
-    const bodyPartLabel = { abdomen: 'Κοιλία', chest: 'Θώρακας', neuro: 'Εγκέφαλος', msk: 'Μυοσκελετικό', spine: 'Σπονδ. Στήλη', pelvis: 'Πύελος' };
     tbody.innerHTML = skills.map(s => {
-        const pct = Math.round(s.proficiency_level * 100);
+        const isPreferred = s.is_preferred || false;
+        const examLabel = s.exam_code ? `${s.exam_code} — ${s.exam_title || s.exam_code}` : (s.body_part || '—');
         return `
             <tr>
                 <td style="font-weight:500;">${s.diagnostician_name}</td>
-                <td>${bodyPartLabel[s.body_part] || s.body_part}</td>
-                <td><span class="modality-badge ${s.modality.toLowerCase()}">${s.modality}</span></td>
+                <td style="font-family:monospace;font-size:var(--font-size-sm);">${examLabel}</td>
+                <td><span class="modality-badge ${(s.modality || '').toLowerCase()}">${s.modality || 'Any'}</span></td>
                 <td>
-                    <div class="proficiency-bar-wrap">
-                        <div class="proficiency-bar"><div class="proficiency-bar-fill" style="width:${pct}%"></div></div>
-                        <span style="font-size:var(--font-size-xs);color:var(--text-secondary);">${pct}%</span>
-                    </div>
+                    <span class="pref-badge ${isPreferred ? 'preferred' : 'neutral'}">
+                        ${isPreferred ? '★ Προτιμά' : '—'}
+                    </span>
+                </td>
+                <td>
+                    <button class="btn btn-secondary btn-sm" style="color:var(--accent-danger);" onclick="deleteSkill(${s.id})">Διαγραφή</button>
                 </td>
             </tr>
         `;
@@ -255,7 +257,7 @@ function renderSkills() {
 function renderPartnerships() {
     const tbody = document.getElementById('part-tbody');
     if (!partnerships.length) {
-        tbody.innerHTML = '<tr><td colspan="4" style="color:var(--text-tertiary);text-align:center;padding:20px;">Δεν υπάρχουν συνεργασίες</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="5" style="color:var(--text-tertiary);text-align:center;padding:20px;">Δεν υπάρχουν συνεργασίες</td></tr>';
         return;
     }
     tbody.innerHTML = partnerships.map(p => `
@@ -263,7 +265,9 @@ function renderPartnerships() {
             <td style="font-weight:500;">${p.issuing_doctor_name} <span style="color:var(--text-tertiary);font-size:11px;">(${p.issuing_doctor_id})</span></td>
             <td style="color:var(--accent-primary);font-weight:600;">${p.preferred_diagnostician_name}</td>
             <td>
-                <div style="display:flex;gap:2px;">${'★'.repeat(p.priority)}${'☆'.repeat(5-p.priority)}</div>
+                ${p.exclusive
+            ? '<span class="exclusive-badge">⚡ Αποκλειστική</span>'
+            : '<span style="color:var(--text-tertiary);font-size:var(--font-size-xs);">—</span>'}
             </td>
             <td>
                 <button class="btn btn-secondary btn-sm" style="color:var(--accent-danger);" onclick="deletePartnership(${p.id})">Διαγραφή</button>
@@ -294,7 +298,7 @@ async function setOncall() {
     const diagName = selEl.options[selEl.selectedIndex]?.dataset?.name || '';
     const dateVal = document.getElementById('oncall-date').value;
 
-    if (!diagId || !dateVal) { showToast('Επιλέξτε ακτινοδιαγνώστη και ημερομηνία', 'warning'); return; }
+    if (!diagId || !dateVal) { showToast('Επιλέξτε διαγνώστη και ημερομηνία', 'warning'); return; }
 
     try {
         await apiCall('/admin/oncall', 'POST', { diagnostician_id: diagId, diagnostician_name: diagName, date: dateVal });
@@ -350,10 +354,11 @@ async function setAvailability() {
     const diagId = parseInt(selEl.value);
     const diagName = selEl.options[selEl.selectedIndex]?.dataset?.name || '';
     const dateVal = document.getElementById('avail-date').value;
-    const status = document.getElementById('avail-status').value;
     const notes = document.getElementById('avail-notes').value.trim();
+    // Status defaults to 'on_leave' since Κατάσταση was removed
+    const status = 'on_leave';
 
-    if (!diagId || !dateVal) { showToast('Επιλέξτε ακτινοδιαγνώστη και ημερομηνία', 'warning'); return; }
+    if (!diagId || !dateVal) { showToast('Επιλέξτε διαγνώστη και ημερομηνία', 'warning'); return; }
 
     const record = { diagnostician_id: diagId, diagnostician_name: diagName, date: dateVal, status, notes };
 
@@ -369,33 +374,52 @@ async function setAvailability() {
     }
 
     renderAvailability();
-    showToast(`✅ Διαθεσιμότητα ενημερώθηκε: ${diagName}`, 'success');
+    showToast(`✅ Αποχή καταγράφηκε: ${diagName}`, 'success');
 }
 
 async function setSkill() {
     const selEl = document.getElementById('skill-diag');
     const diagId = parseInt(selEl.value);
     const diagName = selEl.options[selEl.selectedIndex]?.dataset?.name || '';
-    const body_part = document.getElementById('skill-body').value;
+    const exam_code = document.getElementById('skill-exam-code').value.trim();
     const modality = document.getElementById('skill-modality').value;
-    const proficiency_level = parseInt(document.getElementById('skill-proficiency').value) / 100;
+    const is_preferred = document.getElementById('skill-preferred').checked;
 
-    if (!diagId) { showToast('Επιλέξτε ακτινοδιαγνώστη', 'warning'); return; }
+    if (!diagId) { showToast('Επιλέξτε διαγνώστη', 'warning'); return; }
+    if (!exam_code) { showToast('Εισάγετε κωδικό εξέτασης', 'warning'); return; }
 
-    const record = { diagnostician_id: diagId, diagnostician_name: diagName, body_part, modality, proficiency_level };
+    // Build title from code map
+    const EXAM_CODE_MAP = {
+        '22100': 'Αγγειογραφία Αώρτας (CT)', '22140': 'CT Θώρακα', '21063': 'MRI Εγκεφάλου',
+        '22200': 'CT Κοιλίας', '21100': 'MRI Κοιλίας', '22310': 'CT Σπονδυλικής Στήλης',
+        '21200': 'MRI Σπονδυλικής Στήλης', '22400': 'CT Πυέλου', '21300': 'MRI Πυέλου',
+        '22500': 'CT Μυοσκελετικού', '21400': 'MRI Μυοσκελετικού',
+    };
+    const exam_title = EXAM_CODE_MAP[exam_code] || `Εξέταση ${exam_code}`;
+
+    const record = { diagnostician_id: diagId, diagnostician_name: diagName, exam_code, exam_title, modality, is_preferred };
 
     try {
         const result = await apiCall('/admin/skills', 'POST', record);
-        skills = skills.filter(s => !(s.diagnostician_id === diagId && s.body_part === body_part && s.modality === modality));
+        skills = skills.filter(s => !(s.diagnostician_id === diagId && s.exam_code === exam_code && s.modality === modality));
         if (result) skills.push(result);
         else skills.push({ id: Date.now(), ...record });
     } catch {
-        skills = skills.filter(s => !(s.diagnostician_id === diagId && s.body_part === body_part && s.modality === modality));
+        skills = skills.filter(s => !(s.diagnostician_id === diagId && s.exam_code === exam_code && s.modality === modality));
         skills.push({ id: Date.now(), ...record });
     }
 
     renderSkills();
-    showToast(`✅ Δεξιότητα ενημερώθηκε: ${diagName} — ${body_part} (${modality})`, 'success');
+    showToast(`✅ Δεξιότητα ενημερώθηκε: ${diagName} — ${exam_code}`, 'success');
+}
+
+async function deleteSkill(id) {
+    try {
+        await apiCall(`/admin/skills/${id}`, 'DELETE');
+    } catch { /* mock mode */ }
+    skills = skills.filter(s => s.id !== id);
+    renderSkills();
+    showToast('Η δεξιότητα διαγράφηκε', 'info');
 }
 
 async function addPartnership() {
@@ -404,7 +428,7 @@ async function addPartnership() {
     const diagSelEl = document.getElementById('part-diag');
     const diagId = parseInt(diagSelEl.value);
     const diagName = diagSelEl.options[diagSelEl.selectedIndex]?.dataset?.name || '';
-    const priority = parseInt(document.getElementById('part-priority').value);
+    const exclusive = document.getElementById('part-exclusive').checked;
 
     if (!doctorId || !doctorName || !diagId) {
         showToast('Συμπληρώστε όλα τα στοιχεία', 'warning');
@@ -416,7 +440,7 @@ async function addPartnership() {
         issuing_doctor_name: doctorName,
         preferred_diagnostician_id: diagId,
         preferred_diagnostician_name: diagName,
-        priority,
+        exclusive,
     };
 
     try {
@@ -429,7 +453,8 @@ async function addPartnership() {
     renderPartnerships();
     document.getElementById('part-doctor-id').value = '';
     document.getElementById('part-doctor-name').value = '';
-    showToast(`✅ Συνεργασία προστέθηκε: ${doctorName} → ${diagName}`, 'success');
+    document.getElementById('part-exclusive').checked = false;
+    showToast(`✅ Συνεργασία προστέθηκε: ${doctorName} → ${diagName}${exclusive ? ' (Αποκλειστική)' : ''}`, 'success');
 }
 
 async function deletePartnership(id) {
@@ -507,8 +532,8 @@ function getMockDiagnosticians() {
 
 function getMockPartnerships() {
     return [
-        { id: 1, issuing_doctor_id: 'DR-101', issuing_doctor_name: 'Παπαδόπουλος Ν.', preferred_diagnostician_id: 3, preferred_diagnostician_name: 'Παπαδόπουλος Γ.', priority: 5 },
-        { id: 2, issuing_doctor_id: 'DR-205', issuing_doctor_name: 'Ιωάννου Ε.', preferred_diagnostician_id: 2, preferred_diagnostician_name: 'Κωνσταντίνου Β.', priority: 4 },
+        { id: 1, issuing_doctor_id: 'DR-101', issuing_doctor_name: 'Παπαδόπουλος Ν.', preferred_diagnostician_id: 3, preferred_diagnostician_name: 'Παπαδόπουλος Γ.', priority: 5, exclusive: true },
+        { id: 2, issuing_doctor_id: 'DR-205', issuing_doctor_name: 'Ιωάννου Ε.', preferred_diagnostician_id: 2, preferred_diagnostician_name: 'Κωνσταντίνου Β.', priority: 4, exclusive: false },
     ];
 }
 
@@ -522,10 +547,10 @@ function getMockDoctors() {
 
 function getMockSkills() {
     return [
-        { id: 1, diagnostician_id: 1, diagnostician_name: 'Νάτσικα Α.', body_part: 'abdomen', modality: 'MRI', proficiency_level: 0.9 },
-        { id: 2, diagnostician_id: 1, diagnostician_name: 'Νάτσικα Α.', body_part: 'chest', modality: 'CT', proficiency_level: 0.7 },
-        { id: 3, diagnostician_id: 2, diagnostician_name: 'Κωνσταντίνου Β.', body_part: 'chest', modality: 'CT', proficiency_level: 0.95 },
-        { id: 4, diagnostician_id: 3, diagnostician_name: 'Παπαδόπουλος Γ.', body_part: 'neuro', modality: 'MRI', proficiency_level: 0.95 },
+        { id: 1, diagnostician_id: 1, diagnostician_name: 'Νάτσικα Α.', exam_code: '21100', exam_title: 'MRI Κοιλίας', modality: 'MRI', is_preferred: true },
+        { id: 2, diagnostician_id: 1, diagnostician_name: 'Νάτσικα Α.', exam_code: '22140', exam_title: 'CT Θώρακα', modality: 'CT', is_preferred: false },
+        { id: 3, diagnostician_id: 2, diagnostician_name: 'Κωνσταντίνου Β.', exam_code: '22140', exam_title: 'CT Θώρακα', modality: 'CT', is_preferred: true },
+        { id: 4, diagnostician_id: 3, diagnostician_name: 'Παπαδόπουλος Γ.', exam_code: '21063', exam_title: 'MRI Εγκεφάλου', modality: 'MRI', is_preferred: true },
     ];
 }
 

@@ -128,6 +128,16 @@ class AssignmentPipeline:
         # if direct_assignment:
         #     return self._build_direct_assignment_suggestion(exam, direct_assignment, comment_parsed_str)
 
+        # ── Step 0.5: Exclusive Partnerships ──
+        exclusive_partner = next((c for c in candidates if c.is_partnership_exclusive), None)
+        if exclusive_partner:
+            logger.info(
+                "exclusive_partnership_match",
+                exam_id=exam.exam_id,
+                diagnostician=exclusive_partner.name,
+            )
+            return self._build_exclusive_assignment_suggestion(exam, exclusive_partner)
+
         # ── Step 1: Hard filters ──
         filtered_candidates, filter_results = apply_hard_filters(candidates, exam)
 
@@ -349,4 +359,44 @@ class AssignmentPipeline:
             comment_parsed=comment_parsed,
             is_direct_assignment=True,
             direct_assignment_reason=f"Απευθείας ανάθεση στον/στην {candidate.name} βάσει σχολίου",
+        )
+
+    def _build_exclusive_assignment_suggestion(
+        self,
+        exam: ExamContext,
+        candidate: CandidateDiagnostician,
+    ) -> AssignmentSuggestion:
+        """Build a suggestion for an exclusive partnership assignment."""
+        exam_summary = (
+            f"{exam.modality} {exam.body_part} — "
+            f"Dr. {exam.issuing_doctor_name} — "
+            f"Lab {exam.lab_name}"
+        )
+
+        return AssignmentSuggestion(
+            exam_id=exam.exam_id,
+            patient_id=exam.patient_id,
+            exam_summary=exam_summary,
+            suggested_diagnostician_id=candidate.id,
+            suggested_diagnostician_name=candidate.name,
+            confidence_score=1.0,
+            score_breakdown=[
+                {
+                    "rule": "exclusive_partnership",
+                    "display_name": "Αποκλειστική Συνεργασία",
+                    "raw_score": 1.0,
+                    "weight": 1.0,
+                    "weighted_score": 1.0,
+                    "explanation": f"Απευθείας ανάθεση λόγω αποκλειστικής συνεργασίας με τον ιατρό {exam.issuing_doctor_name}.",
+                }
+            ],
+            alternatives=[],
+            rules_fired=["exclusive_partnership"],
+            filter_results={},
+            solver_status="EXCLUSIVE_ASSIGNMENT",
+            pipeline_timestamp=datetime.now().isoformat(),
+            comment_raw=exam.comments,
+            comment_parsed="",
+            is_direct_assignment=True,
+            direct_assignment_reason=f"Αποκλειστική συνεργασία (Ιατρός: {exam.issuing_doctor_name})",
         )

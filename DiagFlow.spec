@@ -35,5 +35,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=['C:\\Users\\georg\\Desktop\\internship\\diagflow\\media\\logo_multiple.png'],
+    icon=['C:\\Users\\georg\\Desktop\\internship\\diagflow\\media\\logo.ico'],
 )

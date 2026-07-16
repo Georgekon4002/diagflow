@@ -69,8 +69,8 @@ _mock_diagnosticians: list[dict] = [
 ]
 
 _mock_partnerships: list[dict] = [
-    {"id": 1, "issuing_doctor_id": "DR-101", "issuing_doctor_name": "Παπαδόπουλος Ν.", "preferred_diagnostician_id": 3, "preferred_diagnostician_name": "Παπαδόπουλος Γ.", "priority": 5},
-    {"id": 2, "issuing_doctor_id": "DR-205", "issuing_doctor_name": "Ιωάννου Ε.", "preferred_diagnostician_id": 2, "preferred_diagnostician_name": "Κωνσταντίνου Β.", "priority": 4},
+    {"id": 1, "issuing_doctor_id": "DR-101", "issuing_doctor_name": "Παπαδόπουλος Ν.", "preferred_diagnostician_id": 3, "preferred_diagnostician_name": "Παπαδόπουλος Γ.", "priority": 5, "exclusive": True},
+    {"id": 2, "issuing_doctor_id": "DR-205", "issuing_doctor_name": "Ιωάννου Ε.", "preferred_diagnostician_id": 2, "preferred_diagnostician_name": "Κωνσταντίνου Β.", "priority": 4, "exclusive": False},
 ]
 
 _mock_doctors: list[dict] = [
@@ -85,10 +85,10 @@ _mock_availability: list[dict] = [
 ]
 
 _mock_skills: list[dict] = [
-    {"id": 1, "diagnostician_id": 1, "diagnostician_name": "Νάτσικα Α.", "body_part": "abdomen", "modality": "MRI", "proficiency_level": 0.9},
-    {"id": 2, "diagnostician_id": 1, "diagnostician_name": "Νάτσικα Α.", "body_part": "chest", "modality": "CT", "proficiency_level": 0.7},
-    {"id": 3, "diagnostician_id": 2, "diagnostician_name": "Κωνσταντίνου Β.", "body_part": "chest", "modality": "CT", "proficiency_level": 0.95},
-    {"id": 4, "diagnostician_id": 3, "diagnostician_name": "Παπαδόπουλος Γ.", "body_part": "neuro", "modality": "MRI", "proficiency_level": 0.95},
+    {"id": 1, "diagnostician_id": 1, "diagnostician_name": "Νάτσικα Α.", "exam_code": "21100", "exam_title": "MRI Κοιλίας", "modality": "MRI", "is_preferred": True},
+    {"id": 2, "diagnostician_id": 1, "diagnostician_name": "Νάτσικα Α.", "exam_code": "22140", "exam_title": "CT Θώρακα", "modality": "CT", "is_preferred": False},
+    {"id": 3, "diagnostician_id": 2, "diagnostician_name": "Κωνσταντίνου Β.", "exam_code": "22140", "exam_title": "CT Θώρακα", "modality": "CT", "is_preferred": True},
+    {"id": 4, "diagnostician_id": 3, "diagnostician_name": "Παπαδόπουλος Γ.", "exam_code": "21063", "exam_title": "MRI Εγκεφάλου", "modality": "MRI", "is_preferred": True},
 ]
 
 _mock_oncall: dict = {"diagnostician_id": 3, "diagnostician_name": "Παπαδόπουλος Γ.", "date": str(date.today())}
@@ -416,6 +416,7 @@ class PartnershipCreateRequest(BaseModel):
     preferred_diagnostician_id: int
     preferred_diagnostician_name: str
     priority: int = 1
+    exclusive: bool = False
 
 
 @router.get("/admin/partnerships")
@@ -505,9 +506,10 @@ async def admin_set_availability(
 class SkillSetRequest(BaseModel):
     diagnostician_id: int
     diagnostician_name: str
-    body_part: str
+    exam_code: str
+    exam_title: str
     modality: str
-    proficiency_level: float
+    is_preferred: bool
 
 
 @router.get("/admin/skills")
@@ -522,7 +524,7 @@ async def admin_set_skill(req: SkillSetRequest, _: str = Depends(_require_admin)
     _mock_skills = [
         s for s in _mock_skills
         if not (s["diagnostician_id"] == req.diagnostician_id
-                and s["body_part"] == req.body_part
+                and s["exam_code"] == req.exam_code
                 and s["modality"] == req.modality)
     ]
     new_id = max((s["id"] for s in _mock_skills), default=0) + 1
@@ -547,7 +549,12 @@ async def admin_get_oncall(_: str = Depends(_require_admin)):
 
 
 @router.post("/admin/oncall")
-async def admin_set_oncall(req: OncallSetRequest, _: str = Depends(_require_admin)):
+async def admin_set_oncall(
+    req: OncallSetRequest,
+    _: str = Depends(_require_admin),
+    scheduler: PamakristosScheduler = Depends(get_pamakristos_scheduler),
+):
     global _mock_oncall
     _mock_oncall = req.model_dump()
+    scheduler.set_manual_override_from_admin(_mock_oncall)
     return _mock_oncall

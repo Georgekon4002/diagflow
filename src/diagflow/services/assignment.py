@@ -93,8 +93,18 @@ class AssignmentService:
             diagnostician_id=diagnostician_id,
         )
 
-        # TODO: Write to assignment_log table
-        # TODO: Write to Slis assignments table
+        # Move from pending to assigned mock
+        for i, e in enumerate(_mock_pending_exams):
+            if e["exam_id"] == exam_id:
+                exam = _mock_pending_exams.pop(i)
+                from diagflow.api.routes import _mock_assigned_exams, _mock_diagnosticians
+                exam["status"] = "assigned"
+                exam["assigned_diagnostician_id"] = diagnostician_id
+                exam["assigned_at"] = datetime.now().isoformat()
+                d_name = next((d["name"] for d in _mock_diagnosticians if d["id"] == diagnostician_id), "Άγνωστος")
+                exam["assigned_diagnostician_name"] = d_name
+                _mock_assigned_exams.insert(0, exam)
+                break
 
         return log_entry
 
@@ -135,88 +145,97 @@ class AssignmentService:
             reason=reason,
         )
 
-        # TODO: Write to assignment_log table (was_overridden = True)
-        # TODO: Write to Slis assignments table
+        # Move from pending to assigned mock
+        for i, e in enumerate(_mock_pending_exams):
+            if e["exam_id"] == exam_id:
+                exam = _mock_pending_exams.pop(i)
+                from diagflow.api.routes import _mock_assigned_exams, _mock_diagnosticians
+                exam["status"] = "assigned"
+                exam["assigned_diagnostician_id"] = override_diagnostician_id
+                exam["assigned_at"] = datetime.now().isoformat()
+                d_name = next((d["name"] for d in _mock_diagnosticians if d["id"] == override_diagnostician_id), "Άγνωστος")
+                exam["assigned_diagnostician_name"] = d_name
+                _mock_assigned_exams.insert(0, exam)
+                break
 
         return log_entry
 
-    async def get_pending_exams(self) -> list[dict]:
-        """
-        Fetch pending (unassigned) exams from Slis.
+_mock_pending_exams = [
+    {
+        "exam_id": "EX-2026-001",
+        "patient_id": "PT-5432",
+        "patient_name": "Γεώργιος Κ.",
+        "modality": "MRI",
+        "body_part": "abdomen",
+        "lab_id": "LAB-KIF",
+        "lab_name": "Κηφισιά",
+        "issuing_doctor_id": "DR-101",
+        "issuing_doctor_name": "Παπαδόπουλος Ν.",
+        "request_date": "2026-07-10",
+        "status": "pending",
+        "comments": "",
+    },
+    {
+        "exam_id": "EX-2026-002",
+        "patient_id": "PT-8821",
+        "patient_name": "Μαρία Α.",
+        "modality": "CT",
+        "body_part": "chest",
+        "lab_id": "LAB-MAR",
+        "lab_name": "Μαρούσι",
+        "issuing_doctor_id": "DR-205",
+        "issuing_doctor_name": "Ιωάννου Ε.",
+        "request_date": "2026-07-10",
+        "status": "pending",
+        "comments": "Επείγον",
+    },
+    {
+        "exam_id": "EX-2026-003",
+        "patient_id": "PT-1190",
+        "patient_name": "Δημήτρης Λ.",
+        "modality": "MRI",
+        "body_part": "neuro",
+        "lab_id": "LAB-KIF",
+        "lab_name": "Κηφισιά",
+        "issuing_doctor_id": "DR-101",
+        "issuing_doctor_name": "Παπαδόπουλος Ν.",
+        "request_date": "2026-07-10",
+        "status": "pending",
+        "comments": "ΟΧΙ ΝΑΤΣΙΚΑ, ασθενής ζήτησε συγκεκριμένο ιατρό",
+    },
+    {
+        "exam_id": "EX-2026-004",
+        "patient_id": "PT-3301",
+        "patient_name": "Ελένη Π.",
+        "modality": "CT",
+        "body_part": "abdomen",
+        "lab_id": "LAB-PAM",
+        "lab_name": "Παμμακάριστος",
+        "issuing_doctor_id": "DR-PAM-01",
+        "issuing_doctor_name": "Παμμακάριστος (Εφημερία)",
+        "request_date": "2026-07-10",
+        "status": "pending",
+        "comments": "ΕΦΗΜΕΡΙΑ ΠΑΜΜΑΚΑΡΙΣΤΟΥ",
+    },
+    {
+        "exam_id": "EX-2026-005",
+        "patient_id": "PT-6677",
+        "patient_name": "Αντώνης Σ.",
+        "modality": "MRI",
+        "body_part": "msk",
+        "lab_id": "LAB-GLY",
+        "lab_name": "Γλυφάδα",
+        "issuing_doctor_id": "DR-310",
+        "issuing_doctor_name": "Βασιλείου Κ.",
+        "request_date": "2026-07-10",
+        "status": "pending",
+        "comments": "",
+    },
+]
 
-        TODO: Replace with real Slis query when DB access is available.
-        Returns mock data for development.
-        """
-        # Mock data for development
-        return [
-            {
-                "exam_id": "EX-2026-001",
-                "patient_id": "PT-5432",
-                "patient_name": "Γεώργιος Κ.",
-                "modality": "MRI",
-                "body_part": "abdomen",
-                "lab_id": "LAB-KIF",
-                "lab_name": "Κηφισιά",
-                "issuing_doctor_id": "DR-101",
-                "issuing_doctor_name": "Παπαδόπουλος Ν.",
-                "request_date": "2026-07-10",
-                "status": "pending",
-                "comments": "",
-            },
-            {
-                "exam_id": "EX-2026-002",
-                "patient_id": "PT-8821",
-                "patient_name": "Μαρία Α.",
-                "modality": "CT",
-                "body_part": "chest",
-                "lab_id": "LAB-MAR",
-                "lab_name": "Μαρούσι",
-                "issuing_doctor_id": "DR-205",
-                "issuing_doctor_name": "Ιωάννου Ε.",
-                "request_date": "2026-07-10",
-                "status": "pending",
-                "comments": "Επείγον",
-            },
-            {
-                "exam_id": "EX-2026-003",
-                "patient_id": "PT-1190",
-                "patient_name": "Δημήτρης Λ.",
-                "modality": "MRI",
-                "body_part": "neuro",
-                "lab_id": "LAB-KIF",
-                "lab_name": "Κηφισιά",
-                "issuing_doctor_id": "DR-101",
-                "issuing_doctor_name": "Παπαδόπουλος Ν.",
-                "request_date": "2026-07-10",
-                "status": "pending",
-                "comments": "ΟΧΙ ΝΑΤΣΙΚΑ, ασθενής ζήτησε συγκεκριμένο ιατρό",
-            },
-            {
-                "exam_id": "EX-2026-004",
-                "patient_id": "PT-3301",
-                "patient_name": "Ελένη Π.",
-                "modality": "CT",
-                "body_part": "abdomen",
-                "lab_id": "LAB-PAM",
-                "lab_name": "Παμμακάριστος",
-                "issuing_doctor_id": "DR-PAM-01",
-                "issuing_doctor_name": "Παμμακάριστος (Εφημερία)",
-                "request_date": "2026-07-10",
-                "status": "pending",
-                "comments": "ΕΦΗΜΕΡΙΑ ΠΑΜΜΑΚΑΡΙΣΤΟΥ",
-            },
-            {
-                "exam_id": "EX-2026-005",
-                "patient_id": "PT-6677",
-                "patient_name": "Αντώνης Σ.",
-                "modality": "MRI",
-                "body_part": "msk",
-                "lab_id": "LAB-GLY",
-                "lab_name": "Γλυφάδα",
-                "issuing_doctor_id": "DR-310",
-                "issuing_doctor_name": "Βασιλείου Κ.",
-                "request_date": "2026-07-10",
-                "status": "pending",
-                "comments": "",
-            },
-        ]
+# Re-inject the method into AssignmentService
+def _get_pending_exams(self) -> list[dict]:
+    """Fetch pending exams."""
+    return _mock_pending_exams
+
+AssignmentService.get_pending_exams = _get_pending_exams # type: ignore

@@ -12,11 +12,15 @@ Usage (for testing):
     python -m diagflow.launcher
 """
 
+import os
 import sys
 import time
 import threading
-import webbrowser
+import webview
 from pathlib import Path
+
+# Force UTF-8 encoding for standard output to prevent UnicodeEncodeError on Windows
+os.environ["PYTHONIOENCODING"] = "utf-8"
 
 
 # ── Port configuration ──
@@ -54,7 +58,7 @@ def start_server():
     try:
         from fastapi.routing import Mount
         # Remove existing static mount if present
-        app.routes = [r for r in app.routes if not (isinstance(r, Mount) and r.name == "frontend")]
+        app.router.routes = [r for r in app.router.routes if not (isinstance(r, Mount) and r.name == "frontend")]
     except Exception:
         pass
 
@@ -100,23 +104,19 @@ def main():
 
     if ready:
         print(" OK")
-        print(f"  Opening browser at {APP_URL}")
-        webbrowser.open(APP_URL)
+        print(f"  Opening DiagFlow App Window...")
+        # Create an app window using pywebview
+        webview.create_window('DiagFlow - Diagnostic Routing System', APP_URL, width=1280, height=800)
+        # webview.start() is blocking. It keeps the main thread alive.
+        webview.start()
+        print("\n  DiagFlow window closed. Shutting down...")
     else:
         print(" TIMEOUT")
-        print(f"  Could not verify server start. Opening browser anyway: {APP_URL}")
-        webbrowser.open(APP_URL)
+        print(f"  Could not verify server start. Exiting.")
+        sys.exit(1)
 
-    print("\n  DiagFlow is running. Close this window to stop the application.")
-    print("  Press Ctrl+C to exit.\n")
-
-    # Keep the main thread alive
-    try:
-        server_thread.join()
-    except KeyboardInterrupt:
-        print("\n  Shutting down DiagFlow...")
-        sys.exit(0)
-
+    # Server thread is a daemon, so exiting main thread will kill it.
+    sys.exit(0)
 
 if __name__ == "__main__":
     main()

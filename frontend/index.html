@@ -1,16 +1,21 @@
 <!DOCTYPE html>
 <html lang="el">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="description" content="DiagFlow — Αυτόματη ανάθεση ακτινοδιαγνωστικών εξετάσεων CT/MRI">
+    <meta name="description" content="DiagFlow — Αυτόματη ανάθεση διαγνωστικών εξετάσεων CT/MRI">
     <title>DiagFlow — Πίνακας Ελέγχου</title>
     <link rel="icon" type="image/png" href="media/logo_multiple.png">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap"
+        rel="stylesheet">
     <link rel="stylesheet" href="css/styles.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/themes/airbnb.css">
 </head>
+
 <body>
 
     <!-- ─── Header ─── -->
@@ -31,7 +36,9 @@
                 <!-- Shown when NOT logged in -->
                 <button class="btn btn-admin-login" id="btn-admin-login" onclick="openLoginModal()">
                     <svg width="15" height="15" viewBox="0 0 15 15" fill="none">
-                        <path d="M7.5 1.5a3 3 0 1 1 0 6 3 3 0 0 1 0-6zm0 8c3.314 0 6 1.343 6 3v.5H1.5V12.5c0-1.657 2.686-3 6-3z" fill="currentColor"/>
+                        <path
+                            d="M7.5 1.5a3 3 0 1 1 0 6 3 3 0 0 1 0-6zm0 8c3.314 0 6 1.343 6 3v.5H1.5V12.5c0-1.657 2.686-3 6-3z"
+                            fill="currentColor" />
                     </svg>
                     Σύνδεση Admin
                 </button>
@@ -40,16 +47,18 @@
                 <div class="admin-logged-in" id="admin-logged-in" style="display:none;">
                     <span class="admin-badge">
                         <svg width="13" height="13" viewBox="0 0 13 13" fill="none">
-                            <path d="M6.5 1a2.5 2.5 0 1 1 0 5 2.5 2.5 0 0 1 0-5zm0 6.5c2.76 0 5 1.12 5 2.5v.5H1.5v-.5c0-1.38 2.24-2.5 5-2.5z" fill="currentColor"/>
+                            <path
+                                d="M6.5 1a2.5 2.5 0 1 1 0 5 2.5 2.5 0 0 1 0-5zm0 6.5c2.76 0 5 1.12 5 2.5v.5H1.5v-.5c0-1.38 2.24-2.5 5-2.5z"
+                                fill="currentColor" />
                         </svg>
                         Admin
                     </span>
                     <button class="btn btn-panel" onclick="goToAdmin()">
                         <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-                            <rect x="1" y="1" width="5" height="5" rx="1" stroke="currentColor" stroke-width="1.4"/>
-                            <rect x="8" y="1" width="5" height="5" rx="1" stroke="currentColor" stroke-width="1.4"/>
-                            <rect x="1" y="8" width="5" height="5" rx="1" stroke="currentColor" stroke-width="1.4"/>
-                            <rect x="8" y="8" width="5" height="5" rx="1" stroke="currentColor" stroke-width="1.4"/>
+                            <rect x="1" y="1" width="5" height="5" rx="1" stroke="currentColor" stroke-width="1.4" />
+                            <rect x="8" y="1" width="5" height="5" rx="1" stroke="currentColor" stroke-width="1.4" />
+                            <rect x="1" y="8" width="5" height="5" rx="1" stroke="currentColor" stroke-width="1.4" />
+                            <rect x="8" y="8" width="5" height="5" rx="1" stroke="currentColor" stroke-width="1.4" />
                         </svg>
                         Admin Panel
                     </button>
@@ -87,10 +96,12 @@
                     <!-- Search -->
                     <div class="search-wrapper">
                         <svg class="search-icon" width="15" height="15" viewBox="0 0 15 15" fill="none">
-                            <circle cx="6.5" cy="6.5" r="5" stroke="currentColor" stroke-width="1.5"/>
-                            <path d="M10.5 10.5L13 13" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+                            <circle cx="6.5" cy="6.5" r="5" stroke="currentColor" stroke-width="1.5" />
+                            <path d="M10.5 10.5L13 13" stroke="currentColor" stroke-width="1.5"
+                                stroke-linecap="round" />
                         </svg>
-                        <input type="text" id="search-input" class="search-input" placeholder="Αναζήτηση ασθενή, εξέταση, ιατρό…" oninput="applyFilters()">
+                        <input type="text" id="search-input" class="search-input" placeholder="Αναζήτηση"
+                            oninput="applyFilters()">
                     </div>
 
                     <!-- Filters -->
@@ -99,22 +110,47 @@
                         <option value="CT">CT</option>
                         <option value="MRI">MRI</option>
                     </select>
-                    <select id="filter-lab" class="filter-select" onchange="applyFilters()">
-                        <option value="">Εργαστήριο (όλα)</option>
-                        <option value="LAB-KIF">Κηφισιά</option>
-                        <option value="LAB-MAR">Μαρούσι</option>
-                        <option value="LAB-GLY">Γλυφάδα</option>
-                        <option value="LAB-PAM">Παμμακάριστος</option>
-                    </select>
-                    <input type="date" id="filter-date" class="filter-select" onchange="applyFilters()" title="Φιλτράρισμα κατά ημερομηνία">
+                    <!-- Lab multi-select checkbox dropdown -->
+                    <div class="lab-filter-wrap" id="lab-filter-wrap">
+                        <button class="lab-filter-btn" id="lab-filter-btn" type="button"
+                            onclick="toggleLabDropdown(event)">
+                            <span id="lab-filter-label">Εργαστήριο (όλα)</span>
+                            <span class="lab-filter-arrow">▼</span>
+                        </button>
+                        <div class="lab-dropdown" id="lab-dropdown">
+                            <label class="lab-option">
+                                <input type="checkbox" id="lab-kif" value="LAB-KIF" onchange="applyFilters()">
+                                <label for="lab-kif">Κηφισιά</label>
+                            </label>
+                            <label class="lab-option">
+                                <input type="checkbox" id="lab-mar" value="LAB-MAR" onchange="applyFilters()">
+                                <label for="lab-mar">Μαρούσι</label>
+                            </label>
+                            <label class="lab-option">
+                                <input type="checkbox" id="lab-gly" value="LAB-GLY" onchange="applyFilters()">
+                                <label for="lab-gly">Γλυφάδα</label>
+                            </label>
+                            <label class="lab-option">
+                                <input type="checkbox" id="lab-pam" value="LAB-PAM" onchange="applyFilters()">
+                                <label for="lab-pam">Παμμακάριστος</label>
+                            </label>
+                        </div>
+                    </div>
+                    <!-- Date range -->
+                    <div class="date-range-wrap">
+                        <input type="text" id="filter-date-range" class="date-range-input"
+                            placeholder="Ημερομηνίες (dd/mm/yyyy)" readonly>
+                    </div>
 
                     <button class="btn btn-ghost" onclick="clearFilters()" id="btn-clear-filters" style="display:none;">
                         ✕ Καθαρισμός
                     </button>
                     <button class="btn btn-secondary" id="btn-refresh" onclick="refreshCurrentTab()">
                         <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-                            <path d="M12 7A5 5 0 1 1 7 2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
-                            <path d="M12 2v4h-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                            <path d="M12 7A5 5 0 1 1 7 2" stroke="currentColor" stroke-width="1.5"
+                                stroke-linecap="round" />
+                            <path d="M12 2v4h-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"
+                                stroke-linejoin="round" />
                         </svg>
                         Ανανέωση
                     </button>
@@ -131,7 +167,7 @@
                                 <th>Ασθενής</th>
                                 <th>Ημερ/νία</th>
                                 <th>Τύπος</th>
-                                <th>Περιοχή</th>
+                                <th>Εξέταση</th>
                                 <th>Εργαστήριο</th>
                                 <th>Παραπέμπων Ιατρός</th>
                                 <th>Σχόλια</th>
@@ -145,8 +181,10 @@
                     </table>
                     <div class="empty-state" id="empty-state-pending" style="display: none;">
                         <svg width="64" height="64" viewBox="0 0 64 64" fill="none">
-                            <circle cx="32" cy="32" r="30" stroke="var(--border-color)" stroke-width="2" stroke-dasharray="6 4"/>
-                            <path d="M22 32L28 38L42 24" stroke="var(--text-tertiary)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+                            <circle cx="32" cy="32" r="30" stroke="var(--border-color)" stroke-width="2"
+                                stroke-dasharray="6 4" />
+                            <path d="M22 32L28 38L42 24" stroke="var(--text-tertiary)" stroke-width="2.5"
+                                stroke-linecap="round" stroke-linejoin="round" />
                         </svg>
                         <p>Δεν υπάρχουν εκκρεμείς εξετάσεις</p>
                     </div>
@@ -163,10 +201,10 @@
                                 <th>Ασθενής</th>
                                 <th>Ημερ/νία</th>
                                 <th>Τύπος</th>
-                                <th>Περιοχή</th>
+                                <th>Εξέταση</th>
                                 <th>Εργαστήριο</th>
                                 <th>Παραπέμπων Ιατρός</th>
-                                <th>Ακτινοδιαγνώστης</th>
+                                <th>Διαγνώστης</th>
                                 <th>Ώρα Ανάθεσης</th>
                             </tr>
                         </thead>
@@ -176,8 +214,10 @@
                     </table>
                     <div class="empty-state" id="empty-state-assigned" style="display: none;">
                         <svg width="64" height="64" viewBox="0 0 64 64" fill="none">
-                            <circle cx="32" cy="32" r="30" stroke="var(--border-color)" stroke-width="2" stroke-dasharray="6 4"/>
-                            <path d="M22 32L28 38L42 24" stroke="var(--text-tertiary)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+                            <circle cx="32" cy="32" r="30" stroke="var(--border-color)" stroke-width="2"
+                                stroke-dasharray="6 4" />
+                            <path d="M22 32L28 38L42 24" stroke="var(--text-tertiary)" stroke-width="2.5"
+                                stroke-linecap="round" stroke-linejoin="round" />
                         </svg>
                         <p>Δεν υπάρχουν ανατεθειμένες εξετάσεις</p>
                     </div>
@@ -197,12 +237,13 @@
             <div class="modal-body">
                 <div class="form-group">
                     <label class="form-label">Όνομα Χρήστη</label>
-                    <input type="text" id="login-username" class="form-input" placeholder="admin" autocomplete="username">
+                    <input type="text" id="login-username" class="form-input" placeholder="admin"
+                        autocomplete="username">
                 </div>
                 <div class="form-group">
                     <label class="form-label">Κωδικός</label>
-                    <input type="password" id="login-password" class="form-input" placeholder="••••••••" autocomplete="current-password"
-                        onkeydown="if(event.key==='Enter') doLogin()">
+                    <input type="password" id="login-password" class="form-input" placeholder="••••••••"
+                        autocomplete="current-password" onkeydown="if(event.key==='Enter') doLogin()">
                 </div>
                 <div id="login-error" class="login-error" style="display:none;"></div>
             </div>
@@ -243,8 +284,9 @@
 
                 <!-- Alternatives -->
                 <div class="alternatives-section" id="alternatives-section">
-                    <h4>Εναλλακτικοί Ακτινοδιαγνώστες</h4>
-                    <p class="alternatives-note">Οι εξαιρεθέντες από κανόνες εμφανίζονται με κόκκινο φόντο. Μπορείτε να τους επιλέξετε με χειροκίνητη παράκαμψη.</p>
+                    <h4>Εναλλακτικοί Διαγνώστες</h4>
+                    <p class="alternatives-note">Οι εξαιρεθέντες από κανόνες εμφανίζονται με κόκκινο φόντο. Μπορείτε να
+                        τους επιλέξετε με χειροκίνητη παράκαμψη.</p>
                     <div class="alternatives-list" id="alternatives-list">
                         <!-- Populated by JavaScript -->
                     </div>
@@ -256,7 +298,8 @@
                     <select class="override-select" id="override-select">
                         <option value="">— Επιλέξτε εναλλακτικό —</option>
                     </select>
-                    <input type="text" class="override-reason" id="override-reason" placeholder="Αιτιολογία αλλαγής (προαιρετικό)">
+                    <input type="text" class="override-reason" id="override-reason"
+                        placeholder="Αιτιολογία αλλαγής (προαιρετικό)">
                 </div>
             </div>
             <div class="modal-footer">
@@ -274,6 +317,9 @@
     <!-- ─── Toast Notification ─── -->
     <div class="toast-container" id="toast-container"></div>
 
+    <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
+    <script src="https://cdn.jsdelivr.net/npm/flatpickr/dist/l10n/gr.js"></script>
     <script src="js/app.js"></script>
 </body>
+
 </html>

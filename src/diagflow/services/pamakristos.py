@@ -31,6 +31,8 @@ class PamakristosScheduler:
         # (ids 3 and 5 have LAB-PAM in their accepted labs)
     }
 
+    _manual_override: dict | None = None
+
     async def get_oncall_diagnostician(self, target_date: date | None = None) -> dict | None:
         """
         Get the on-call diagnostician for Παμακάριστος on a given date.
@@ -42,6 +44,15 @@ class PamakristosScheduler:
             Dict with diagnostician info, or None if not set
         """
         target = target_date or date.today()
+
+        # Check for manual override first
+        if self._manual_override and self._manual_override.get("date") == target.isoformat():
+            return {
+                "date": target.isoformat(),
+                "diagnostician_id": self._manual_override["diagnostician_id"],
+                "diagnostician_name": self._manual_override["diagnostician_name"],
+                "source": "manual_override",
+            }
 
         # TODO: Query diagnostician_availability where is_pamakristos_oncall = True
         # For now, use a simple round-robin between eligible diagnosticians
@@ -94,12 +105,24 @@ class PamakristosScheduler:
             set_by=set_by,
         )
 
+        mock_names = {3: "Παπαδόπουλος Γ.", 5: "Δημητρίου Ε."}
+        # In a real app we'd query the DB for the name
+        self._manual_override = {
+            "diagnostician_id": diagnostician_id,
+            "diagnostician_name": mock_names.get(diagnostician_id, "Χειροκίνητη Ανάθεση"),
+            "date": target_date.isoformat()
+        }
+
         return {
             "date": target_date.isoformat(),
             "diagnostician_id": diagnostician_id,
             "set_by": set_by,
             "status": "set",
         }
+
+    def set_manual_override_from_admin(self, override_data: dict):
+        """Helper to sync admin state for mocks"""
+        self._manual_override = override_data
 
     async def get_weekly_schedule(self, start_date: date | None = None) -> list[dict]:
         """

@@ -74,7 +74,7 @@ class CandidateDiagnostician:
 
     # Partnership
     is_partnership_match: bool = False
-    partnership_priority: int = 0
+    is_partnership_exclusive: bool = False
 
     # Patient history
     has_patient_history: bool = False
@@ -152,24 +152,19 @@ def filter_by_skills_hard(
     If no skill data exists, the candidate passes (they get a neutral 0.3
     in the weighted scoring phase, not an elimination).
     """
-    if candidate.has_skill_data and candidate.skill_proficiency == 0.0:
+    if candidate.skill_proficiency == 0.0:
         return FilterResult(
             passed=False,
             rule_name="skills",
             reason=(
                 f"Ο/Η {candidate.name} δεν έχει εξειδίκευση "
-                f"σε '{exam.body_part}' ({exam.modality}) — καταγεγραμμένη επάρκεια: 0%"
+                f"σε '{exam.body_part}' ({exam.modality}) — μη προτιμώμενη/αποδεκτή"
             ),
         )
     return FilterResult(
         passed=True,
         rule_name="skills",
-        reason=(
-            f"Εξειδίκευση '{exam.body_part}' ({exam.modality}): "
-            f"{candidate.skill_proficiency:.0%}"
-            if candidate.has_skill_data
-            else "Δεν υπάρχουν δεδομένα εξειδίκευσης (ουδέτερη βαθμολογία)"
-        ),
+        reason=f"Εξειδίκευση '{exam.body_part}' ({exam.modality}): Αποδεκτή"
     )
 
 

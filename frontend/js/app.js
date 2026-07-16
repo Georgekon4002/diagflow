@@ -23,6 +23,8 @@ let currentExamId = null;
 let diagnosticians = [];
 let currentTab = 'pending';   // 'pending' | 'assigned'
 
+let dateRangePicker = null;
+
 // Admin session
 let adminToken = sessionStorage.getItem('adminToken') || null;
 
@@ -33,6 +35,17 @@ let adminToken = sessionStorage.getItem('adminToken') || null;
 
 document.addEventListener('DOMContentLoaded', async () => {
     restoreAdminState();
+    
+    // Initialize date range picker
+    dateRangePicker = flatpickr("#filter-date-range", {
+        mode: "range",
+        dateFormat: "d/m/Y",
+        locale: "gr",
+        onChange: function(selectedDates, dateStr, instance) {
+            applyFilters();
+        }
+    });
+
     await Promise.all([
         loadPendingExams(),
         loadAssignedExams(),
@@ -87,6 +100,20 @@ async function loadPendingExams() {
     }
     renderPendingTable();
     updateTabCounts();
+
+    // Auto-fetch suggestions in background
+    Promise.all(pendingExams.filter(e => !e.suggestion).map(async exam => {
+        try {
+            let suggestion = await apiCall('/assignments/suggest', 'POST', { exam_id: exam.exam_id });
+            if (!suggestion) suggestion = getMockSuggestion(exam.exam_id);
+            exam.suggestion = suggestion;
+        } catch (e) {}
+    })).then(() => {
+        if (currentTab === 'pending') {
+            renderPendingTable();
+            applyFilters();
+        }
+    });
 }
 
 async function loadAssignedExams() {
@@ -177,21 +204,54 @@ function updateTabCounts() {
 function applyFilters() {
     const search = document.getElementById('search-input').value.toLowerCase().trim();
     const modality = document.getElementById('filter-modality').value;
-    const lab = document.getElementById('filter-lab').value;
-    const dateVal = document.getElementById('filter-date').value;
+    const selectedLabs = Array.from(document.querySelectorAll('.lab-option input[type="checkbox"]:checked')).map(cb => cb.value);
 
-    const hasFilters = search || modality || lab || dateVal;
+    let dateFrom = null;
+    let dateTo = null;
+    
+    if (dateRangePicker && dateRangePicker.selectedDates.length > 0) {
+        // Flatpickr returns local Date objects. We need to convert them to YYYY-MM-DD for comparison
+        const fromDate = dateRangePicker.selectedDates[0];
+        dateFrom = fromDate.getFullYear() + '-' + String(fromDate.getMonth() + 1).padStart(2, '0') + '-' + String(fromDate.getDate()).padStart(2, '0');
+        
+        if (dateRangePicker.selectedDates.length === 2) {
+            const toDate = dateRangePicker.selectedDates[1];
+            dateTo = toDate.getFullYear() + '-' + String(toDate.getMonth() + 1).padStart(2, '0') + '-' + String(toDate.getDate()).padStart(2, '0');
+        } else {
+            // If only one date is selected, treat it as both from and to
+            dateTo = dateFrom;
+        }
+    }
+
+    const hasFilters = search || modality || selectedLabs.length > 0 || dateFrom || dateTo;
     document.getElementById('btn-clear-filters').style.display = hasFilters ? 'flex' : 'none';
 
+    // Update lab button label
+    const labBtn = document.getElementById('lab-filter-btn');
+    if (labBtn) {
+        const labelEl = document.getElementById('lab-filter-label');
+        if (selectedLabs.length === 0) {
+            labelEl.textContent = 'Εργαστήριο (όλα)';
+            labBtn.classList.remove('has-selection');
+        } else if (selectedLabs.length === 1) {
+            const labNames = { 'LAB-KIF': 'Κηφισιά', 'LAB-MAR': 'Μαρούσι', 'LAB-GLY': 'Γλυφάδα', 'LAB-PAM': 'Παμμακάριστος' };
+            labelEl.textContent = labNames[selectedLabs[0]] || selectedLabs[0];
+            labBtn.classList.add('has-selection');
+        } else {
+            labelEl.textContent = `${selectedLabs.length} εργαστήρια`;
+            labBtn.classList.add('has-selection');
+        }
+    }
+
     if (currentTab === 'pending') {
-        const filtered = pendingExams.filter(e => matchesFilters(e, search, modality, lab, dateVal));
+        const filtered = pendingExams.filter(e => matchesFilters(e, search, modality, selectedLabs, dateFrom, dateTo));
         renderPendingRows(filtered);
         document.getElementById('section-count').textContent =
             filtered.length === pendingExams.length
                 ? `${pendingExams.length} σύνολο`
                 : `${filtered.length} από ${pendingExams.length}`;
     } else {
-        const filtered = assignedExams.filter(e => matchesFilters(e, search, modality, lab, dateVal));
+        const filtered = assignedExams.filter(e => matchesFilters(e, search, modality, selectedLabs, dateFrom, dateTo));
         renderAssignedRows(filtered);
         document.getElementById('section-count').textContent =
             filtered.length === assignedExams.length
@@ -200,17 +260,18 @@ function applyFilters() {
     }
 }
 
-function matchesFilters(exam, search, modality, lab, dateVal) {
+function matchesFilters(exam, search, modality, selectedLabs, dateFrom, dateTo) {
     if (modality && exam.modality !== modality) return false;
-    if (lab && exam.lab_id !== lab) return false;
-    if (dateVal && exam.request_date !== dateVal) return false;
+    if (selectedLabs.length > 0 && !selectedLabs.includes(exam.lab_id)) return false;
+    if (dateFrom && exam.request_date < dateFrom) return false;
+    if (dateTo && exam.request_date > dateTo) return false;
     if (search) {
         const haystack = [
             exam.exam_id,
             exam.patient_name,
             exam.issuing_doctor_name,
             exam.lab_name,
-            exam.body_part,
+            exam.exam_title || exam.body_part,
             exam.assigned_diagnostician_name || '',
         ].join(' ').toLowerCase();
         if (!haystack.includes(search)) return false;
@@ -221,9 +282,19 @@ function matchesFilters(exam, search, modality, lab, dateVal) {
 function clearFilters(rerender = true) {
     document.getElementById('search-input').value = '';
     document.getElementById('filter-modality').value = '';
-    document.getElementById('filter-lab').value = '';
-    document.getElementById('filter-date').value = '';
+    
+    if (dateRangePicker) {
+        dateRangePicker.clear();
+    }
+
+    // Uncheck all lab checkboxes
+    document.querySelectorAll('.lab-dropdown input[type="checkbox"]').forEach(cb => cb.checked = false);
     document.getElementById('btn-clear-filters').style.display = 'none';
+    // Reset lab label
+    const labelEl = document.getElementById('lab-filter-label');
+    if (labelEl) labelEl.textContent = 'Εργαστήριο (όλα)';
+    const labBtn = document.getElementById('lab-filter-btn');
+    if (labBtn) labBtn.classList.remove('has-selection');
     if (rerender) applyFilters();
 }
 
@@ -251,6 +322,7 @@ function renderPendingRows(exams) {
         const hasComment = exam.comments && exam.comments.trim().length > 0;
         const hasSuggestion = exam.suggestion != null;
         const dateStr = exam.request_date ? formatDate(exam.request_date) : '—';
+        const examTitle = exam.exam_title || getExamTitle(exam.exam_code) || exam.body_part || '—';
 
         return `
             <tr id="row-${exam.exam_id}">
@@ -262,11 +334,17 @@ function renderPendingRows(exams) {
                 <td>
                     <span class="modality-badge ${exam.modality.toLowerCase()}">${exam.modality}</span>
                 </td>
-                <td><span class="body-part-tag">${translateBodyPart(exam.body_part)}</span></td>
+                <td><span class="body-part-tag">${examTitle}</span></td>
                 <td>${exam.lab_name}</td>
                 <td>${exam.issuing_doctor_name}</td>
-                <td class="comment-cell ${hasComment ? 'has-comment' : ''}" title="${exam.comments || '—'}">
-                    ${hasComment ? exam.comments : '—'}
+                <td class="comment-cell">
+                    ${hasComment
+                        ? `<div class="comment-btn-wrap">
+                                <button class="comment-btn">💬 Σχόλιο</button>
+                                <div class="comment-popup">${escapeHtmlFull(exam.comments)}</div>
+                           </div>`
+                        : '<span style="color:var(--text-tertiary)">—</span>'
+                    }
                 </td>
                 <td class="suggestion-cell">
                     ${hasSuggestion
@@ -313,6 +391,7 @@ function renderAssignedRows(exams) {
     tbody.innerHTML = exams.map(exam => {
         const dateStr = exam.request_date ? formatDate(exam.request_date) : '—';
         const timeStr = exam.assigned_at ? formatTime(exam.assigned_at) : '—';
+        const examTitle = exam.exam_title || getExamTitle(exam.exam_code) || exam.body_part || '—';
 
         return `
             <tr>
@@ -322,7 +401,7 @@ function renderAssignedRows(exams) {
                 <td>
                     <span class="modality-badge ${exam.modality.toLowerCase()}">${exam.modality}</span>
                 </td>
-                <td><span class="body-part-tag">${translateBodyPart(exam.body_part)}</span></td>
+                <td><span class="body-part-tag">${examTitle}</span></td>
                 <td>${exam.lab_name}</td>
                 <td>${exam.issuing_doctor_name}</td>
                 <td><span class="assigned-name">${exam.assigned_diagnostician_name || '—'}</span></td>
@@ -485,6 +564,11 @@ function closeModal() {
     document.body.style.overflow = '';
     currentExamId = null;
     currentSuggestion = null;
+    // Bug fix: re-enable buttons for next use
+    const btnConfirm = document.getElementById('btn-confirm');
+    const btnOverride = document.getElementById('btn-override');
+    if (btnConfirm) { btnConfirm.disabled = false; btnConfirm.innerHTML = '✓ Επιβεβαίωση'; }
+    if (btnOverride) { btnOverride.disabled = false; btnOverride.innerHTML = 'Αλλαγή'; }
 }
 
 function selectAlternative(id, name, isEliminated) {
@@ -707,6 +791,26 @@ function showToast(message, type = 'info') {
 //  Helpers
 // ══════════════════════════════════════════════
 
+// ── Exam code / title lookup ──
+const EXAM_CODE_MAP = {
+    '22100': 'Αγγειογραφία Αώρτας (CT)',
+    '22140': 'CT Θώρακα',
+    '21063': 'MRI Εγκεφάλου',
+    '22200': 'CT Κοιλίας',
+    '21100': 'MRI Κοιλίας',
+    '22310': 'CT Σπονδυλικής Στήλης',
+    '21200': 'MRI Σπονδυλικής Στήλης',
+    '22400': 'CT Πυέλου',
+    '21300': 'MRI Πυέλου',
+    '22500': 'CT Μυοσκελετικού',
+    '21400': 'MRI Μυοσκελετικού',
+};
+
+function getExamTitle(code) {
+    if (!code) return null;
+    return EXAM_CODE_MAP[code] || `Εξέταση ${code}`;
+}
+
 function translateBodyPart(part) {
     const map = {
         abdomen: 'Κοιλία',
@@ -752,6 +856,30 @@ function escapeHtml(str) {
     return String(str).replace(/'/g, "\\'").replace(/"/g, '&quot;');
 }
 
+function escapeHtmlFull(str) {
+    return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+// ── Lab dropdown toggle ──
+function toggleLabDropdown(event) {
+    event.stopPropagation();
+    const wrap = document.getElementById('lab-filter-wrap');
+    wrap.classList.toggle('open');
+}
+
+// Close lab dropdown when clicking outside
+document.addEventListener('click', function(e) {
+    const wrap = document.getElementById('lab-filter-wrap');
+    if (wrap && !wrap.contains(e.target)) {
+        wrap.classList.remove('open');
+    }
+});
+
 
 // ══════════════════════════════════════════════
 //  Mock Data
@@ -761,33 +889,38 @@ function getMockPendingExams() {
     return [
         {
             exam_id: 'EX-2026-001', patient_id: 'PT-5432', patient_name: 'Γεώργιος Κ.',
-            modality: 'MRI', body_part: 'abdomen', lab_id: 'LAB-KIF', lab_name: 'Κηφισιά',
+            modality: 'MRI', exam_code: '21100', exam_title: 'MRI Κοιλίας',
+            body_part: 'abdomen', lab_id: 'LAB-KIF', lab_name: 'Κηφισιά',
             issuing_doctor_id: 'DR-101', issuing_doctor_name: 'Παπαδόπουλος Ν.',
             request_date: '2026-07-14', status: 'pending', comments: '', suggestion: null,
         },
         {
             exam_id: 'EX-2026-002', patient_id: 'PT-8821', patient_name: 'Μαρία Α.',
-            modality: 'CT', body_part: 'chest', lab_id: 'LAB-MAR', lab_name: 'Μαρούσι',
+            modality: 'CT', exam_code: '22140', exam_title: 'CT Θώρακα',
+            body_part: 'chest', lab_id: 'LAB-MAR', lab_name: 'Μαρούσι',
             issuing_doctor_id: 'DR-205', issuing_doctor_name: 'Ιωάννου Ε.',
             request_date: '2026-07-14', status: 'pending', comments: 'Επείγον', suggestion: null,
         },
         {
             exam_id: 'EX-2026-003', patient_id: 'PT-1190', patient_name: 'Δημήτρης Λ.',
-            modality: 'MRI', body_part: 'neuro', lab_id: 'LAB-KIF', lab_name: 'Κηφισιά',
+            modality: 'MRI', exam_code: '21063', exam_title: 'MRI Εγκεφάλου',
+            body_part: 'neuro', lab_id: 'LAB-KIF', lab_name: 'Κηφισιά',
             issuing_doctor_id: 'DR-101', issuing_doctor_name: 'Παπαδόπουλος Ν.',
             request_date: '2026-07-13', status: 'pending',
             comments: 'ΟΧΙ ΝΑΤΣΙΚΑ, ασθενής ζήτησε συγκεκριμένο ιατρό', suggestion: null,
         },
         {
             exam_id: 'EX-2026-004', patient_id: 'PT-3301', patient_name: 'Ελένη Π.',
-            modality: 'CT', body_part: 'abdomen', lab_id: 'LAB-PAM', lab_name: 'Παμμακάριστος',
+            modality: 'CT', exam_code: '22200', exam_title: 'CT Κοιλίας',
+            body_part: 'abdomen', lab_id: 'LAB-PAM', lab_name: 'Παμμακάριστος',
             issuing_doctor_id: 'DR-PAM-01', issuing_doctor_name: 'Παμμακάριστος (Εφημερία)',
             request_date: '2026-07-14', status: 'pending',
             comments: 'ΕΦΗΜΕΡΙΑ ΠΑΜΜΑΚΑΡΙΣΤΟΥ', suggestion: null,
         },
         {
             exam_id: 'EX-2026-005', patient_id: 'PT-6677', patient_name: 'Αντώνης Σ.',
-            modality: 'MRI', body_part: 'msk', lab_id: 'LAB-GLY', lab_name: 'Γλυφάδα',
+            modality: 'MRI', exam_code: '21400', exam_title: 'MRI Μυοσκελετικού',
+            body_part: 'msk', lab_id: 'LAB-GLY', lab_name: 'Γλυφάδα',
             issuing_doctor_id: 'DR-310', issuing_doctor_name: 'Βασιλείου Κ.',
             request_date: '2026-07-14', status: 'pending', comments: '', suggestion: null,
         },
@@ -798,7 +931,8 @@ function getMockAssignedExams() {
     return [
         {
             exam_id: 'EX-2026-A01', patient_id: 'PT-1001', patient_name: 'Σοφία Μ.',
-            modality: 'CT', body_part: 'chest', lab_id: 'LAB-KIF', lab_name: 'Κηφισιά',
+            modality: 'CT', exam_code: '22140', exam_title: 'CT Θώρακα',
+            body_part: 'chest', lab_id: 'LAB-KIF', lab_name: 'Κηφισιά',
             issuing_doctor_id: 'DR-101', issuing_doctor_name: 'Παπαδόπουλος Ν.',
             request_date: '2026-07-14', status: 'assigned',
             assigned_diagnostician_id: 1, assigned_diagnostician_name: 'Νάτσικα Α.',
@@ -806,7 +940,8 @@ function getMockAssignedExams() {
         },
         {
             exam_id: 'EX-2026-A02', patient_id: 'PT-2002', patient_name: 'Νίκος Α.',
-            modality: 'MRI', body_part: 'neuro', lab_id: 'LAB-MAR', lab_name: 'Μαρούσι',
+            modality: 'MRI', exam_code: '21063', exam_title: 'MRI Εγκεφάλου',
+            body_part: 'neuro', lab_id: 'LAB-MAR', lab_name: 'Μαρούσι',
             issuing_doctor_id: 'DR-310', issuing_doctor_name: 'Βασιλείου Κ.',
             request_date: '2026-07-14', status: 'assigned',
             assigned_diagnostician_id: 3, assigned_diagnostician_name: 'Παπαδόπουλος Γ.',
@@ -814,7 +949,8 @@ function getMockAssignedExams() {
         },
         {
             exam_id: 'EX-2026-A03', patient_id: 'PT-3003', patient_name: 'Ελένη Τ.',
-            modality: 'CT', body_part: 'abdomen', lab_id: 'LAB-GLY', lab_name: 'Γλυφάδα',
+            modality: 'CT', exam_code: '22200', exam_title: 'CT Κοιλίας',
+            body_part: 'abdomen', lab_id: 'LAB-GLY', lab_name: 'Γλυφάδα',
             issuing_doctor_id: 'DR-205', issuing_doctor_name: 'Ιωάννου Ε.',
             request_date: '2026-07-13', status: 'assigned',
             assigned_diagnostician_id: 2, assigned_diagnostician_name: 'Κωνσταντίνου Β.',
