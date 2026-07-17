@@ -106,9 +106,10 @@
 
                     <!-- Filters -->
                     <select id="filter-modality" class="filter-select" onchange="applyFilters()">
-                        <option value="">Τύπος (όλα)</option>
+                        <option value="">Κατηγορία (όλα)</option>
                         <option value="CT">CT</option>
                         <option value="MRI">MRI</option>
+                        <option value="MRA">MRA</option>
                     </select>
                     <!-- Lab multi-select checkbox dropdown -->
                     <div class="lab-filter-wrap" id="lab-filter-wrap">
@@ -163,14 +164,17 @@
                     <table class="exams-table" id="exams-table-pending">
                         <thead>
                             <tr>
-                                <th>Εξέταση</th>
+                                <th>Κωδικός Εντολής</th>
+                                <th>Ημερομηνία</th>
+                                <th>Κωδικός Ασθενή</th>
                                 <th>Ασθενής</th>
-                                <th>Ημερ/νία</th>
-                                <th>Τύπος</th>
+                                <th>Κατηγορία</th>
+                                <th>Κωδικός Εξέτασης</th>
                                 <th>Εξέταση</th>
-                                <th>Εργαστήριο</th>
-                                <th>Παραπέμπων Ιατρός</th>
+                                <th>Μονάδα</th>
+                                <th>Παραπέμπων</th>
                                 <th>Σχόλια</th>
+                                <th>Τελ. Επίσκεψη</th>
                                 <th>Πρόταση</th>
                                 <th>Ενέργειες</th>
                             </tr>
@@ -197,15 +201,18 @@
                     <table class="exams-table" id="exams-table-assigned">
                         <thead>
                             <tr>
-                                <th>Εξέταση</th>
+                                <th>Κωδικός Εντολής</th>
+                                <th>Ημερομηνία</th>
+                                <th>Κωδικός Ασθενή</th>
                                 <th>Ασθενής</th>
-                                <th>Ημερ/νία</th>
-                                <th>Τύπος</th>
+                                <th>Κατηγορία</th>
+                                <th>Κωδικός Εξέτασης</th>
                                 <th>Εξέταση</th>
-                                <th>Εργαστήριο</th>
-                                <th>Παραπέμπων Ιατρός</th>
+                                <th>Μονάδα</th>
+                                <th>Παραπέμπων</th>
+                                <th>Σχόλια</th>
+                                <th>Τελ. Επίσκεψη</th>
                                 <th>Διαγνώστης</th>
-                                <th>Ώρα Ανάθεσης</th>
                             </tr>
                         </thead>
                         <tbody id="tbody-assigned">

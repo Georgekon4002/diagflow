@@ -158,19 +158,20 @@ def _require_admin(x_admin_token: str = Header(default="")):
 #  Exams
 # ─────────────────────────────────────────────────────
 
-@router.get("/exams/pending", response_model=list[ExamResponse])
+@router.get("/exams/pending")
 async def get_pending_exams(
     svc: AssignmentService = Depends(get_assignment_service),
 ):
-    """Fetch all pending (unassigned) exams from Slis."""
-    exams = await svc.get_pending_exams()
-    return [ExamResponse(**exam) for exam in exams]
+    """Fetch all pending (unassigned) exams from Slis / mock DB."""
+    return svc.get_pending_exams()
 
 
 @router.get("/exams/assigned")
-async def get_assigned_exams():
-    """Fetch today's assigned exams (mock data until Slis DB is available)."""
-    return _mock_assigned_exams
+async def get_assigned_exams(
+    svc: AssignmentService = Depends(get_assignment_service),
+):
+    """Fetch assigned exams from Slis / mock DB."""
+    return svc.get_assigned_exams()
 
 
 # ─────────────────────────────────────────────────────
@@ -194,7 +195,7 @@ async def suggest_assignment(
     5. Return suggestion with full transparency (including eliminated candidates)
     """
     # Fetch exam data
-    pending = await assign_svc.get_pending_exams()
+    pending = assign_svc.get_pending_exams()
     exam_data = next((e for e in pending if e["exam_id"] == request.exam_id), None)
 
     if not exam_data:
@@ -206,6 +207,7 @@ async def suggest_assignment(
         patient_name=exam_data.get("patient_name", ""),
         modality=exam_data["modality"],
         body_part=exam_data["body_part"],
+        exam_code=str(exam_data.get("examnumcode", "")),
         lab_id=exam_data["lab_id"],
         lab_name=exam_data["lab_name"],
         issuing_doctor_id=exam_data["issuing_doctor_id"],
@@ -222,6 +224,7 @@ async def suggest_assignment(
         lab_id=exam.lab_id,
         issuing_doctor_id=exam.issuing_doctor_id,
         patient_id=exam.patient_id,
+        exam_code=exam.exam_code,
     )
 
     # Parse comments [DISABLED — passing None]

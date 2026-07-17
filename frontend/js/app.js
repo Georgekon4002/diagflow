@@ -98,6 +98,8 @@ async function loadPendingExams() {
     } catch {
         pendingExams = getMockPendingExams();
     }
+    // Build the dynamic lab filter from real data
+    buildLabDropdown(pendingExams);
     renderPendingTable();
     updateTabCounts();
 
@@ -261,18 +263,36 @@ function applyFilters() {
 }
 
 function matchesFilters(exam, search, modality, selectedLabs, dateFrom, dateTo) {
-    if (modality && exam.modality !== modality) return false;
-    if (selectedLabs.length > 0 && !selectedLabs.includes(exam.lab_id)) return false;
-    if (dateFrom && exam.request_date < dateFrom) return false;
-    if (dateTo && exam.request_date > dateTo) return false;
+    // Category / modality filter
+    const examCat = exam.category || exam.modality || '';
+    if (modality && examCat !== modality) return false;
+
+    // Lab filter — compare against lab_name (from DB) or lab_id (legacy)
+    if (selectedLabs.length > 0) {
+        const labName = (exam.lab_name || exam.laboratoryname || '').trim();
+        const labId   = exam.lab_id || '';
+        const match = selectedLabs.some(sel => labName === sel || labId === sel);
+        if (!match) return false;
+    }
+
+    // Date range filter — use visitdate field
+    const examDate = exam.visitdate || exam.request_date || '';
+    if (dateFrom && examDate < dateFrom) return false;
+    if (dateTo   && examDate > dateTo)   return false;
+
+    // Full-text search
     if (search) {
+        const patName = exam.patient_name || `${exam.fname || ''} ${exam.lname || ''}`.trim();
         const haystack = [
-            exam.exam_id,
-            exam.patient_name,
-            exam.issuing_doctor_name,
-            exam.lab_name,
-            exam.exam_title || exam.body_part,
-            exam.assigned_diagnostician_name || '',
+            String(exam.extracode || exam.exam_id || ''),
+            patName,
+            exam.wname || exam.issuing_doctor_name || '',
+            exam.lab_name || exam.laboratoryname || '',
+            cleanExamName(exam.examname || exam.exam_title || ''),
+            exam.examname || '',
+            String(exam.demogid || exam.patient_id || ''),
+            String(exam.examnumcode || ''),
+            exam.code || exam.diagnostician_name || exam.assigned_diagnostician_name || '',
         ].join(' ').toLowerCase();
         if (!haystack.includes(search)) return false;
     }
@@ -319,33 +339,29 @@ function renderPendingRows(exams) {
 
     emptyState.style.display = 'none';
     tbody.innerHTML = exams.map(exam => {
-        const hasComment = exam.comments && exam.comments.trim().length > 0;
         const hasSuggestion = exam.suggestion != null;
-        const dateStr = exam.request_date ? formatDate(exam.request_date) : '—';
-        const examTitle = exam.exam_title || getExamTitle(exam.exam_code) || exam.body_part || '—';
+        const dateStr = formatDateDMY(exam.visitdate || exam.request_date);
+        const cleanName = cleanExamName(exam.examname || exam.exam_title || '');
+        const catClass = (exam.category || exam.modality || '').toLowerCase().replace('mra', 'mri');
+        const patientName = exam.patient_name || `${exam.fname || ''} ${exam.lname || ''}`.trim() || '—';
+        const notesHtml = buildNotesCell(exam.notes || exam.comments || '');
+        const oldVisitHtml = buildOldVisitCell(exam);
 
         return `
             <tr id="row-${exam.exam_id}">
-                <td>
-                    <span style="font-weight:600; color:var(--text-primary);">${exam.exam_id}</span>
-                </td>
-                <td>${exam.patient_name}</td>
+                <td><span class="extracode-badge">${exam.extracode || exam.exam_id}</span></td>
                 <td class="date-cell">${dateStr}</td>
+                <td class="demogid-cell">${exam.demogid || exam.patient_id || '—'}</td>
+                <td>${patientName}</td>
                 <td>
-                    <span class="modality-badge ${exam.modality.toLowerCase()}">${exam.modality}</span>
+                    <span class="modality-badge ${catClass}">${exam.category || exam.modality || '—'}</span>
                 </td>
-                <td><span class="body-part-tag">${examTitle}</span></td>
-                <td>${exam.lab_name}</td>
-                <td>${exam.issuing_doctor_name}</td>
-                <td class="comment-cell">
-                    ${hasComment
-                        ? `<div class="comment-btn-wrap">
-                                <button class="comment-btn">💬 Σχόλιο</button>
-                                <div class="comment-popup">${escapeHtmlFull(exam.comments)}</div>
-                           </div>`
-                        : '<span style="color:var(--text-tertiary)">—</span>'
-                    }
-                </td>
+                <td class="examnumcode-cell">${exam.examnumcode || '—'}</td>
+                <td><span class="body-part-tag" title="${escapeHtmlFull(exam.examname || '')}">${cleanName || '—'}</span></td>
+                <td>${exam.lab_name || exam.laboratoryname || '—'}</td>
+                <td>${exam.wname || exam.issuing_doctor_name || '—'}</td>
+                <td class="comment-cell">${notesHtml}</td>
+                <td class="comment-cell">${oldVisitHtml}</td>
                 <td class="suggestion-cell">
                     ${hasSuggestion
                         ? `<span class="suggested-name">${exam.suggestion.suggested_diagnostician_name}</span>
@@ -389,23 +405,30 @@ function renderAssignedRows(exams) {
 
     emptyState.style.display = 'none';
     tbody.innerHTML = exams.map(exam => {
-        const dateStr = exam.request_date ? formatDate(exam.request_date) : '—';
-        const timeStr = exam.assigned_at ? formatTime(exam.assigned_at) : '—';
-        const examTitle = exam.exam_title || getExamTitle(exam.exam_code) || exam.body_part || '—';
+        const dateStr = formatDateDMY(exam.visitdate || exam.request_date);
+        const cleanName = cleanExamName(exam.examname || exam.exam_title || '');
+        const catClass = (exam.category || exam.modality || '').toLowerCase().replace('mra', 'mri');
+        const patientName = exam.patient_name || `${exam.fname || ''} ${exam.lname || ''}`.trim() || '—';
+        const diagName = exam.code || exam.diagnostician_name || exam.assigned_diagnostician_name || '—';
+        const notesHtml = buildNotesCell(exam.notes || exam.comments || '');
+        const oldVisitHtml = buildOldVisitCell(exam);
 
         return `
             <tr>
-                <td><span style="font-weight:600; color:var(--text-primary);">${exam.exam_id}</span></td>
-                <td>${exam.patient_name}</td>
+                <td><span class="extracode-badge">${exam.extracode || exam.exam_id}</span></td>
                 <td class="date-cell">${dateStr}</td>
+                <td class="demogid-cell">${exam.demogid || exam.patient_id || '—'}</td>
+                <td>${patientName}</td>
                 <td>
-                    <span class="modality-badge ${exam.modality.toLowerCase()}">${exam.modality}</span>
+                    <span class="modality-badge ${catClass}">${exam.category || exam.modality || '—'}</span>
                 </td>
-                <td><span class="body-part-tag">${examTitle}</span></td>
-                <td>${exam.lab_name}</td>
-                <td>${exam.issuing_doctor_name}</td>
-                <td><span class="assigned-name">${exam.assigned_diagnostician_name || '—'}</span></td>
-                <td class="time-cell">${timeStr}</td>
+                <td class="examnumcode-cell">${exam.examnumcode || '—'}</td>
+                <td><span class="body-part-tag" title="${escapeHtmlFull(exam.examname || '')}">${cleanName || '—'}</span></td>
+                <td>${exam.lab_name || exam.laboratoryname || '—'}</td>
+                <td>${exam.wname || exam.issuing_doctor_name || '—'}</td>
+                <td class="comment-cell">${notesHtml}</td>
+                <td class="comment-cell">${oldVisitHtml}</td>
+                <td><span class="assigned-name">${diagName}</span></td>
             </tr>
         `;
     }).join('');
@@ -791,25 +814,93 @@ function showToast(message, type = 'info') {
 //  Helpers
 // ══════════════════════════════════════════════
 
-// ── Exam code / title lookup ──
-const EXAM_CODE_MAP = {
-    '22100': 'Αγγειογραφία Αώρτας (CT)',
-    '22140': 'CT Θώρακα',
-    '21063': 'MRI Εγκεφάλου',
-    '22200': 'CT Κοιλίας',
-    '21100': 'MRI Κοιλίας',
-    '22310': 'CT Σπονδυλικής Στήλης',
-    '21200': 'MRI Σπονδυλικής Στήλης',
-    '22400': 'CT Πυέλου',
-    '21300': 'MRI Πυέλου',
-    '22500': 'CT Μυοσκελετικού',
-    '21400': 'MRI Μυοσκελετικού',
-};
-
-function getExamTitle(code) {
-    if (!code) return null;
-    return EXAM_CODE_MAP[code] || `Εξέταση ${code}`;
+// ── Exam name cleaning ──
+/**
+ * Strip boilerplate prefixes from Greek exam names.
+ * Removes: ΜΑΓΝΗΤΙΚΗ, ΑΞΟΝΙΚΗ, ΑΓΓΕΙΟΓΡΑΦΙΑ, ΤΟΜΟΓΡΑΦΙΑ, (MRI), (MRA)
+ * then collapses multiple spaces and trims.
+ */
+function cleanExamName(raw) {
+    if (!raw) return '';
+    return raw
+        .replace(/\(MRI\)/gi, '')
+        .replace(/\(MRA\)/gi, '')
+        .replace(/ΜΑΓΝΗΤΙΚΗ\s*/gi, '')
+        .replace(/ΑΞΟΝΙΚΗ\s*/gi, '')
+        .replace(/ΑΓΓΕΙΟΓΡΑΦΙΑ\s*/gi, '')
+        .replace(/ΤΟΜΟΓΡΑΦΙΑ\s*/gi, '')
+        .replace(/\s{2,}/g, ' ')
+        .trim();
 }
+
+// ── Notes cell builder ──
+/**
+ * Returns the HTML for the Σχόλια cell.
+ * Shows a 💬 button on hover only if notes are non-empty
+ * (empty = null | '' | ' *  * ').
+ */
+const EMPTY_NOTES_RE = /^\s*\*\s*\*\s*$/;
+
+function buildNotesCell(notes) {
+    if (!notes || EMPTY_NOTES_RE.test(notes)) {
+        return '<span style="color:var(--text-tertiary)">—</span>';
+    }
+    // Strip the trailing ' *  * ' separator and trim
+    const display = notes.replace(/\*\s*\*\s*$/, '').trim();
+    if (!display) return '<span style="color:var(--text-tertiary)">—</span>';
+    return `<div class="comment-btn-wrap">
+        <button class="comment-btn">💬 Σχόλιο</button>
+        <div class="comment-popup">${escapeHtmlFull(display)}</div>
+    </div>`;
+}
+
+// ── Old visit cell builder ──
+/**
+ * Returns the HTML for the Τελ. Επίσκεψη cell.
+ * Shows a 🕐 button on hover only if OLDVISIT ≠ 0.
+ */
+function buildOldVisitCell(exam) {
+    const ov = exam.oldvisit;
+    if (!ov || ov === 0) {
+        return '<span style="color:var(--text-tertiary)">—</span>';
+    }
+    const lines = [
+        exam.oldorder   ? `Ημ/νία: ${formatDateDMY(exam.oldorder)}`   : null,
+        exam.olddiagnostis && exam.olddiagnostis !== '-' ? `Διαγνώστης: ${exam.olddiagnostis}` : null,
+    ].filter(Boolean).join('<br>');
+    return `<div class="comment-btn-wrap">
+        <button class="comment-btn" style="background:var(--surface-tertiary);color:var(--text-secondary);">🕐 Ιστορικό</button>
+        <div class="comment-popup">${lines || '—'}</div>
+    </div>`;
+}
+
+// ── Lab filter ── dynamically populated from loaded data ──
+function buildLabDropdown(exams) {
+    const labDropdown = document.getElementById('lab-dropdown');
+    if (!labDropdown) return;
+
+    // Collect unique lab names
+    const labs = new Map();
+    exams.forEach(e => {
+        const name = (e.lab_name || e.laboratoryname || '').trim();
+        if (name) labs.set(name, name);
+    });
+    [...assignedExams].forEach(e => {
+        const name = (e.lab_name || e.laboratoryname || '').trim();
+        if (name) labs.set(name, name);
+    });
+
+    if (labs.size === 0) return;
+
+    labDropdown.innerHTML = [...labs.entries()].sort((a, b) => a[0].localeCompare(b[0], 'el')).map(([name]) => {
+        const id = `lab-${name.replace(/\s+/g, '-').toLowerCase()}`;
+        return `<label class="lab-option">
+            <input type="checkbox" id="${id}" value="${escapeHtmlFull(name)}" onchange="applyFilters()">
+            <label for="${id}">${escapeHtmlFull(name)}</label>
+        </label>`;
+    }).join('');
+}
+
 
 function translateBodyPart(part) {
     const map = {
@@ -836,12 +927,21 @@ function translateRule(rule) {
     return map[rule] || rule;
 }
 
-function formatDate(dateStr) {
+function formatDateDMY(dateStr) {
     if (!dateStr) return '—';
     try {
-        const d = new Date(dateStr);
-        return d.toLocaleDateString('el-GR', { day: '2-digit', month: '2-digit', year: 'numeric' });
+        // Handles 'YYYY-MM-DD' or datetime strings
+        const d = new Date(dateStr + (dateStr.length === 10 ? 'T00:00:00' : ''));
+        if (isNaN(d)) return dateStr;
+        const dd = String(d.getDate()).padStart(2, '0');
+        const mm = String(d.getMonth() + 1).padStart(2, '0');
+        const yyyy = d.getFullYear();
+        return `${dd}-${mm}-${yyyy}`;
     } catch { return dateStr; }
+}
+
+function formatDate(dateStr) {
+    return formatDateDMY(dateStr);
 }
 
 function formatTime(isoStr) {
@@ -888,41 +988,36 @@ document.addEventListener('click', function(e) {
 function getMockPendingExams() {
     return [
         {
-            exam_id: 'EX-2026-001', patient_id: 'PT-5432', patient_name: 'Γεώργιος Κ.',
-            modality: 'MRI', exam_code: '21100', exam_title: 'MRI Κοιλίας',
-            body_part: 'abdomen', lab_id: 'LAB-KIF', lab_name: 'Κηφισιά',
-            issuing_doctor_id: 'DR-101', issuing_doctor_name: 'Παπαδόπουλος Ν.',
-            request_date: '2026-07-14', status: 'pending', comments: '', suggestion: null,
+            exam_id: '2783481', extracode: 2783481, visitid: 2798982,
+            demogid: 525331, patient_id: '525331',
+            fname: 'ΠΑΝΑΓΙΩΤΑ', lname: 'ΜΠΕΚΡΗ',
+            patient_name: 'ΠΑΝΑΓΙΩΤΑ ΜΠΕΚΡΗ',
+            examnumcode: 22642, examname: 'ΜΑΓΝΗΤΙΚΗ ΤΟΜΟΓΡΑΦΙΑ (MRI) ΔΕΞΙΑΣ ΠΟΔΟΚΝΗΜΙΚΗΣ',
+            modality: 'MRI', category: 'MRI', body_part: '',
+            visitdate: '2026-07-13', request_date: '2026-07-13',
+            labcodeid: 6, lab_id: 'ΑΝΩ ΠΑΤΗΣΙΑ', lab_name: 'ΑΝΩ ΠΑΤΗΣΙΑ',
+            wcode: '2015', wname: 'ΜΠΡΑΝΤΖΙΚΟΣ ΤΑΞΙΑΡΧΗΣ',
+            issuing_doctor_id: '2015', issuing_doctor_name: 'ΜΠΡΑΝΤΖΙΚΟΣ ΤΑΞΙΑΡΧΗΣ',
+            diagnostis: null, code: null, diagnostician_name: '',
+            notes: ' *  * ', comments: '',
+            oldvisit: 0, oldorder: '', olddiagnostis: '',
+            status: 'pending', suggestion: null, is_pamakristos: false,
         },
         {
-            exam_id: 'EX-2026-002', patient_id: 'PT-8821', patient_name: 'Μαρία Α.',
-            modality: 'CT', exam_code: '22140', exam_title: 'CT Θώρακα',
-            body_part: 'chest', lab_id: 'LAB-MAR', lab_name: 'Μαρούσι',
-            issuing_doctor_id: 'DR-205', issuing_doctor_name: 'Ιωάννου Ε.',
-            request_date: '2026-07-14', status: 'pending', comments: 'Επείγον', suggestion: null,
-        },
-        {
-            exam_id: 'EX-2026-003', patient_id: 'PT-1190', patient_name: 'Δημήτρης Λ.',
-            modality: 'MRI', exam_code: '21063', exam_title: 'MRI Εγκεφάλου',
-            body_part: 'neuro', lab_id: 'LAB-KIF', lab_name: 'Κηφισιά',
-            issuing_doctor_id: 'DR-101', issuing_doctor_name: 'Παπαδόπουλος Ν.',
-            request_date: '2026-07-13', status: 'pending',
-            comments: 'ΟΧΙ ΝΑΤΣΙΚΑ, ασθενής ζήτησε συγκεκριμένο ιατρό', suggestion: null,
-        },
-        {
-            exam_id: 'EX-2026-004', patient_id: 'PT-3301', patient_name: 'Ελένη Π.',
-            modality: 'CT', exam_code: '22200', exam_title: 'CT Κοιλίας',
-            body_part: 'abdomen', lab_id: 'LAB-PAM', lab_name: 'Παμμακάριστος',
-            issuing_doctor_id: 'DR-PAM-01', issuing_doctor_name: 'Παμμακάριστος (Εφημερία)',
-            request_date: '2026-07-14', status: 'pending',
-            comments: 'ΕΦΗΜΕΡΙΑ ΠΑΜΜΑΚΑΡΙΣΤΟΥ', suggestion: null,
-        },
-        {
-            exam_id: 'EX-2026-005', patient_id: 'PT-6677', patient_name: 'Αντώνης Σ.',
-            modality: 'MRI', exam_code: '21400', exam_title: 'MRI Μυοσκελετικού',
-            body_part: 'msk', lab_id: 'LAB-GLY', lab_name: 'Γλυφάδα',
-            issuing_doctor_id: 'DR-310', issuing_doctor_name: 'Βασιλείου Κ.',
-            request_date: '2026-07-14', status: 'pending', comments: '', suggestion: null,
+            exam_id: '2783486', extracode: 2783486, visitid: 2798987,
+            demogid: 789636, patient_id: '789636',
+            fname: 'ΙΩΑΝΝΗΣ', lname: 'ΧΑΡΗΣ',
+            patient_name: 'ΙΩΑΝΝΗΣ ΧΑΡΗΣ',
+            examnumcode: 22140, examname: 'ΜΑΓΝΗΤΙΚΗ ΤΟΜΟΓΡΑΦΙΑ (MRI) ΟΣΦΥΪΚΗΣ ΜΟΙΡΑΣ Σ.Σ.',
+            modality: 'MRI', category: 'MRI', body_part: '',
+            visitdate: '2026-07-13', request_date: '2026-07-13',
+            labcodeid: 7, lab_id: 'ΙΛΙΟΝ', lab_name: 'ΙΛΙΟΝ',
+            wcode: '569352', wname: 'ΑΝΔΡΕΟΠΟΥΛΟΣ ΑΣΗΜΑΚΗΣ',
+            issuing_doctor_id: '569352', issuing_doctor_name: 'ΑΝΔΡΕΟΠΟΥΛΟΣ ΑΣΗΜΑΚΗΣ',
+            diagnostis: null, code: null, diagnostician_name: '',
+            notes: 'ΘΑ ΠΑΡΕΙ CD--ΕΜΑΙΛ *  * ', comments: 'ΘΑ ΠΑΡΕΙ CD--ΕΜΑΙΛ',
+            oldvisit: 0, oldorder: '', olddiagnostis: '',
+            status: 'pending', suggestion: null, is_pamakristos: false,
         },
     ];
 }
@@ -930,31 +1025,21 @@ function getMockPendingExams() {
 function getMockAssignedExams() {
     return [
         {
-            exam_id: 'EX-2026-A01', patient_id: 'PT-1001', patient_name: 'Σοφία Μ.',
-            modality: 'CT', exam_code: '22140', exam_title: 'CT Θώρακα',
-            body_part: 'chest', lab_id: 'LAB-KIF', lab_name: 'Κηφισιά',
-            issuing_doctor_id: 'DR-101', issuing_doctor_name: 'Παπαδόπουλος Ν.',
-            request_date: '2026-07-14', status: 'assigned',
-            assigned_diagnostician_id: 1, assigned_diagnostician_name: 'Νάτσικα Α.',
-            assigned_at: '2026-07-14T09:15:00',
-        },
-        {
-            exam_id: 'EX-2026-A02', patient_id: 'PT-2002', patient_name: 'Νίκος Α.',
-            modality: 'MRI', exam_code: '21063', exam_title: 'MRI Εγκεφάλου',
-            body_part: 'neuro', lab_id: 'LAB-MAR', lab_name: 'Μαρούσι',
-            issuing_doctor_id: 'DR-310', issuing_doctor_name: 'Βασιλείου Κ.',
-            request_date: '2026-07-14', status: 'assigned',
-            assigned_diagnostician_id: 3, assigned_diagnostician_name: 'Παπαδόπουλος Γ.',
-            assigned_at: '2026-07-14T10:30:00',
-        },
-        {
-            exam_id: 'EX-2026-A03', patient_id: 'PT-3003', patient_name: 'Ελένη Τ.',
-            modality: 'CT', exam_code: '22200', exam_title: 'CT Κοιλίας',
-            body_part: 'abdomen', lab_id: 'LAB-GLY', lab_name: 'Γλυφάδα',
-            issuing_doctor_id: 'DR-205', issuing_doctor_name: 'Ιωάννου Ε.',
-            request_date: '2026-07-13', status: 'assigned',
-            assigned_diagnostician_id: 2, assigned_diagnostician_name: 'Κωνσταντίνου Β.',
-            assigned_at: '2026-07-13T14:45:00',
+            exam_id: '2783481', extracode: 2783481, visitid: 2798982,
+            demogid: 525331, patient_id: '525331',
+            fname: 'ΠΑΝΑΓΙΩΤΑ', lname: 'ΜΠΕΚΡΗ',
+            patient_name: 'ΠΑΝΑΓΙΩΤΑ ΜΠΕΚΡΗ',
+            examnumcode: 22642, examname: 'ΜΑΓΝΗΤΙΚΗ ΤΟΜΟΓΡΑΦΙΑ (MRI) ΔΕΞΙΑΣ ΠΟΔΟΚΝΗΜΙΚΗΣ',
+            modality: 'MRI', category: 'MRI', body_part: '',
+            visitdate: '2026-07-13', request_date: '2026-07-13',
+            labcodeid: 6, lab_id: 'ΑΝΩ ΠΑΤΗΣΙΑ', lab_name: 'ΑΝΩ ΠΑΤΗΣΙΑ',
+            wcode: '2015', wname: 'ΜΠΡΑΝΤΖΙΚΟΣ ΤΑΞΙΑΡΧΗΣ',
+            issuing_doctor_id: '2015', issuing_doctor_name: 'ΜΠΡΑΝΤΖΙΚΟΣ ΤΑΞΙΑΡΧΗΣ',
+            diagnostis: 189, code: 'ΛΙΟΝΤΟΣ', diagnostician_name: 'ΛΙΟΝΤΟΣ',
+            assigned_diagnostician_name: 'ΛΙΟΝΤΟΣ',
+            notes: ' *  * ', comments: '',
+            oldvisit: 0, oldorder: '', olddiagnostis: '',
+            status: 'assigned', suggestion: null, is_pamakristos: false,
         },
     ];
 }

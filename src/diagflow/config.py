@@ -25,6 +25,20 @@ class Settings(BaseSettings):
         ),
     )
 
+    # ── Mock Slis DB (SQLite, for development without a real Slis DB) ──
+    use_mock_slis_db: bool = Field(
+        default=True,
+        description=(
+            "When True, pending/assigned exam data is read from a local SQLite file "
+            "(mock_slis_db_path) instead of the real Slis MSSQL database. "
+            "Set to False in production once real DB access is available."
+        ),
+    )
+    mock_slis_db_path: str = Field(
+        default="db/mock_slis.db",
+        description="Path to the SQLite mock Slis database file (relative to project root).",
+    )
+
     # ── LLM / Comment Parser ──
     llm_api_url: str = Field(
         default="https://api.openai.com/v1/chat/completions",

@@ -1776,3 +1776,56 @@ input[type="date"].filter-select::-webkit-calendar-picker-indicator {
 ::-webkit-scrollbar-thumb:hover {
     background: var(--text-tertiary);
 }
+
+
+/* ═══════════════════════════════════════════════════
+   New columns — added for real Slis data (Task 3)
+   ═══════════════════════════════════════════════════ */
+
+/* MRA category badge */
+.modality-badge.mra {
+    background: rgba(168, 85, 247, 0.15);
+    color: #C4B5FD;
+    border: 1px solid rgba(168, 85, 247, 0.25);
+}
+
+/* EXTRACODE — order code shown as a pill */
+.extracode-badge {
+    font-size: var(--font-size-xs);
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-primary);
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    padding: 2px 8px;
+    letter-spacing: 0.03em;
+}
+
+/* DEMOGID — patient ID column (numeric, muted) */
+.demogid-cell {
+    font-size: var(--font-size-xs);
+    color: var(--text-tertiary);
+    font-variant-numeric: tabular-nums;
+}
+
+/* EXAMNUMCODE — exam code column (numeric, muted) */
+.examnumcode-cell {
+    font-size: var(--font-size-xs);
+    color: var(--text-tertiary);
+    font-variant-numeric: tabular-nums;
+}
+
+/* Exam name (body-part-tag) — allow wrapping so long names don't overflow */
+.exams-table tbody td:has(.body-part-tag) {
+    white-space: normal;
+    max-width: 220px;
+}
+
+/* Fallback for browsers without :has() */
+.body-part-tag {
+    white-space: normal;
+    word-break: break-word;
+    display: inline-block;
+    max-width: 220px;
+}

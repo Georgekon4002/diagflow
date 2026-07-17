@@ -148,6 +148,7 @@ class DiagnosticianService:
         lab_id: str,
         issuing_doctor_id: str,
         patient_id: str,
+        exam_code: str = "",
     ) -> list[CandidateDiagnostician]:
         """
         Load all potentially eligible diagnosticians for an exam.
@@ -186,7 +187,7 @@ class DiagnosticianService:
                 # Mock data doesn't have exam context body_part matching anymore, use exam_code if present.
                 # Assuming exam context would pass exam_code in real implementation, for now let's just use what's there
                 # Or just match by modality as fallback for testing since ExamContext still only has body_part.
-                if skill.get("exam_code") == exam_id and skill["modality"] == modality:
+                if skill.get("exam_code") == exam_code and skill["modality"] == modality:
                      skill_match = skill
                      break
                 # Fallback to body_part mapping for our mock
