@@ -22,6 +22,9 @@ let currentSuggestion = null;
 let currentExamId = null;
 let diagnosticians = [];
 let currentTab = 'pending';   // 'pending' | 'assigned'
+let filterOnlyComments = false;
+let filterOnlyHistory = false;
+let sortConfig = { key: null, direction: null };
 
 let dateRangePicker = null;
 
@@ -35,13 +38,13 @@ let adminToken = sessionStorage.getItem('adminToken') || null;
 
 document.addEventListener('DOMContentLoaded', async () => {
     restoreAdminState();
-    
+
     // Initialize date range picker
     dateRangePicker = flatpickr("#filter-date-range", {
         mode: "range",
         dateFormat: "d/m/Y",
         locale: "gr",
-        onChange: function(selectedDates, dateStr, instance) {
+        onChange: function (selectedDates, dateStr, instance) {
             applyFilters();
         }
     });
@@ -109,7 +112,7 @@ async function loadPendingExams() {
             let suggestion = await apiCall('/assignments/suggest', 'POST', { exam_id: exam.exam_id });
             if (!suggestion) suggestion = getMockSuggestion(exam.exam_id);
             exam.suggestion = suggestion;
-        } catch (e) {}
+        } catch (e) { }
     })).then(() => {
         if (currentTab === 'pending') {
             renderPendingTable();
@@ -205,35 +208,49 @@ function updateTabCounts() {
 
 function applyFilters() {
     const search = document.getElementById('search-input').value.toLowerCase().trim();
-    const modality = document.getElementById('filter-modality').value;
-    const selectedLabs = Array.from(document.querySelectorAll('.lab-option input[type="checkbox"]:checked')).map(cb => cb.value);
+    // Read modality from checkboxes
+    const selectedModalities = Array.from(document.querySelectorAll('#modality-dropdown input[type="checkbox"]:checked')).map(cb => cb.value);
+    const selectedLabs = Array.from(document.querySelectorAll('#lab-dropdown input[type="checkbox"]:checked')).map(cb => cb.value);
 
     let dateFrom = null;
     let dateTo = null;
-    
+
     if (dateRangePicker && dateRangePicker.selectedDates.length > 0) {
-        // Flatpickr returns local Date objects. We need to convert them to YYYY-MM-DD for comparison
         const fromDate = dateRangePicker.selectedDates[0];
         dateFrom = fromDate.getFullYear() + '-' + String(fromDate.getMonth() + 1).padStart(2, '0') + '-' + String(fromDate.getDate()).padStart(2, '0');
-        
         if (dateRangePicker.selectedDates.length === 2) {
             const toDate = dateRangePicker.selectedDates[1];
             dateTo = toDate.getFullYear() + '-' + String(toDate.getMonth() + 1).padStart(2, '0') + '-' + String(toDate.getDate()).padStart(2, '0');
         } else {
-            // If only one date is selected, treat it as both from and to
             dateTo = dateFrom;
         }
     }
 
-    const hasFilters = search || modality || selectedLabs.length > 0 || dateFrom || dateTo;
+    const hasFilters = search || selectedModalities.length > 0 || selectedLabs.length > 0 || dateFrom || dateTo || filterOnlyComments || filterOnlyHistory || sortConfig.key;
     document.getElementById('btn-clear-filters').style.display = hasFilters ? 'flex' : 'none';
+
+    // Update modality button label
+    const modalityBtn = document.getElementById('modality-filter-btn');
+    if (modalityBtn) {
+        const labelEl = document.getElementById('modality-filter-label');
+        if (selectedModalities.length === 0) {
+            labelEl.textContent = '🩻 Κατηγορία';
+            modalityBtn.classList.remove('has-selection');
+        } else if (selectedModalities.length === 1) {
+            labelEl.textContent = selectedModalities[0];
+            modalityBtn.classList.add('has-selection');
+        } else {
+            labelEl.textContent = selectedModalities.join(', ');
+            modalityBtn.classList.add('has-selection');
+        }
+    }
 
     // Update lab button label
     const labBtn = document.getElementById('lab-filter-btn');
     if (labBtn) {
         const labelEl = document.getElementById('lab-filter-label');
         if (selectedLabs.length === 0) {
-            labelEl.textContent = 'Εργαστήριο (όλα)';
+            labelEl.textContent = '🧪 Εργαστήριο';
             labBtn.classList.remove('has-selection');
         } else if (selectedLabs.length === 1) {
             const labNames = { 'LAB-KIF': 'Κηφισιά', 'LAB-MAR': 'Μαρούσι', 'LAB-GLY': 'Γλυφάδα', 'LAB-PAM': 'Παμμακάριστος' };
@@ -246,14 +263,16 @@ function applyFilters() {
     }
 
     if (currentTab === 'pending') {
-        const filtered = pendingExams.filter(e => matchesFilters(e, search, modality, selectedLabs, dateFrom, dateTo));
+        let filtered = pendingExams.filter(e => matchesFilters(e, search, selectedModalities, selectedLabs, dateFrom, dateTo));
+        filtered = sortExams(filtered);
         renderPendingRows(filtered);
         document.getElementById('section-count').textContent =
             filtered.length === pendingExams.length
                 ? `${pendingExams.length} σύνολο`
                 : `${filtered.length} από ${pendingExams.length}`;
     } else {
-        const filtered = assignedExams.filter(e => matchesFilters(e, search, modality, selectedLabs, dateFrom, dateTo));
+        let filtered = assignedExams.filter(e => matchesFilters(e, search, selectedModalities, selectedLabs, dateFrom, dateTo));
+        filtered = sortExams(filtered);
         renderAssignedRows(filtered);
         document.getElementById('section-count').textContent =
             filtered.length === assignedExams.length
@@ -262,15 +281,73 @@ function applyFilters() {
     }
 }
 
-function matchesFilters(exam, search, modality, selectedLabs, dateFrom, dateTo) {
-    // Category / modality filter
-    const examCat = exam.category || exam.modality || '';
-    if (modality && examCat !== modality) return false;
+function sortExams(exams) {
+    if (!sortConfig.key || !sortConfig.direction) return exams;
+    
+    return [...exams].sort((a, b) => {
+        let valA, valB;
+        switch(sortConfig.key) {
+            case 'extracode':
+                valA = a.extracode || a.exam_id || '';
+                valB = b.extracode || b.exam_id || '';
+                break;
+            case 'date':
+                valA = a.visitdate || a.request_date || '';
+                valB = b.visitdate || b.request_date || '';
+                break;
+            case 'lab':
+                valA = a.lab_name || a.laboratoryname || '';
+                valB = b.lab_name || b.laboratoryname || '';
+                break;
+            case 'patient':
+                valA = (a.patient_name || `${a.fname || ''} ${a.lname || ''}`).trim();
+                valB = (b.patient_name || `${b.fname || ''} ${b.lname || ''}`).trim();
+                break;
+            case 'examcode':
+                valA = a.examnumcode || '';
+                valB = b.examnumcode || '';
+                break;
+            case 'doctor':
+                valA = a.wname || a.issuing_doctor_name || '';
+                valB = b.wname || b.issuing_doctor_name || '';
+                break;
+            default:
+                valA = ''; valB = '';
+        }
+        
+        if (typeof valA === 'string') valA = valA.toLowerCase();
+        if (typeof valB === 'string') valB = valB.toLowerCase();
+        
+        if (valA < valB) return sortConfig.direction === 'asc' ? -1 : 1;
+        if (valA > valB) return sortConfig.direction === 'asc' ? 1 : -1;
+        return 0;
+    });
+}
+
+function applyFiltersModality() {
+    applyFilters();
+}
+
+function toggleModalityDropdown(event) {
+    event.stopPropagation();
+    const wrap = document.getElementById('modality-filter-wrap');
+    const isOpen = wrap.classList.contains('open');
+    // Close all dropdowns first
+    document.querySelectorAll('.lab-filter-wrap.open').forEach(el => el.classList.remove('open'));
+    if (!isOpen) wrap.classList.add('open');
+}
+
+function matchesFilters(exam, search, selectedModalities, selectedLabs, dateFrom, dateTo) {
+    // Category / modality filter — multi-select
+    if (selectedModalities.length > 0) {
+        const examCat = exam.category || exam.modality || '';
+        if (!selectedModalities.includes(examCat)) return false;
+    }
 
     // Lab filter — compare against lab_name (from DB) or lab_id (legacy)
     if (selectedLabs.length > 0) {
         const labName = (exam.lab_name || exam.laboratoryname || '').trim();
-        const labId   = exam.lab_id || '';
+        const labId = exam.lab_id || '';
         const match = selectedLabs.some(sel => labName === sel || labId === sel);
         if (!match) return false;
     }
@@ -278,11 +355,22 @@ function matchesFilters(exam, search, modality, selectedLabs, dateFrom, dateTo) 
     // Date range filter — use visitdate field
     const examDate = exam.visitdate || exam.request_date || '';
     if (dateFrom && examDate < dateFrom) return false;
-    if (dateTo   && examDate > dateTo)   return false;
+    if (dateTo && examDate > dateTo) return false;
+
+    if (filterOnlyComments) {
+        const notes = exam.notes || exam.comments || '';
+        if (!notes || EMPTY_NOTES_RE.test(notes)) return false;
+    }
+
+    if (filterOnlyHistory) {
+        const ov = exam.oldvisit;
+        if (!ov || ov === 0) return false;
+    }
 
     // Full-text search
     if (search) {
         const patName = exam.patient_name || `${exam.fname || ''} ${exam.lname || ''}`.trim();
+        const notesStr = exam.notes || exam.comments || '';
         const haystack = [
             String(exam.extracode || exam.exam_id || ''),
             patName,
@@ -293,6 +381,7 @@ function matchesFilters(exam, search, modality, selectedLabs, dateFrom, dateTo) 
             String(exam.demogid || exam.patient_id || ''),
             String(exam.examnumcode || ''),
             exam.code || exam.diagnostician_name || exam.assigned_diagnostician_name || '',
+            notesStr
         ].join(' ').toLowerCase();
         if (!haystack.includes(search)) return false;
     }
@@ -301,21 +390,120 @@ function matchesFilters(exam, search, modality, selectedLabs, dateFrom, dateTo) 
 
 function clearFilters(rerender = true) {
     document.getElementById('search-input').value = '';
-    document.getElementById('filter-modality').value = '';
-    
+
     if (dateRangePicker) {
         dateRangePicker.clear();
     }
 
+    // Uncheck all modality checkboxes
+    document.querySelectorAll('#modality-dropdown input[type="checkbox"]').forEach(cb => cb.checked = false);
+    const modalityLabelEl = document.getElementById('modality-filter-label');
+    if (modalityLabelEl) modalityLabelEl.textContent = '🩻 Κατηγορία';
+    const modalityBtn = document.getElementById('modality-filter-btn');
+    if (modalityBtn) modalityBtn.classList.remove('has-selection');
+
     // Uncheck all lab checkboxes
-    document.querySelectorAll('.lab-dropdown input[type="checkbox"]').forEach(cb => cb.checked = false);
+    document.querySelectorAll('#lab-dropdown input[type="checkbox"]').forEach(cb => cb.checked = false);
     document.getElementById('btn-clear-filters').style.display = 'none';
     // Reset lab label
     const labelEl = document.getElementById('lab-filter-label');
-    if (labelEl) labelEl.textContent = 'Εργαστήριο (όλα)';
+    if (labelEl) labelEl.textContent = '🧪 Εργαστήριο';
     const labBtn = document.getElementById('lab-filter-btn');
     if (labBtn) labBtn.classList.remove('has-selection');
+
+    // Reset comments filter
+    filterOnlyComments = false;
+    const commentsBtn = document.getElementById('btn-filter-comments');
+    if (commentsBtn) {
+        commentsBtn.style.background = 'var(--bg-tertiary)';
+        commentsBtn.style.borderColor = 'var(--border-color)';
+        commentsBtn.style.color = 'var(--text-primary)';
+    }
+
+    // Reset history filter
+    filterOnlyHistory = false;
+    const historyBtn = document.getElementById('btn-filter-history');
+    if (historyBtn) {
+        historyBtn.style.background = 'var(--bg-tertiary)';
+        historyBtn.style.borderColor = 'var(--border-color)';
+        historyBtn.style.color = 'var(--text-primary)';
+    }
+
+    // Reset sorting
+    sortConfig = { key: null, direction: null };
+    updateSortIcons();
+
     if (rerender) applyFilters();
+}
+
+function toggleCommentsFilter() {
+    filterOnlyComments = !filterOnlyComments;
+    const btn = document.getElementById('btn-filter-comments');
+    if (filterOnlyComments) {
+        btn.style.background = 'rgba(99, 102, 241, 0.08)';
+        btn.style.borderColor = 'var(--accent-primary)';
+        btn.style.color = 'var(--accent-primary)';
+    } else {
+        btn.style.background = 'var(--bg-tertiary)';
+        btn.style.borderColor = 'var(--border-color)';
+        btn.style.color = 'var(--text-primary)';
+    }
+    applyFilters();
+}
+
+function toggleHistoryFilter() {
+    filterOnlyHistory = !filterOnlyHistory;
+    const btn = document.getElementById('btn-filter-history');
+    if (filterOnlyHistory) {
+        btn.style.background = 'rgba(99, 102, 241, 0.08)';
+        btn.style.borderColor = 'var(--accent-primary)';
+        btn.style.color = 'var(--accent-primary)';
+    } else {
+        btn.style.background = 'var(--bg-tertiary)';
+        btn.style.borderColor = 'var(--border-color)';
+        btn.style.color = 'var(--text-primary)';
+    }
+    applyFilters();
+}
+
+function handleSort(key) {
+    if (sortConfig.key === key) {
+        if (sortConfig.direction === 'asc') sortConfig.direction = 'desc';
+        else if (sortConfig.direction === 'desc') {
+            sortConfig.direction = null;
+            sortConfig.key = null;
+        }
+    } else {
+        sortConfig.key = key;
+        sortConfig.direction = 'asc';
+    }
+    updateSortIcons();
+    applyFilters();
+}
+
+function updateSortIcons() {
+    const keys = ['extracode', 'date', 'lab', 'patient', 'examcode', 'doctor'];
+    keys.forEach(k => {
+        // Update both pending and assigned icons if they exist
+        const iconPending = document.getElementById(`sort-icon-${k}`);
+        const iconAssigned = document.getElementById(`sort-icon-${k}-assigned`);
+        
+        const setIcon = (el) => {
+            if (!el) return;
+            if (sortConfig.key === k) {
+                el.textContent = sortConfig.direction === 'asc' ? '▲' : '▼';
+                el.style.opacity = '1';
+                el.style.color = 'white';
+            } else {
+                el.textContent = '↕️';
+                el.style.opacity = '0.5';
+                el.style.color = 'inherit';
+            }
+        };
+        
+        setIcon(iconPending);
+        setIcon(iconAssigned);
+    });
 }
 
 
@@ -342,41 +530,41 @@ function renderPendingRows(exams) {
         const hasSuggestion = exam.suggestion != null;
         const dateStr = formatDateDMY(exam.visitdate || exam.request_date);
         const cleanName = cleanExamName(exam.examname || exam.exam_title || '');
-        const catClass = (exam.category || exam.modality || '').toLowerCase().replace('mra', 'mri');
+        const catClass = (exam.category || exam.modality || '').toLowerCase();
         const patientName = exam.patient_name || `${exam.fname || ''} ${exam.lname || ''}`.trim() || '—';
         const notesHtml = buildNotesCell(exam.notes || exam.comments || '');
         const oldVisitHtml = buildOldVisitCell(exam);
 
         return `
             <tr id="row-${exam.exam_id}">
-                <td><span class="extracode-badge">${exam.extracode || exam.exam_id}</span></td>
+                <td class="extracode-cell"><span class="extracode-badge">${exam.extracode || exam.exam_id}</span></td>
                 <td class="date-cell">${dateStr}</td>
-                <td class="demogid-cell">${exam.demogid || exam.patient_id || '—'}</td>
-                <td>${patientName}</td>
-                <td>
+                <td>${exam.lab_name || exam.laboratoryname || '—'}</td>
+                <td class="demogid-cell" style="border-left: 1px solid rgba(255, 255, 255, 0.2);">${exam.demogid || exam.patient_id || '—'}</td>
+                <td style="border-right: 1px solid rgba(255, 255, 255, 0.2);">${patientName}</td>
+                <td style="border-left: 1px solid rgba(255, 255, 255, 0.2);">
                     <span class="modality-badge ${catClass}">${exam.category || exam.modality || '—'}</span>
                 </td>
                 <td class="examnumcode-cell">${exam.examnumcode || '—'}</td>
-                <td><span class="body-part-tag" title="${escapeHtmlFull(exam.examname || '')}">${cleanName || '—'}</span></td>
-                <td>${exam.lab_name || exam.laboratoryname || '—'}</td>
+                <td class="exam-name-cell" style="border-right: 1px solid rgba(255, 255, 255, 0.2);"><span class="body-part-tag" title="${escapeHtmlFull(exam.examname || '')}">${cleanName || '—'}</span></td>
                 <td>${exam.wname || exam.issuing_doctor_name || '—'}</td>
                 <td class="comment-cell">${notesHtml}</td>
                 <td class="comment-cell">${oldVisitHtml}</td>
                 <td class="suggestion-cell">
                     ${hasSuggestion
-                        ? `<span class="suggested-name">${exam.suggestion.suggested_diagnostician_name}</span>
+                ? `<span class="suggested-name">${exam.suggestion.suggested_diagnostician_name}</span>
                            <span class="suggested-score">${Math.round(exam.suggestion.confidence_score * 100)}%</span>`
-                        : '<span class="no-suggestion">—</span>'
-                    }
+                : '<span class="no-suggestion">—</span>'
+            }
                 </td>
                 <td>
                     <div class="btn-group">
                         ${hasSuggestion
-                            ? `<button class="btn btn-view" onclick="viewSuggestion('${exam.exam_id}')">Προβολή</button>`
-                            : `<button class="btn btn-suggest" onclick="getSuggestion('${exam.exam_id}')">
+                ? `<button class="btn btn-view" onclick="viewSuggestion('${exam.exam_id}')">Προβολή</button>`
+                : `<button class="btn btn-suggest" onclick="getSuggestion('${exam.exam_id}')">
                                 <span class="btn-text">Πρόταση</span>
                                </button>`
-                        }
+            }
                     </div>
                 </td>
             </tr>
@@ -407,7 +595,7 @@ function renderAssignedRows(exams) {
     tbody.innerHTML = exams.map(exam => {
         const dateStr = formatDateDMY(exam.visitdate || exam.request_date);
         const cleanName = cleanExamName(exam.examname || exam.exam_title || '');
-        const catClass = (exam.category || exam.modality || '').toLowerCase().replace('mra', 'mri');
+        const catClass = (exam.category || exam.modality || '').toLowerCase();
         const patientName = exam.patient_name || `${exam.fname || ''} ${exam.lname || ''}`.trim() || '—';
         const diagName = exam.code || exam.diagnostician_name || exam.assigned_diagnostician_name || '—';
         const notesHtml = buildNotesCell(exam.notes || exam.comments || '');
@@ -415,16 +603,16 @@ function renderAssignedRows(exams) {
 
         return `
             <tr>
-                <td><span class="extracode-badge">${exam.extracode || exam.exam_id}</span></td>
+                <td class="extracode-cell"><span class="extracode-badge">${exam.extracode || exam.exam_id}</span></td>
                 <td class="date-cell">${dateStr}</td>
-                <td class="demogid-cell">${exam.demogid || exam.patient_id || '—'}</td>
-                <td>${patientName}</td>
-                <td>
+                <td>${exam.lab_name || exam.laboratoryname || '—'}</td>
+                <td class="demogid-cell" style="border-left: 1px solid rgba(255, 255, 255, 0.2);">${exam.demogid || exam.patient_id || '—'}</td>
+                <td style="border-right: 1px solid rgba(255, 255, 255, 0.2);">${patientName}</td>
+                <td style="border-left: 1px solid rgba(255, 255, 255, 0.2);">
                     <span class="modality-badge ${catClass}">${exam.category || exam.modality || '—'}</span>
                 </td>
                 <td class="examnumcode-cell">${exam.examnumcode || '—'}</td>
-                <td><span class="body-part-tag" title="${escapeHtmlFull(exam.examname || '')}">${cleanName || '—'}</span></td>
-                <td>${exam.lab_name || exam.laboratoryname || '—'}</td>
+                <td class="exam-name-cell" style="border-right: 1px solid rgba(255, 255, 255, 0.2);"><span class="body-part-tag" title="${escapeHtmlFull(exam.examname || '')}">${cleanName || '—'}</span></td>
                 <td>${exam.wname || exam.issuing_doctor_name || '—'}</td>
                 <td class="comment-cell">${notesHtml}</td>
                 <td class="comment-cell">${oldVisitHtml}</td>
@@ -537,6 +725,15 @@ function openSuggestionModal(examId, suggestion) {
                         <span class="alt-elimination-reason">${alt.elimination_reason || ''}</span>
                     </div>
                 `;
+            } else if (Math.round(alt.score * 100) === 0) {
+                return `
+                    <div class="alternative-item eliminated" onclick="selectAlternative(${alt.id}, '${escapeHtml(alt.name)}', true)">
+                        <span class="alt-rank">—</span>
+                        <span class="alt-name">${alt.name}</span>
+                        <span class="alt-eliminated-badge">⛔ 0% Βαθμολογία</span>
+                        <span class="alt-elimination-reason">Χωρίς βαθμολογία (0%)</span>
+                    </div>
+                `;
             } else {
                 const rank = rankCounter++;
                 return `
@@ -557,7 +754,7 @@ function openSuggestionModal(examId, suggestion) {
     overrideSelect.innerHTML = '<option value="">— Επιλέξτε εναλλακτικό —</option>';
 
     // Non-eliminated alternatives
-    const scored = alternatives.filter(a => !a.eliminated);
+    const scored = alternatives.filter(a => !a.eliminated && Math.round(a.score * 100) > 0);
     if (scored.length) {
         const grp1 = document.createElement('optgroup');
         grp1.label = 'Αξιολογημένοι';
@@ -568,12 +765,13 @@ function openSuggestionModal(examId, suggestion) {
     }
 
     // Eliminated alternatives (can still be manually chosen)
-    const eliminated = alternatives.filter(a => a.eliminated);
+    const eliminated = alternatives.filter(a => a.eliminated || Math.round(a.score * 100) === 0);
     if (eliminated.length) {
         const grp2 = document.createElement('optgroup');
         grp2.label = 'Εξαιρεθέντες (χειροκίνητη παράκαμψη)';
         eliminated.forEach(alt => {
-            grp2.innerHTML += `<option value="${alt.id}">${alt.name} ⛔ Εξαιρέθηκε</option>`;
+            const badge = alt.eliminated ? 'Εξαιρέθηκε' : '0%';
+            grp2.innerHTML += `<option value="${alt.id}">${alt.name} ⛔ ${badge}</option>`;
         });
         overrideSelect.appendChild(grp2);
     }
@@ -865,11 +1063,11 @@ function buildOldVisitCell(exam) {
         return '<span style="color:var(--text-tertiary)">—</span>';
     }
     const lines = [
-        exam.oldorder   ? `Ημ/νία: ${formatDateDMY(exam.oldorder)}`   : null,
+        exam.oldorder ? `Ημ/νία: ${formatDateDMY(exam.oldorder)}` : null,
         exam.olddiagnostis && exam.olddiagnostis !== '-' ? `Διαγνώστης: ${exam.olddiagnostis}` : null,
     ].filter(Boolean).join('<br>');
     return `<div class="comment-btn-wrap">
-        <button class="comment-btn" style="background:var(--surface-tertiary);color:var(--text-secondary);">🕐 Ιστορικό</button>
+        <button class="comment-btn" style="background:rgba(59,130,246,0.12);color:var(--accent-info);border:1px solid rgba(59,130,246,0.3);">🕐 Ιστορικό</button>
         <div class="comment-popup">${lines || '—'}</div>
     </div>`;
 }
@@ -973,7 +1171,7 @@ function toggleLabDropdown(event) {
 }
 
 // Close lab dropdown when clicking outside
-document.addEventListener('click', function(e) {
+document.addEventListener('click', function (e) {
     const wrap = document.getElementById('lab-filter-wrap');
     if (wrap && !wrap.contains(e.target)) {
         wrap.classList.remove('open');

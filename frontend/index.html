@@ -29,7 +29,7 @@
             </div>
             <div class="header-right">
                 <div class="oncall-badge" id="oncall-badge">
-                    <span class="oncall-label">Εφημερία Παμ/στου:</span>
+                    <span class="oncall-label">🏥 Παμμακάριστος:</span>
                     <span class="oncall-name" id="oncall-name">—</span>
                 </div>
 
@@ -104,18 +104,33 @@
                             oninput="applyFilters()">
                     </div>
 
-                    <!-- Filters -->
-                    <select id="filter-modality" class="filter-select" onchange="applyFilters()">
-                        <option value="">Κατηγορία (όλα)</option>
-                        <option value="CT">CT</option>
-                        <option value="MRI">MRI</option>
-                        <option value="MRA">MRA</option>
-                    </select>
+                    <!-- Category multi-select checkbox dropdown -->
+                    <div class="lab-filter-wrap" id="modality-filter-wrap">
+                        <button class="lab-filter-btn" id="modality-filter-btn" type="button"
+                            onclick="toggleModalityDropdown(event)">
+                            <span id="modality-filter-label">🩻 Κατηγορία</span>
+                            <span class="lab-filter-arrow">▼</span>
+                        </button>
+                        <div class="lab-dropdown" id="modality-dropdown">
+                            <label class="lab-option">
+                                <input type="checkbox" id="mod-ct" value="CT" onchange="applyFiltersModality()">
+                                <label for="mod-ct">CT</label>
+                            </label>
+                            <label class="lab-option">
+                                <input type="checkbox" id="mod-mri" value="MRI" onchange="applyFiltersModality()">
+                                <label for="mod-mri">MRI</label>
+                            </label>
+                            <label class="lab-option">
+                                <input type="checkbox" id="mod-mra" value="MRA" onchange="applyFiltersModality()">
+                                <label for="mod-mra">MRA</label>
+                            </label>
+                        </div>
+                    </div>
                     <!-- Lab multi-select checkbox dropdown -->
                     <div class="lab-filter-wrap" id="lab-filter-wrap">
                         <button class="lab-filter-btn" id="lab-filter-btn" type="button"
                             onclick="toggleLabDropdown(event)">
-                            <span id="lab-filter-label">Εργαστήριο (όλα)</span>
+                            <span id="lab-filter-label">🧪 Εργαστήριο</span>
                             <span class="lab-filter-arrow">▼</span>
                         </button>
                         <div class="lab-dropdown" id="lab-dropdown">
@@ -139,8 +154,20 @@
                     </div>
                     <!-- Date range -->
                     <div class="date-range-wrap">
-                        <input type="text" id="filter-date-range" class="date-range-input"
-                            placeholder="Ημερομηνίες (dd/mm/yyyy)" readonly>
+                        <input type="text" id="filter-date-range" class="date-range-input" placeholder="📆 Ημερομηνίες"
+                            readonly>
+                    </div>
+
+                    <!-- Icon Filters -->
+                    <div style="display: flex; gap: 8px;">
+                        <button class="btn btn-secondary" id="btn-filter-comments" onclick="toggleCommentsFilter()"
+                            style="height: 36px; width: 36px; padding: 0; display: flex; align-items: center; justify-content: center; background: var(--bg-tertiary); color: var(--text-primary); border: 1px solid var(--border-color);" title="Με Σχόλια">
+                            💬
+                        </button>
+                        <button class="btn btn-secondary" id="btn-filter-history" onclick="toggleHistoryFilter()"
+                            style="height: 36px; width: 36px; padding: 0; display: flex; align-items: center; justify-content: center; background: var(--bg-tertiary); color: var(--text-primary); border: 1px solid var(--border-color);" title="Με Ιστορικό">
+                            🕐
+                        </button>
                     </div>
 
                     <button class="btn btn-ghost" onclick="clearFilters()" id="btn-clear-filters" style="display:none;">
@@ -163,16 +190,13 @@
                 <div class="exams-table-container">
                     <table class="exams-table" id="exams-table-pending">
                         <thead>
-                            <tr>
-                                <th>Κωδικός Εντολής</th>
-                                <th>Ημερομηνία</th>
-                                <th>Κωδικός Ασθενή</th>
-                                <th>Ασθενής</th>
-                                <th>Κατηγορία</th>
-                                <th>Κωδικός Εξέτασης</th>
-                                <th>Εξέταση</th>
-                                <th>Μονάδα</th>
-                                <th>Παραπέμπων</th>
+                            <tr style="background-color: #DB241E;">
+                                <th style="text-align: center; cursor: pointer;" onclick="handleSort('extracode')">Κωδικός Εντολής <span id="sort-icon-extracode" style="opacity:0.5; font-size:10px;">↕️</span></th>
+                                <th style="cursor: pointer;" onclick="handleSort('date')">Ημερομηνία <span id="sort-icon-date" style="opacity:0.5; font-size:10px;">↕️</span></th>
+                                <th style="cursor: pointer;" onclick="handleSort('lab')">Μονάδα <span id="sort-icon-lab" style="opacity:0.5; font-size:10px;">↕️</span></th>
+                                <th colspan="2" style="text-align: center; cursor: pointer;" onclick="handleSort('patient')">Ασθενής <span id="sort-icon-patient" style="opacity:0.5; font-size:10px;">↕️</span></th>
+                                <th colspan="3" style="text-align: center; cursor: pointer;" onclick="handleSort('examcode')">Εξέταση <span id="sort-icon-examcode" style="opacity:0.5; font-size:10px;">↕️</span></th>
+                                <th style="cursor: pointer;" onclick="handleSort('doctor')">Παραπέμπων Ιατρός <span id="sort-icon-doctor" style="opacity:0.5; font-size:10px;">↕️</span></th>
                                 <th>Σχόλια</th>
                                 <th>Τελ. Επίσκεψη</th>
                                 <th>Πρόταση</th>
@@ -200,16 +224,13 @@
                 <div class="exams-table-container">
                     <table class="exams-table" id="exams-table-assigned">
                         <thead>
-                            <tr>
-                                <th>Κωδικός Εντολής</th>
-                                <th>Ημερομηνία</th>
-                                <th>Κωδικός Ασθενή</th>
-                                <th>Ασθενής</th>
-                                <th>Κατηγορία</th>
-                                <th>Κωδικός Εξέτασης</th>
-                                <th>Εξέταση</th>
-                                <th>Μονάδα</th>
-                                <th>Παραπέμπων</th>
+                            <tr style="background-color: #DB241E;">
+                                <th style="text-align: center; cursor: pointer;" onclick="handleSort('extracode')">Κωδικός Εντολής <span id="sort-icon-extracode-assigned" style="opacity:0.5; font-size:10px;">↕️</span></th>
+                                <th style="cursor: pointer;" onclick="handleSort('date')">Ημερομηνία <span id="sort-icon-date-assigned" style="opacity:0.5; font-size:10px;">↕️</span></th>
+                                <th style="cursor: pointer;" onclick="handleSort('lab')">Μονάδα <span id="sort-icon-lab-assigned" style="opacity:0.5; font-size:10px;">↕️</span></th>
+                                <th colspan="2" style="text-align: center; cursor: pointer;" onclick="handleSort('patient')">Ασθενής <span id="sort-icon-patient-assigned" style="opacity:0.5; font-size:10px;">↕️</span></th>
+                                <th colspan="3" style="text-align: center; cursor: pointer;" onclick="handleSort('examcode')">Εξέταση <span id="sort-icon-examcode-assigned" style="opacity:0.5; font-size:10px;">↕️</span></th>
+                                <th style="cursor: pointer;" onclick="handleSort('doctor')">Παραπέμπων Ιατρός <span id="sort-icon-doctor-assigned" style="opacity:0.5; font-size:10px;">↕️</span></th>
                                 <th>Σχόλια</th>
                                 <th>Τελ. Επίσκεψη</th>
                                 <th>Διαγνώστης</th>

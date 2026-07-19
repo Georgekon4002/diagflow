@@ -36,7 +36,7 @@
             <nav class="admin-nav">
                 <button class="admin-nav-item active" id="nav-oncall" onclick="showSection('oncall')">
                     <span class="admin-nav-icon">🏥</span>
-                    Εφημερία Παμμακάριστου
+                    Παμμακάριστος
                 </button>
                 <button class="admin-nav-item" id="nav-diagnosticians" onclick="showSection('diagnosticians')">
                     <span class="admin-nav-icon">👨‍⚕️</span>
@@ -48,7 +48,7 @@
                 </button>
                 <button class="admin-nav-item" id="nav-skills" onclick="showSection('skills')">
                     <span class="admin-nav-icon">🎯</span>
-                    Δεξιότητες & Χωρητικότητα
+                    Ικανότητες Διαγνωστών
                 </button>
                 <button class="admin-nav-item" id="nav-partnerships" onclick="showSection('partnerships')">
                     <span class="admin-nav-icon">🤝</span>
@@ -65,7 +65,7 @@
         <!-- ─── Main Content ─── -->
         <div class="admin-main">
             <div class="admin-top-bar">
-                <div class="admin-page-title" id="admin-page-title">Εφημερία Παμμακάριστου</div>
+                <div class="admin-page-title" id="admin-page-title">Παμμακάριστος</div>
                 <div style="display:flex;align-items:center;gap:12px;">
                     <span class="admin-badge">
                         <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
@@ -80,16 +80,15 @@
 
             <div class="admin-content">
 
-                <!-- ════════════ SECTION: Εφημερία Παμμακάριστου ════════════ -->
+                <!-- ════════════ SECTION: Παμμακάριστος ════════════ -->
                 <div id="section-oncall" class="admin-section">
                     <div class="admin-card">
                         <div class="admin-card-title">
-                            🏥 Αλλαγή Εφημερεύοντος Παμμακάριστου
+                            🏥 Αλλαγή Προγράμματος Υπεύθυνου Παμμακάριστου
                         </div>
                         <p
                             style="color:var(--text-secondary);font-size:var(--font-size-sm);margin-bottom:var(--space-lg);">
-                            Ορίστε ποιος διαγνώστης είναι υπεύθυνος για την εφημερία του Παμμακάριστου σήμερα.
-                            Αυτό εμφανίζεται στο header της κύριας οθόνης.
+                            Ορίστε ποιος διαγνώστης είναι υπεύθυνος για τις διαγνώσεις της Παμμακαρίστου για σήμερα.
                         </p>
                         <div class="admin-form" style="grid-template-columns:1fr 1fr auto;align-items:end;">
                             <div class="form-group" style="margin:0;">
@@ -108,7 +107,7 @@
                     </div>
 
                     <div class="admin-card">
-                        <div class="admin-card-title">Τρέχουσα Εφημερία</div>
+                        <div class="admin-card-title">Τρέχων Υπεύθυνος</div>
                         <div id="oncall-current" style="color:var(--text-secondary);font-size:var(--font-size-sm);">
                             Φόρτωση…
                         </div>
@@ -222,17 +221,9 @@
                                 <select id="skill-diag" class="form-input filter-select" style="width:100%;"></select>
                             </div>
                             <div class="form-group" style="margin:0;">
-                                <label class="form-label">Κωδικός Εξέτασης (SLIS)</label>
+                                <label class="form-label">Κωδικός Εξέτασης</label>
                                 <input type="text" id="skill-exam-code" class="form-input"
                                     placeholder="π.χ. 22100, 22140">
-                            </div>
-                            <div class="form-group" style="margin:0;">
-                                <label class="form-label">Μέθοδος</label>
-                                <select id="skill-modality" class="form-input filter-select" style="width:100%;">
-                                    <option value="CT">CT</option>
-                                    <option value="MRI">MRI</option>
-                                    <option value="any">Όλα</option>
-                                </select>
                             </div>
                             <div class="form-group" style="margin:0;">
                                 <label class="form-label">Προτίμηση</label>
@@ -255,8 +246,8 @@
                             <thead>
                                 <tr>
                                     <th>Διαγνώστης</th>
-                                    <th>Κωδικός / Εξέταση</th>
-                                    <th>Μέθοδος</th>
+                                    <th>Κωδικός</th>
+                                    <th>Εξέταση</th>
                                     <th>Προτίμηση</th>
                                     <th>Ενέργειες</th>
                                 </tr>
@@ -276,13 +267,10 @@
                         </p>
                         <div class="admin-form">
                             <div class="form-group" style="margin:0;">
-                                <label class="form-label">Παραπέμπων Ιατρός (ID)</label>
-                                <input type="text" id="part-doctor-id" class="form-input" placeholder="π.χ. DR-101">
-                            </div>
-                            <div class="form-group" style="margin:0;">
-                                <label class="form-label">Ονοματεπώνυμο Ιατρού</label>
-                                <input type="text" id="part-doctor-name" class="form-input"
-                                    placeholder="π.χ. Παπαδόπουλος Ν.">
+                                <label class="form-label">Παραπέμπων Ιατρός</label>
+                                <select id="part-doctor-select" class="form-input filter-select" style="width:100%;">
+                                    <option value="">— Επιλέξτε Ιατρό —</option>
+                                </select>
                             </div>
                             <div class="form-group" style="margin:0;">
                                 <label class="form-label">Προτιμώμενος Διαγνώστης</label>

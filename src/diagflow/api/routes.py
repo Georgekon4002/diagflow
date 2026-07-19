@@ -11,14 +11,14 @@ REST endpoints for the secretariat review dashboard:
 - GET  /api/pamakristos/oncall    — Get today's on-call
 - POST /api/pamakristos/oncall    — Set on-call manually
 
-Admin endpoints (all with mock data until DB is ready):
+Admin endpoints (backed by diagflow.db — persistent):
 - POST /api/admin/auth/login
-- GET/POST /api/admin/diagnosticians
-- PUT  /api/admin/diagnosticians/{id}
-- GET/POST /api/admin/partnerships
-- GET/POST /api/admin/doctors
-- GET/POST /api/admin/availability
-- GET/POST /api/admin/skills
+- GET/POST        /api/admin/diagnosticians
+- PUT/DELETE      /api/admin/diagnosticians/{id}
+- GET/POST/DELETE /api/admin/partnerships
+- GET/POST/DELETE /api/admin/doctors
+- GET/POST        /api/admin/availability
+- GET/POST/DELETE /api/admin/skills
 """
 
 from datetime import date, datetime
@@ -47,78 +47,15 @@ from diagflow.services.assignment import AssignmentService
 from diagflow.services.comment_parser import parse_comment
 from diagflow.services.diagnostician import DiagnosticianService
 from diagflow.services.pamakristos import PamakristosScheduler
+import diagflow.db.diagflow_db as cfg_db
 
 router = APIRouter()
 
 # ── In-memory suggestion cache (for confirm/override flow) ──
-# In production, this would be stored in the DB or Redis
 _suggestion_cache: dict = {}
 
-# ── Admin session store (simple token-based, mock) ──
-# In production, use JWT or a real session mechanism
+# ── Admin session store ──
 _admin_sessions: set[str] = set()
-
-# ── Mock admin state (persisted in memory during server lifetime) ──
-_mock_diagnosticians: list[dict] = [
-    {"id": 1, "name": "Νάτσικα Α.", "active": True, "can_ct": True, "can_mri": True, "daily_quota": 15},
-    {"id": 2, "name": "Κωνσταντίνου Β.", "active": True, "can_ct": True, "can_mri": True, "daily_quota": 12},
-    {"id": 3, "name": "Παπαδόπουλος Γ.", "active": True, "can_ct": True, "can_mri": True, "daily_quota": 18},
-    {"id": 4, "name": "Λιάκος Δ.", "active": True, "can_ct": True, "can_mri": False, "daily_quota": 10},
-    {"id": 5, "name": "Δημητρίου Ε.", "active": True, "can_ct": True, "can_mri": True, "daily_quota": 14},
-    {"id": 6, "name": "Αντωνίου Ζ.", "active": False, "can_ct": True, "can_mri": True, "daily_quota": 16},
-]
-
-_mock_partnerships: list[dict] = [
-    {"id": 1, "issuing_doctor_id": "DR-101", "issuing_doctor_name": "Παπαδόπουλος Ν.", "preferred_diagnostician_id": 3, "preferred_diagnostician_name": "Παπαδόπουλος Γ.", "priority": 5, "exclusive": True},
-    {"id": 2, "issuing_doctor_id": "DR-205", "issuing_doctor_name": "Ιωάννου Ε.", "preferred_diagnostician_id": 2, "preferred_diagnostician_name": "Κωνσταντίνου Β.", "priority": 4, "exclusive": False},
-]
-
-_mock_doctors: list[dict] = [
-    {"id": "DR-101", "name": "Παπαδόπουλος Ν.", "specialty": "Ορθοπεδική"},
-    {"id": "DR-205", "name": "Ιωάννου Ε.", "specialty": "Καρδιολογία"},
-    {"id": "DR-310", "name": "Βασιλείου Κ.", "specialty": "Νευρολογία"},
-    {"id": "DR-PAM-01", "name": "Εφημερία Παμμακάριστου", "specialty": "Εφημερία"},
-]
-
-_mock_availability: list[dict] = [
-    {"id": 1, "diagnostician_id": 6, "diagnostician_name": "Αντωνίου Ζ.", "date": str(date.today()), "status": "on_leave", "is_pamakristos_oncall": False, "notes": "Άδεια"},
-]
-
-_mock_skills: list[dict] = [
-    {"id": 1, "diagnostician_id": 1, "diagnostician_name": "Νάτσικα Α.", "exam_code": "21100", "exam_title": "MRI Κοιλίας", "modality": "MRI", "is_preferred": True},
-    {"id": 2, "diagnostician_id": 1, "diagnostician_name": "Νάτσικα Α.", "exam_code": "22140", "exam_title": "CT Θώρακα", "modality": "CT", "is_preferred": False},
-    {"id": 3, "diagnostician_id": 2, "diagnostician_name": "Κωνσταντίνου Β.", "exam_code": "22140", "exam_title": "CT Θώρακα", "modality": "CT", "is_preferred": True},
-    {"id": 4, "diagnostician_id": 3, "diagnostician_name": "Παπαδόπουλος Γ.", "exam_code": "21063", "exam_title": "MRI Εγκεφάλου", "modality": "MRI", "is_preferred": True},
-]
-
-_mock_oncall: dict = {"diagnostician_id": 3, "diagnostician_name": "Παπαδόπουλος Γ.", "date": str(date.today())}
-
-_mock_assigned_exams: list[dict] = [
-    {
-        "exam_id": "EX-2026-A01", "patient_id": "PT-1001", "patient_name": "Σοφία Μ.",
-        "modality": "CT", "body_part": "chest", "lab_id": "LAB-KIF", "lab_name": "Κηφισιά",
-        "issuing_doctor_id": "DR-101", "issuing_doctor_name": "Παπαδόπουλος Ν.",
-        "request_date": "2026-07-14", "status": "assigned",
-        "assigned_diagnostician_id": 1, "assigned_diagnostician_name": "Νάτσικα Α.",
-        "assigned_at": "2026-07-14T09:15:00",
-    },
-    {
-        "exam_id": "EX-2026-A02", "patient_id": "PT-2002", "patient_name": "Νίκος Α.",
-        "modality": "MRI", "body_part": "neuro", "lab_id": "LAB-MAR", "lab_name": "Μαρούσι",
-        "issuing_doctor_id": "DR-310", "issuing_doctor_name": "Βασιλείου Κ.",
-        "request_date": "2026-07-14", "status": "assigned",
-        "assigned_diagnostician_id": 3, "assigned_diagnostician_name": "Παπαδόπουλος Γ.",
-        "assigned_at": "2026-07-14T10:30:00",
-    },
-    {
-        "exam_id": "EX-2026-A03", "patient_id": "PT-3003", "patient_name": "Ελένη Τ.",
-        "modality": "CT", "body_part": "abdomen", "lab_id": "LAB-GLY", "lab_name": "Γλυφάδα",
-        "issuing_doctor_id": "DR-205", "issuing_doctor_name": "Ιωάννου Ε.",
-        "request_date": "2026-07-13", "status": "assigned",
-        "assigned_diagnostician_id": 2, "assigned_diagnostician_name": "Κωνσταντίνου Β.",
-        "assigned_at": "2026-07-13T14:45:00",
-    },
-]
 
 
 # ─────────────────────────────────────────────────────
@@ -138,7 +75,6 @@ class AdminLoginResponse(BaseModel):
 @router.post("/admin/auth/login", response_model=AdminLoginResponse)
 async def admin_login(request: AdminLoginRequest):
     """Authenticate admin user. Returns a session token."""
-    # Simple hardcoded credentials for demo
     if request.username == "admin" and request.password == "admin1234":
         import secrets
         token = secrets.token_hex(16)
@@ -184,17 +120,7 @@ async def suggest_assignment(
     assign_svc: AssignmentService = Depends(get_assignment_service),
     diag_svc: DiagnosticianService = Depends(get_diagnostician_service),
 ):
-    """
-    Generate an assignment suggestion for a specific exam.
-
-    Runs the full rule engine pipeline:
-    1. Load candidates
-    2. Apply hard filters (availability, skills)
-    3. Compute weighted scores (capacity, partnership, lab, history)
-    4. Run solver
-    5. Return suggestion with full transparency (including eliminated candidates)
-    """
-    # Fetch exam data
+    """Generate an assignment suggestion for a specific exam."""
     pending = assign_svc.get_pending_exams()
     exam_data = next((e for e in pending if e["exam_id"] == request.exam_id), None)
 
@@ -216,7 +142,6 @@ async def suggest_assignment(
         is_pamakristos="PAM" in exam_data.get("lab_id", "").upper(),
     )
 
-    # Load candidates
     candidates = await diag_svc.get_candidates_for_exam(
         exam_id=exam.exam_id,
         modality=exam.modality,
@@ -227,13 +152,7 @@ async def suggest_assignment(
         exam_code=exam.exam_code,
     )
 
-    # Parse comments [DISABLED — passing None]
     comment_analysis = None
-    # Uncomment when re-enabling comment parsing:
-    # diagnostician_names = [c.name for c in candidates]
-    # comment_analysis = await parse_comment(exam.comments, diagnostician_names)
-
-    # Run the pipeline
     suggestion = await assign_svc.suggest_assignment(exam, candidates, comment_analysis)
 
     if not suggestion:
@@ -242,7 +161,6 @@ async def suggest_assignment(
             detail="No eligible diagnosticians found after applying all rules. Manual assignment required.",
         )
 
-    # Cache the suggestion for confirm/override
     _suggestion_cache[exam.exam_id] = suggestion
 
     return SuggestionResponse(
@@ -280,8 +198,6 @@ async def confirm_assignment(
         diagnostician_id=request.diagnostician_id,
         suggestion=suggestion,
     )
-
-    # Remove from cache after confirmation
     _suggestion_cache.pop(request.exam_id, None)
 
     return AssignmentConfirmation(
@@ -313,8 +229,6 @@ async def override_assignment(
         reason=request.reason,
         suggestion=suggestion,
     )
-
-    # Remove from cache after override
     _suggestion_cache.pop(request.exam_id, None)
 
     return AssignmentConfirmation(
@@ -327,14 +241,14 @@ async def override_assignment(
 
 
 # ─────────────────────────────────────────────────────
-#  Diagnosticians (public read, admin write)
+#  Diagnosticians (public read)
 # ─────────────────────────────────────────────────────
 
 @router.get("/diagnosticians", response_model=list[DiagnosticianResponse])
 async def list_diagnosticians(
     svc: DiagnosticianService = Depends(get_diagnostician_service),
 ):
-    """List all diagnosticians with their current status."""
+    """List all active diagnosticians."""
     return await svc.get_all_diagnosticians()
 
 
@@ -346,7 +260,6 @@ async def list_diagnosticians(
 async def get_pamakristos_oncall(
     scheduler: PamakristosScheduler = Depends(get_pamakristos_scheduler),
 ):
-    """Get today's Παμακάριστος on-call diagnostician."""
     return await scheduler.get_oncall_diagnostician()
 
 
@@ -354,7 +267,6 @@ async def get_pamakristos_oncall(
 async def get_pamakristos_weekly_schedule(
     scheduler: PamakristosScheduler = Depends(get_pamakristos_scheduler),
 ):
-    """Get the weekly Παμακάριστος on-call schedule."""
     return await scheduler.get_weekly_schedule()
 
 
@@ -363,13 +275,12 @@ async def set_pamakristos_oncall(
     request: SetOncallRequest,
     scheduler: PamakristosScheduler = Depends(get_pamakristos_scheduler),
 ):
-    """Manually set the Παμακάριστος on-call diagnostician for a date."""
     target_date = date.fromisoformat(request.date)
     return await scheduler.set_oncall_diagnostician(target_date, request.diagnostician_id)
 
 
 # ─────────────────────────────────────────────────────
-#  Admin — Diagnosticians
+#  Admin — Diagnosticians  (diagflow.db — persistent)
 # ─────────────────────────────────────────────────────
 
 class DiagnosticianCreateRequest(BaseModel):
@@ -382,7 +293,7 @@ class DiagnosticianCreateRequest(BaseModel):
 
 @router.get("/admin/diagnosticians")
 async def admin_list_diagnosticians(_: str = Depends(_require_admin)):
-    return _mock_diagnosticians
+    return cfg_db.get_all_diagnosticians()
 
 
 @router.post("/admin/diagnosticians")
@@ -390,10 +301,13 @@ async def admin_create_diagnostician(
     req: DiagnosticianCreateRequest,
     _: str = Depends(_require_admin),
 ):
-    new_id = max((d["id"] for d in _mock_diagnosticians), default=0) + 1
-    record = {"id": new_id, **req.model_dump()}
-    _mock_diagnosticians.append(record)
-    return record
+    return cfg_db.create_diagnostician(
+        name=req.name,
+        active=req.active,
+        can_ct=req.can_ct,
+        can_mri=req.can_mri,
+        daily_quota=req.daily_quota,
+    )
 
 
 @router.put("/admin/diagnosticians/{diag_id}")
@@ -402,29 +316,41 @@ async def admin_update_diagnostician(
     req: DiagnosticianCreateRequest,
     _: str = Depends(_require_admin),
 ):
-    for i, d in enumerate(_mock_diagnosticians):
-        if d["id"] == diag_id:
-            _mock_diagnosticians[i] = {"id": diag_id, **req.model_dump()}
-            return _mock_diagnosticians[i]
-    raise HTTPException(status_code=404, detail="Ο ακτινοδιαγνώστης δεν βρέθηκε")
+    record = cfg_db.update_diagnostician(
+        diag_id=diag_id,
+        name=req.name,
+        active=req.active,
+        can_ct=req.can_ct,
+        can_mri=req.can_mri,
+        daily_quota=req.daily_quota,
+    )
+    if not record:
+        raise HTTPException(status_code=404, detail="Ο ακτινοδιαγνώστης δεν βρέθηκε")
+    return record
+
+
+@router.delete("/admin/diagnosticians/{diag_id}")
+async def admin_delete_diagnostician(diag_id: int, _: str = Depends(_require_admin)):
+    if not cfg_db.delete_diagnostician(diag_id):
+        raise HTTPException(status_code=404, detail="Ο ακτινοδιαγνώστης δεν βρέθηκε")
+    return {"deleted": diag_id}
 
 
 # ─────────────────────────────────────────────────────
-#  Admin — Partnerships
+#  Admin — Partnerships  (diagflow.db — persistent)
 # ─────────────────────────────────────────────────────
 
 class PartnershipCreateRequest(BaseModel):
     issuing_doctor_id: str
     issuing_doctor_name: str
     preferred_diagnostician_id: int
-    preferred_diagnostician_name: str
     priority: int = 1
     exclusive: bool = False
 
 
 @router.get("/admin/partnerships")
 async def admin_list_partnerships(_: str = Depends(_require_admin)):
-    return _mock_partnerships
+    return cfg_db.get_all_partnerships()
 
 
 @router.post("/admin/partnerships")
@@ -432,57 +358,66 @@ async def admin_create_partnership(
     req: PartnershipCreateRequest,
     _: str = Depends(_require_admin),
 ):
-    new_id = max((p["id"] for p in _mock_partnerships), default=0) + 1
-    record = {"id": new_id, **req.model_dump()}
-    _mock_partnerships.append(record)
-    return record
+    return cfg_db.create_partnership(
+        issuing_doctor_id=req.issuing_doctor_id,
+        issuing_doctor_name=req.issuing_doctor_name,
+        preferred_diagnostician_id=req.preferred_diagnostician_id,
+        priority=req.priority,
+        exclusive=req.exclusive,
+    )
 
 
 @router.delete("/admin/partnerships/{part_id}")
 async def admin_delete_partnership(part_id: int, _: str = Depends(_require_admin)):
-    global _mock_partnerships
-    _mock_partnerships = [p for p in _mock_partnerships if p["id"] != part_id]
+    if not cfg_db.delete_partnership(part_id):
+        raise HTTPException(status_code=404, detail="Η σύμπραξη δεν βρέθηκε")
     return {"deleted": part_id}
 
 
 # ─────────────────────────────────────────────────────
-#  Admin — Doctors
+#  Admin — Doctors  (diagflow.db — persistent)
 # ─────────────────────────────────────────────────────
 
 class DoctorCreateRequest(BaseModel):
+    id: str = ""
     name: str
     specialty: str = ""
 
 
 @router.get("/admin/doctors")
 async def admin_list_doctors(_: str = Depends(_require_admin)):
-    return _mock_doctors
+    return cfg_db.get_all_doctors()
 
 
 @router.post("/admin/doctors")
 async def admin_create_doctor(req: DoctorCreateRequest, _: str = Depends(_require_admin)):
-    new_id = f"DR-{len(_mock_doctors) + 1:03d}"
-    record = {"id": new_id, **req.model_dump()}
-    _mock_doctors.append(record)
-    return record
+    import secrets
+    doc_id = req.id if req.id else f"DR-{secrets.token_hex(4).upper()}"
+    return cfg_db.upsert_doctor(doctor_id=doc_id, name=req.name, specialty=req.specialty)
+
+
+@router.delete("/admin/doctors/{doctor_id}")
+async def admin_delete_doctor(doctor_id: str, _: str = Depends(_require_admin)):
+    if not cfg_db.delete_doctor(doctor_id):
+        raise HTTPException(status_code=404, detail="Ο γιατρός δεν βρέθηκε")
+    return {"deleted": doctor_id}
 
 
 # ─────────────────────────────────────────────────────
-#  Admin — Availability
+#  Admin — Availability  (diagflow.db — persistent)
 # ─────────────────────────────────────────────────────
 
 class AvailabilitySetRequest(BaseModel):
     diagnostician_id: int
-    diagnostician_name: str
-    date: str  # ISO date string
-    status: str = "available"  # available, on_leave, half_day
+    date: str
+    status: str = "available"
     is_pamakristos_oncall: bool = False
     notes: str = ""
 
 
 @router.get("/admin/availability")
 async def admin_list_availability(_: str = Depends(_require_admin)):
-    return _mock_availability
+    return cfg_db.get_all_availability()
 
 
 @router.post("/admin/availability")
@@ -490,50 +425,51 @@ async def admin_set_availability(
     req: AvailabilitySetRequest,
     _: str = Depends(_require_admin),
 ):
-    # Remove existing record for same diagnostician+date
-    global _mock_availability
-    _mock_availability = [
-        a for a in _mock_availability
-        if not (a["diagnostician_id"] == req.diagnostician_id and a["date"] == req.date)
-    ]
-    new_id = max((a["id"] for a in _mock_availability), default=0) + 1
-    record = {"id": new_id, **req.model_dump()}
-    _mock_availability.append(record)
-    return record
+    return cfg_db.upsert_availability(
+        diagnostician_id=req.diagnostician_id,
+        date=req.date,
+        status=req.status,
+        is_pamakristos_oncall=req.is_pamakristos_oncall,
+        notes=req.notes,
+    )
 
 
 # ─────────────────────────────────────────────────────
-#  Admin — Skills
+#  Admin — Skills  (diagflow.db — persistent)
 # ─────────────────────────────────────────────────────
 
 class SkillSetRequest(BaseModel):
     diagnostician_id: int
-    diagnostician_name: str
     exam_code: str
-    exam_title: str
-    modality: str
-    is_preferred: bool
+    is_preferred: bool = False
+
+
+class SkillDeleteRequest(BaseModel):
+    skill_id: int
 
 
 @router.get("/admin/skills")
-async def admin_list_skills(_: str = Depends(_require_admin)):
-    return _mock_skills
+async def admin_list_skills(
+    diagnostician_id: int | None = None,
+    _: str = Depends(_require_admin),
+):
+    return cfg_db.get_skills(diagnostician_id)
 
 
 @router.post("/admin/skills")
 async def admin_set_skill(req: SkillSetRequest, _: str = Depends(_require_admin)):
-    global _mock_skills
-    # Replace existing
-    _mock_skills = [
-        s for s in _mock_skills
-        if not (s["diagnostician_id"] == req.diagnostician_id
-                and s["exam_code"] == req.exam_code
-                and s["modality"] == req.modality)
-    ]
-    new_id = max((s["id"] for s in _mock_skills), default=0) + 1
-    record = {"id": new_id, **req.model_dump()}
-    _mock_skills.append(record)
-    return record
+    return cfg_db.upsert_skill(
+        diagnostician_id=req.diagnostician_id,
+        exam_code=req.exam_code,
+        is_preferred=req.is_preferred,
+    )
+
+
+@router.delete("/admin/skills/{skill_id}")
+async def admin_delete_skill(skill_id: int, _: str = Depends(_require_admin)):
+    if not cfg_db.delete_skill(skill_id):
+        raise HTTPException(status_code=404, detail="Η δεξιότητα δεν βρέθηκε")
+    return {"deleted": skill_id}
 
 
 # ─────────────────────────────────────────────────────
@@ -542,13 +478,17 @@ async def admin_set_skill(req: SkillSetRequest, _: str = Depends(_require_admin)
 
 class OncallSetRequest(BaseModel):
     diagnostician_id: int
-    diagnostician_name: str
     date: str
 
 
 @router.get("/admin/oncall")
 async def admin_get_oncall(_: str = Depends(_require_admin)):
-    return _mock_oncall
+    today = str(date.today())
+    record = cfg_db.get_oncall_diagnostician(today)
+    if record:
+        return record
+    # Fallback: check scheduler
+    return {"diagnostician_id": None, "diagnostician_name": None, "date": today}
 
 
 @router.post("/admin/oncall")
@@ -557,7 +497,23 @@ async def admin_set_oncall(
     _: str = Depends(_require_admin),
     scheduler: PamakristosScheduler = Depends(get_pamakristos_scheduler),
 ):
-    global _mock_oncall
-    _mock_oncall = req.model_dump()
-    scheduler.set_manual_override_from_admin(_mock_oncall)
-    return _mock_oncall
+    # Clear any existing on-call for the date first
+    existing = cfg_db.get_all_availability()
+    for a in existing:
+        if a["date"] == req.date and a["is_pamakristos_oncall"]:
+            cfg_db.upsert_availability(
+                diagnostician_id=a["diagnostician_id"],
+                date=req.date,
+                status=a["status"],
+                is_pamakristos_oncall=False,
+                notes=a["notes"] or "",
+            )
+
+    record = cfg_db.upsert_availability(
+        diagnostician_id=req.diagnostician_id,
+        date=req.date,
+        status="available",
+        is_pamakristos_oncall=True,
+    )
+    scheduler.set_manual_override_from_admin(record)
+    return record

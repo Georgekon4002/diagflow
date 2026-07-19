@@ -52,15 +52,14 @@ class Diagnostician(Base):
 
 
 class DiagnosticianSkill(Base):
-    """Body-part / modality capabilities per diagnostician."""
+    """Specific exam codes and preference per diagnostician."""
 
     __tablename__ = "diagnostician_skills"
 
     id: int = Column(Integer, primary_key=True, autoincrement=True)
     diagnostician_id: int = Column(Integer, ForeignKey("diagnosticians.id"), nullable=False)
-    body_part: str = Column(String(100), nullable=False)  # e.g., "abdomen", "neuro", "msk"
-    modality: str = Column(String(10), nullable=False)  # "CT" or "MRI"
-    proficiency_level: float = Column(Float, default=1.0)  # 0.0-1.0 scale
+    exam_code: str = Column(String(50), nullable=False)
+    is_preferred: bool = Column(Boolean, default=False)
     notes: Optional[str] = Column(String(500), nullable=True)
 
     diagnostician = relationship("Diagnostician", back_populates="skills")

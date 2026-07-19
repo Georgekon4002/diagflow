@@ -1,83 +1,59 @@
 """
-DiagFlow — Παμακάριστος On-Call Scheduler
+DiagFlow — Παμμακάριστος On-Call Scheduler
 
-Manages the daily on-call rotation for Παμακάριστος hospital urgent requests.
-Each day, one diagnostician is designated as the on-call diagnostician for
-Παμακάριστος — all urgent requests from that hospital go to them.
-
-The rotation can be:
-- Manual (set via the dashboard or API)
-- Automatic (round-robin based on availability)
+Manages the daily on-call rotation for Παμμακάριστος hospital.
+On-call records are persisted in diagflow.db (availability table with
+is_pamakristos_oncall=1).
 """
 
 from datetime import date, timedelta
 
 import structlog
+import diagflow.db.diagflow_db as cfg_db
 
 logger = structlog.get_logger(__name__)
 
 
 class PamakristosScheduler:
     """
-    Manages Παμακάριστος on-call rotation.
-
-    TODO: Connect to diagnostician_availability table when DB access is available.
-    Currently uses mock data.
+    Manages Παμμακάριστος on-call rotation.
+    Reads/writes from diagflow.db — persists across server restarts.
     """
 
-    # Mock on-call schedule (diagnostician_id per date)
-    MOCK_ONCALL_SCHEDULE = {
-        # Rotate through diagnosticians who accept LAB-PAM
-        # (ids 3 and 5 have LAB-PAM in their accepted labs)
-    }
-
-    _manual_override: dict | None = None
-
     async def get_oncall_diagnostician(self, target_date: date | None = None) -> dict | None:
-        """
-        Get the on-call diagnostician for Παμακάριστος on a given date.
-
-        Args:
-            target_date: The date to check (defaults to today)
-
-        Returns:
-            Dict with diagnostician info, or None if not set
-        """
+        """Get the on-call diagnostician for Παμμακάριστος on a given date."""
         target = target_date or date.today()
+        record = cfg_db.get_oncall_diagnostician(target.isoformat())
 
-        # Check for manual override first
-        if self._manual_override and self._manual_override.get("date") == target.isoformat():
+        if record:
             return {
-                "date": target.isoformat(),
-                "diagnostician_id": self._manual_override["diagnostician_id"],
-                "diagnostician_name": self._manual_override["diagnostician_name"],
-                "source": "manual_override",
+                "date": record["date"],
+                "diagnostician_id": record["diagnostician_id"],
+                "diagnostician_name": record["diagnostician_name"],
+                "source": "db",
             }
 
-        # TODO: Query diagnostician_availability where is_pamakristos_oncall = True
-        # For now, use a simple round-robin between eligible diagnosticians
-
-        # Mock: IDs 3 (Παπαδόπουλος) and 5 (Δημητρίου) accept LAB-PAM
-        eligible_ids = [3, 5]
-        day_index = (target - date(2026, 1, 1)).days
-        oncall_id = eligible_ids[day_index % len(eligible_ids)]
-
-        mock_names = {3: "Παπαδόπουλος Γ.", 5: "Δημητρίου Ε."}
-
-        result = {
-            "date": target.isoformat(),
-            "diagnostician_id": oncall_id,
-            "diagnostician_name": mock_names.get(oncall_id, "Unknown"),
-            "source": "auto_rotation",  # or "manual_override"
+        # Hardcoded weekly schedule fallback
+        weekday = target.weekday()
+        schedule = {
+            0: {"id": 59, "name": "Μπερέτης"},
+            1: {"id": 61, "name": "Ανθίμου"},
+            2: {"id": 97, "name": "Τριανταφύλλου"},
+            3: {"id": 189, "name": "Λιόντος"},
+            4: {"id": 14, "name": "Νάτσικα"}
         }
 
-        logger.info(
-            "pamakristos_oncall",
-            date=target.isoformat(),
-            diagnostician=result["diagnostician_name"],
-        )
+        if weekday in schedule:
+            diag = schedule[weekday]
+            return {
+                "date": target.isoformat(),
+                "diagnostician_id": diag["id"],
+                "diagnostician_name": diag["name"],
+                "source": "hardcoded_rule",
+            }
 
-        return result
+        logger.info("pamakristos_oncall_not_set", date=target.isoformat())
+        return None
 
     async def set_oncall_diagnostician(
         self,
@@ -85,62 +61,55 @@ class PamakristosScheduler:
         diagnostician_id: int,
         set_by: str = "system",
     ) -> dict:
-        """
-        Manually set the on-call diagnostician for a specific date.
+        """Manually set the on-call diagnostician for a specific date."""
+        # Clear existing on-call for this date
+        for a in cfg_db.get_all_availability():
+            if a["date"] == target_date.isoformat() and a["is_pamakristos_oncall"]:
+                cfg_db.upsert_availability(
+                    diagnostician_id=a["diagnostician_id"],
+                    date=target_date.isoformat(),
+                    status=a["status"],
+                    is_pamakristos_oncall=False,
+                    notes=a["notes"] or "",
+                )
 
-        Args:
-            target_date: The date to set
-            diagnostician_id: The diagnostician to assign
-            set_by: Who set it (for audit)
+        cfg_db.upsert_availability(
+            diagnostician_id=diagnostician_id,
+            date=target_date.isoformat(),
+            status="available",
+            is_pamakristos_oncall=True,
+        )
 
-        Returns:
-            Confirmation dict
-        """
-        # TODO: Write to diagnostician_availability table
+        diag = cfg_db.get_diagnostician(diagnostician_id)
+        diag_name = diag["name"] if diag else "Άγνωστος"
 
         logger.info(
             "pamakristos_oncall_set",
             date=target_date.isoformat(),
             diagnostician_id=diagnostician_id,
+            diagnostician_name=diag_name,
             set_by=set_by,
         )
-
-        mock_names = {3: "Παπαδόπουλος Γ.", 5: "Δημητρίου Ε."}
-        # In a real app we'd query the DB for the name
-        self._manual_override = {
-            "diagnostician_id": diagnostician_id,
-            "diagnostician_name": mock_names.get(diagnostician_id, "Χειροκίνητη Ανάθεση"),
-            "date": target_date.isoformat()
-        }
 
         return {
             "date": target_date.isoformat(),
             "diagnostician_id": diagnostician_id,
+            "diagnostician_name": diag_name,
             "set_by": set_by,
             "status": "set",
         }
 
     def set_manual_override_from_admin(self, override_data: dict):
-        """Helper to sync admin state for mocks"""
-        self._manual_override = override_data
+        """Called by the admin route after writing to DB — no-op since we read from DB directly."""
+        pass
 
     async def get_weekly_schedule(self, start_date: date | None = None) -> list[dict]:
-        """
-        Get the on-call schedule for a full week.
-
-        Args:
-            start_date: Start of the week (defaults to today)
-
-        Returns:
-            List of daily on-call assignments
-        """
+        """Get the on-call schedule for a full week."""
         start = start_date or date.today()
         schedule = []
-
         for i in range(7):
             day = start + timedelta(days=i)
             oncall = await self.get_oncall_diagnostician(day)
             if oncall:
                 schedule.append(oncall)
-
         return schedule

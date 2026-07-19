@@ -153,7 +153,7 @@ def filter_by_skills_hard(
     If no skill data exists, the candidate passes (they get a neutral 0.3
     in the weighted scoring phase, not an elimination).
     """
-    if candidate.skill_proficiency == 0.0:
+    if candidate.has_skill_data and candidate.skill_proficiency == 0.0:
         return FilterResult(
             passed=False,
             rule_name="skills",
