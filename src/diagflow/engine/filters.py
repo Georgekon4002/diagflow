@@ -131,7 +131,7 @@ def filter_by_availability(
         return FilterResult(
             passed=False,
             rule_name="availability",
-            reason=f"Ο/Η {candidate.name} δεν είναι διαθέσιμος/η σήμερα",
+            reason="Μη διαθέσιμος σήμερα",
         )
     return FilterResult(
         passed=True,
@@ -157,10 +157,7 @@ def filter_by_skills_hard(
         return FilterResult(
             passed=False,
             rule_name="skills",
-            reason=(
-                f"Ο/Η {candidate.name} δεν έχει εξειδίκευση "
-                f"σε '{exam.body_part}' ({exam.modality}) — μη προτιμώμενη/αποδεκτή"
-            ),
+            reason="Δεν αξιολογεί τη συγκεκριμένη εξέταση",
         )
     return FilterResult(
         passed=True,
@@ -184,13 +181,13 @@ def filter_by_modality(
         return FilterResult(
             passed=False,
             rule_name="modality_filter",
-            reason=f"Ο/Η {candidate.name} δεν αξιολογεί αξονικές τομογραφίες (CT)",
+            reason="Δεν αξιολογεί τη συγκεκριμένη εξέταση",
         )
     if modality == "MRI" and not candidate.can_mri:
         return FilterResult(
             passed=False,
             rule_name="modality_filter",
-            reason=f"Ο/Η {candidate.name} δεν αξιολογεί μαγνητικές τομογραφίες (MRI)",
+            reason="Δεν αξιολογεί τη συγκεκριμένη εξέταση",
         )
     return FilterResult(
         passed=True,

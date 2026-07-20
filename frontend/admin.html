@@ -11,6 +11,8 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap"
         rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/themes/airbnb.css">
     <link rel="stylesheet" href="css/styles.css">
 </head>
 
@@ -99,21 +101,13 @@
                             </div>
                             <div class="form-group" style="margin:0;">
                                 <label class="form-label">Ημερομηνία</label>
-                                <input type="date" id="oncall-date" class="form-input filter-select"
-                                    style="width:100%;">
+                                <input type="text" id="oncall-date" class="form-input filter-select"
+                                    placeholder="Επιλέξτε ημερομηνία" style="width:100%;">
                             </div>
                             <button class="btn btn-primary" onclick="setOncall()">Αποθήκευση</button>
                         </div>
                     </div>
-
-                    <div class="admin-card">
-                        <div class="admin-card-title">Τρέχων Υπεύθυνος</div>
-                        <div id="oncall-current" style="color:var(--text-secondary);font-size:var(--font-size-sm);">
-                            Φόρτωση…
-                        </div>
-                    </div>
                 </div>
-
                 <!-- ════════════ SECTION: Διαγνώστες ════════════ -->
                 <div id="section-diagnosticians" class="admin-section" style="display:none;">
                     <div class="admin-card">
@@ -122,7 +116,7 @@
                             <div class="form-group" style="margin:0;">
                                 <label class="form-label">Ονοματεπώνυμο</label>
                                 <input type="text" id="new-diag-name" class="form-input"
-                                    placeholder="π.χ. Παπαδόπουλος Γ.">
+                                    placeholder="π.χ. ΓΕΩΡΓΙΟΥ ΓΕΩΡΓΙΟΣ">
                             </div>
                             <div class="form-group" style="margin:0;">
                                 <label class="form-label">Ημερήσια Χωρητικότητα</label>
@@ -183,7 +177,8 @@
                             </div>
                             <div class="form-group" style="margin:0;">
                                 <label class="form-label">Ημερομηνία</label>
-                                <input type="date" id="avail-date" class="form-input filter-select" style="width:100%;">
+                                <input type="text" id="avail-date" class="form-input filter-select"
+                                    placeholder="Επιλέξτε ημερομηνία" style="width:100%;">
                             </div>
                             <div class="form-group" style="margin:0;">
                                 <label class="form-label">Σημειώσεις</label>
@@ -222,8 +217,7 @@
                             </div>
                             <div class="form-group" style="margin:0;">
                                 <label class="form-label">Κωδικός Εξέτασης</label>
-                                <input type="text" id="skill-exam-code" class="form-input"
-                                    placeholder="π.χ. 22100, 22140">
+                                <input type="text" id="skill-exam-code" class="form-input" placeholder="π.χ. 22100">
                             </div>
                             <div class="form-group" style="margin:0;">
                                 <label class="form-label">Προτίμηση</label>
@@ -315,12 +309,8 @@
                         <div class="admin-form">
                             <div class="form-group" style="margin:0;">
                                 <label class="form-label">Ονοματεπώνυμο</label>
-                                <input type="text" id="new-doc-name" class="form-input" placeholder="π.χ. Ιωάννου Ε.">
-                            </div>
-                            <div class="form-group" style="margin:0;">
-                                <label class="form-label">Ειδικότητα</label>
-                                <input type="text" id="new-doc-specialty" class="form-input"
-                                    placeholder="π.χ. Καρδιολογία">
+                                <input type="text" id="new-doc-name" class="form-input"
+                                    placeholder="π.χ. ΙΩΑΝΝΟΥ ΙΩΑΝΝΗΣ">
                             </div>
                             <div class="form-group admin-form-actions" style="margin:0;">
                                 <button class="btn btn-primary" onclick="addDoctor()">+ Προσθήκη</button>
@@ -335,7 +325,6 @@
                                 <tr>
                                     <th>ID</th>
                                     <th>Ονοματεπώνυμο</th>
-                                    <th>Ειδικότητα</th>
                                 </tr>
                             </thead>
                             <tbody id="doc-tbody"></tbody>
@@ -349,6 +338,8 @@
 
     <div class="toast-container" id="toast-container"></div>
 
+    <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
+    <script src="https://cdn.jsdelivr.net/npm/flatpickr/dist/l10n/gr.js"></script>
     <script src="js/admin.js"></script>
 </body>
 

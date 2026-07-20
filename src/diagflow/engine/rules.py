@@ -12,7 +12,6 @@ Rule hierarchy (per business requirements):
   d. Skills                — HARD FILTER, priority 4
   e. Lab preference        — WEIGHTED, priority 5
   f. Patient history       — WEIGHTED, priority 6
-  + Subcategory load       — SOFT PENALTY, priority 7
   [disabled] Comments      — Code kept but not active
 """
 
@@ -124,20 +123,6 @@ RULES: list[Rule] = [
         description=(
             "Continuity of care — same diagnostician for same patient's "
             "past similar exams. Gives a bonus for consistency."
-        ),
-    ),
-    # ── Soft Penalties (load-balancing) ──
-    Rule(
-        name="subcategory_load",
-        display_name="Ισορροπία Φόρτου Υποκατηγορίας",
-        rule_type=RuleType.SOFT_PENALTY,
-        priority=7,
-        default_weight=0.05,
-        description=(
-            "Penalty that grows as a diagnostician's same-day count of a "
-            "specific body-part category increases. Prevents overloading "
-            "with repetitive work even when within hard quota. "
-            "E.g., too many abdominal MRIs in one day."
         ),
     ),
     # ── DISABLED: Comment Exclusion ──

@@ -35,6 +35,20 @@ class OverrideAssignmentRequest(BaseModel):
     reason: str = Field(default="", description="Why the operator chose a different diagnostician")
 
 
+class BulkConfirmRequest(BaseModel):
+    """Request body for confirming suggested assignments for multiple exams."""
+
+    exam_ids: list[str]
+
+
+class BulkOverrideRequest(BaseModel):
+    """Request body for overriding assignments for multiple exams."""
+
+    exam_ids: list[str]
+    override_diagnostician_id: int
+    reason: str = Field(default="Bulk assignment", description="Why the operator chose a different diagnostician")
+
+
 class SetOncallRequest(BaseModel):
     """Request body for setting Παμακάριστος on-call diagnostician."""
 
@@ -62,6 +76,8 @@ class AlternativeCandidate(BaseModel):
     id: int
     name: str
     score: float
+    eliminated: bool = False
+    elimination_reason: str | None = None
 
 
 class SuggestionResponse(BaseModel):
@@ -77,8 +93,6 @@ class SuggestionResponse(BaseModel):
     alternatives: list[AlternativeCandidate]
     rules_fired: list[str]
     solver_status: str
-    is_direct_assignment: bool = False
-    direct_assignment_reason: str = ""
     pipeline_timestamp: str
 
 

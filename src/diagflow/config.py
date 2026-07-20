@@ -39,30 +39,17 @@ class Settings(BaseSettings):
         description="Path to the SQLite mock Slis database file (relative to project root).",
     )
 
-    # ── LLM / Comment Parser ──
-    llm_api_url: str = Field(
-        default="https://api.openai.com/v1/chat/completions",
-        description="LLM API endpoint for comment parsing.",
-    )
-    llm_api_key: str = Field(
-        default="",
-        description="API key for the LLM service.",
-    )
-    llm_model: str = Field(
-        default="gpt-4o-mini",
-        description="LLM model identifier.",
-    )
+
 
     # ── Rule Engine Weights ──
     # These control the relative importance of each scoring factor.
-    # Rule hierarchy: availability(hard) → capacity → partnership → skills(hard+bonus) → lab → history → subcategory
+    # Rule hierarchy: availability(hard) → capacity → partnership → skills(hard+bonus) → lab → history
     # Sum ≈ 1.0 for interpretability; scores are clamped to [0, 1] internally.
     weight_capacity: float = Field(default=0.30, ge=0.0, le=1.0)
     weight_partnership: float = Field(default=0.25, ge=0.0, le=1.0)
     weight_skills: float = Field(default=0.15, ge=0.0, le=1.0)  # Weighted bonus (hard filter handled in filters.py)
     weight_lab: float = Field(default=0.10, ge=0.0, le=1.0)  # Lab preference — now weighted, not hard filter
     weight_patient_history: float = Field(default=0.15, ge=0.0, le=1.0)
-    weight_subcategory_penalty: float = Field(default=0.05, ge=0.0, le=1.0)
 
     # ── Application ──
     app_host: str = Field(default="0.0.0.0")

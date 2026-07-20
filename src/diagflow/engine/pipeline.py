@@ -66,14 +66,6 @@ class AssignmentSuggestion:
     solver_status: str
     pipeline_timestamp: str
 
-    # Comment analysis (preserved for future use)
-    comment_raw: str
-    comment_parsed: str  # JSON from LLM analysis
-
-    # Direct assignment (if comments specify a specific diagnostician)
-    is_direct_assignment: bool = False
-    direct_assignment_reason: str = ""
-
 
 class AssignmentPipeline:
     """
@@ -92,7 +84,6 @@ class AssignmentPipeline:
         self,
         exam: ExamContext,
         candidates: list[CandidateDiagnostician],
-        comment_analysis: dict | None = None,
     ) -> AssignmentSuggestion | None:
         """
         Run the full assignment pipeline for a single exam.
@@ -100,8 +91,6 @@ class AssignmentPipeline:
         Args:
             exam: The exam to assign
             candidates: All potentially eligible diagnosticians
-            comment_analysis: Pre-parsed comment analysis (from LLM service)
-                              [DISABLED] Not used in current implementation phase.
 
         Returns:
             AssignmentSuggestion with the proposed assignment, or None if no candidates remain
@@ -113,20 +102,6 @@ class AssignmentPipeline:
             body_part=exam.body_part,
             candidates=len(candidates),
         )
-
-        # ── Step 0: Comment analysis [DISABLED] ──
-        # Comment parsing is not active in this implementation phase.
-        # The code is preserved for future enablement.
-        direct_assignment = None
-        comment_parsed_str = ""
-
-        # NOTE: comment_analysis is intentionally NOT applied here.
-        # When re-enabled, uncomment:
-        # if comment_analysis:
-        #     comment_parsed_str = json.dumps(comment_analysis, ensure_ascii=False)
-        #     direct_assignment = self._apply_comment_analysis(candidates, comment_analysis, exam)
-        # if direct_assignment:
-        #     return self._build_direct_assignment_suggestion(exam, direct_assignment, comment_parsed_str)
 
         # ── Step 0.5: Exclusive Partnerships ──
         exclusive_partner = next((c for c in candidates if c.is_partnership_exclusive), None)
@@ -216,8 +191,6 @@ class AssignmentPipeline:
             },
             solver_status=solver_result.solver_status,
             pipeline_timestamp=datetime.now().isoformat(),
-            comment_raw=exam.comments,
-            comment_parsed=comment_parsed_str,
         )
 
         logger.info(
@@ -280,87 +253,6 @@ class AssignmentPipeline:
 
         return result
 
-    def _apply_comment_analysis(
-        self,
-        candidates: list[CandidateDiagnostician],
-        analysis: dict,
-        exam: ExamContext,
-    ) -> CandidateDiagnostician | None:
-        """
-        [PRESERVED — NOT ACTIVE] Apply LLM comment analysis results to candidates.
-
-        Returns a CandidateDiagnostician if a direct assignment was specified,
-        otherwise returns None and modifies candidates in-place.
-        """
-        # Handle exclusions
-        excluded_names = analysis.get("exclude", [])
-        for candidate in candidates:
-            for excluded in excluded_names:
-                if excluded.lower() in candidate.name.lower():
-                    candidate.is_excluded_by_comment = True
-                    logger.info(
-                        "comment_exclusion_applied",
-                        candidate=candidate.name,
-                        excluded_name=excluded,
-                        exam_id=exam.exam_id,
-                    )
-
-        # Handle direct assignment
-        assign_to = analysis.get("assign")
-        if assign_to:
-            for candidate in candidates:
-                if assign_to.lower() in candidate.name.lower():
-                    candidate.is_directly_assigned_by_comment = True
-                    logger.info(
-                        "comment_direct_assignment",
-                        candidate=candidate.name,
-                        exam_id=exam.exam_id,
-                    )
-                    return candidate
-
-        return None
-
-    def _build_direct_assignment_suggestion(
-        self,
-        exam: ExamContext,
-        candidate: CandidateDiagnostician,
-        comment_parsed: str,
-    ) -> AssignmentSuggestion:
-        """[PRESERVED — NOT ACTIVE] Build a suggestion for a comment-directed assignment."""
-        exam_summary = (
-            f"{exam.modality} {exam.body_part} — "
-            f"Dr. {exam.issuing_doctor_name} — "
-            f"Lab {exam.lab_name}"
-        )
-
-        return AssignmentSuggestion(
-            exam_id=exam.exam_id,
-            patient_id=exam.patient_id,
-            exam_summary=exam_summary,
-            suggested_diagnostician_id=candidate.id,
-            suggested_diagnostician_name=candidate.name,
-            confidence_score=1.0,
-            score_breakdown=[
-                {
-                    "rule": "comment_exclusion",
-                    "display_name": "Σχόλια / Παρατηρήσεις",
-                    "raw_score": 1.0,
-                    "weight": 1.0,
-                    "weighted_score": 1.0,
-                    "explanation": f"Απευθείας ανάθεση βάσει σχολίου: '{exam.comments[:80]}'",
-                }
-            ],
-            alternatives=[],
-            rules_fired=["comment_exclusion"],
-            filter_results={},
-            solver_status="DIRECT_ASSIGNMENT",
-            pipeline_timestamp=datetime.now().isoformat(),
-            comment_raw=exam.comments,
-            comment_parsed=comment_parsed,
-            is_direct_assignment=True,
-            direct_assignment_reason=f"Απευθείας ανάθεση στον/στην {candidate.name} βάσει σχολίου",
-        )
-
     def _build_exclusive_assignment_suggestion(
         self,
         exam: ExamContext,
@@ -395,8 +287,4 @@ class AssignmentPipeline:
             filter_results={},
             solver_status="EXCLUSIVE_ASSIGNMENT",
             pipeline_timestamp=datetime.now().isoformat(),
-            comment_raw=exam.comments,
-            comment_parsed="",
-            is_direct_assignment=True,
-            direct_assignment_reason=f"Αποκλειστική συνεργασία (Ιατρός: {exam.issuing_doctor_name})",
         )

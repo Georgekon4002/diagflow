@@ -10,7 +10,6 @@ Scoring factors (in priority order per business rules):
   c. Partnership (issuing doctor preference)  — weight_partnership
   e. Lab preference (weighted, not hard)      — weight_lab
   f. Patient history (continuity of care)     — weight_patient_history
-  + Subcategory load penalty (soft)           — weight_subcategory_penalty
 
 Note: Skills is a HARD FILTER (handled in filters.py), not a weighted score.
       If a candidate passes the skills hard filter, they get a weighted bonus here too.
@@ -191,47 +190,6 @@ def score_patient_history(
     )
 
 
-def penalty_subcategory_load(
-    candidate: CandidateDiagnostician, exam: ExamContext
-) -> ScoreComponent:
-    """
-    Soft load-balancing penalty.
-
-    Grows as the diagnostician's same-day count of the same body-part category
-    increases. Uses soft sub-caps if defined, otherwise uses a general formula.
-
-    The penalty is SUBTRACTED from the total score.
-    """
-    if candidate.subcategory_soft_cap and candidate.subcategory_soft_cap > 0:
-        # Penalty based on proximity to soft cap
-        ratio = candidate.current_subcategory_count / candidate.subcategory_soft_cap
-        raw = min(1.0, ratio)  # 0.0 when no exams, 1.0 when at/over soft cap
-        explanation = (
-            f"Φόρτος κατηγορίας '{exam.body_part}': "
-            f"{candidate.current_subcategory_count}/{candidate.subcategory_soft_cap} "
-            f"(ήπιο όριο)"
-        )
-    elif candidate.current_subcategory_count > 0:
-        # General penalty — starts light, grows with each same-category exam
-        raw = min(1.0, candidate.current_subcategory_count * 0.15)
-        explanation = (
-            f"Φόρτος κατηγορίας '{exam.body_part}': "
-            f"{candidate.current_subcategory_count} σήμερα "
-            f"(χωρίς ήπιο όριο, γενική ποινή)"
-        )
-    else:
-        raw = 0.0
-        explanation = f"Καμία εξέταση κατηγορίας '{exam.body_part}' σήμερα"
-
-    return ScoreComponent(
-        rule_name="subcategory_load",
-        display_name="Ποινή Υποκατηγορίας",
-        raw_score=raw,
-        weight=settings.weight_subcategory_penalty,
-        weighted_score=-(raw * settings.weight_subcategory_penalty),  # Negative = penalty
-        explanation=explanation,
-    )
-
 
 def compute_candidate_score(
     candidate: CandidateDiagnostician,
@@ -246,7 +204,6 @@ def compute_candidate_score(
       [d. Skills — hard filter in filters.py, bonus here]
       e. Lab preference (weighted)
       f. Patient history
-      + Subcategory penalty
     """
     components = [
         score_capacity(candidate),
@@ -254,7 +211,6 @@ def compute_candidate_score(
         score_skills_weighted(candidate, exam),
         score_lab_preference(candidate, exam),
         score_patient_history(candidate, exam),
-        penalty_subcategory_load(candidate, exam),
     ]
 
     total = sum(c.weighted_score for c in components)

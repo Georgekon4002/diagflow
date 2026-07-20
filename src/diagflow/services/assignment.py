@@ -110,7 +110,6 @@ class AssignmentService:
         self,
         exam: ExamContext,
         candidates: list[CandidateDiagnostician],
-        comment_analysis: dict | None = None,
     ) -> AssignmentSuggestion | None:
         """
         Generate an assignment suggestion for a single exam.
@@ -118,12 +117,11 @@ class AssignmentService:
         Args:
             exam: The exam requiring assignment
             candidates: All potentially eligible diagnosticians
-            comment_analysis: Pre-parsed LLM analysis of comments
 
         Returns:
             AssignmentSuggestion or None if no valid candidates
         """
-        suggestion = self.pipeline.run(exam, candidates, comment_analysis)
+        suggestion = self.pipeline.run(exam, candidates)
 
         if suggestion:
             logger.info(
@@ -159,8 +157,6 @@ class AssignmentService:
             "was_overridden": False,
             "rules_fired": json.dumps(suggestion.rules_fired, ensure_ascii=False),
             "score_breakdown": json.dumps(suggestion.score_breakdown, ensure_ascii=False),
-            "comment_raw": suggestion.comment_raw,
-            "comment_parsed": suggestion.comment_parsed,
             "decision_timestamp": datetime.now().isoformat(),
         }
 
@@ -174,11 +170,9 @@ class AssignmentService:
         if settings.use_mock_slis_db:
             try:
                 con = _get_mock_db()
-                from diagflow.api.routes import _mock_diagnosticians
-                d_name = next(
-                    (d["name"] for d in _mock_diagnosticians if d["id"] == diagnostician_id),
-                    None,
-                )
+                import diagflow.db.diagflow_db as cfg_db
+                d_info = cfg_db.get_diagnostician(diagnostician_id)
+                d_name = d_info["name"] if d_info else None
                 con.execute(
                     "UPDATE slis_exams SET diagnostis = ?, code = ? WHERE extracode = ?",
                     (diagnostician_id, d_name, int(exam_id)),
@@ -214,8 +208,6 @@ class AssignmentService:
             "override_reason": reason,
             "rules_fired": json.dumps(suggestion.rules_fired, ensure_ascii=False),
             "score_breakdown": json.dumps(suggestion.score_breakdown, ensure_ascii=False),
-            "comment_raw": suggestion.comment_raw,
-            "comment_parsed": suggestion.comment_parsed,
             "decision_timestamp": datetime.now().isoformat(),
         }
 
@@ -231,11 +223,9 @@ class AssignmentService:
         if settings.use_mock_slis_db:
             try:
                 con = _get_mock_db()
-                from diagflow.api.routes import _mock_diagnosticians
-                d_name = next(
-                    (d["name"] for d in _mock_diagnosticians if d["id"] == override_diagnostician_id),
-                    None,
-                )
+                import diagflow.db.diagflow_db as cfg_db
+                d_info = cfg_db.get_diagnostician(override_diagnostician_id)
+                d_name = d_info["name"] if d_info else None
                 con.execute(
                     "UPDATE slis_exams SET diagnostis = ?, code = ? WHERE extracode = ?",
                     (override_diagnostician_id, d_name, int(exam_id)),
@@ -288,6 +278,19 @@ def _get_assigned_exams_from_db() -> list[dict]:
         return []
 
 
+def _get_exam_categories_from_db() -> list[dict]:
+    """Fetch exam categories from the SQLite mock DB."""
+    try:
+        con = _get_mock_db()
+        cur = con.execute("SELECT examnumcode, name, category FROM exam_categories")
+        rows = [dict(r) for r in cur.fetchall()]
+        con.close()
+        return rows
+    except Exception as e:
+        logger.error("mock_db_read_failed", error=str(e))
+        return []
+
+
 # ── Inject methods into AssignmentService ─────────────────────────
 
 def _get_pending_exams(self) -> list[dict]:
@@ -304,6 +307,13 @@ def _get_assigned_exams(self) -> list[dict]:
         return _get_assigned_exams_from_db()
     return []
 
+def _get_exam_categories(self) -> list[dict]:
+    """Fetch exam categories (real or mock DB)."""
+    if settings.use_mock_slis_db:
+        return _get_exam_categories_from_db()
+    return []
+
 
 AssignmentService.get_pending_exams = _get_pending_exams       # type: ignore
 AssignmentService.get_assigned_exams = _get_assigned_exams     # type: ignore
+AssignmentService.get_exam_categories = _get_exam_categories   # type: ignore

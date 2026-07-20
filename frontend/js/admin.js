@@ -20,6 +20,8 @@ let doctors = [];
 let skills = [];
 let availability = [];
 
+let EXAM_CODE_MAP = {};
+
 // ══════════════════════════════════════════════
 //  Auth Guard & Init
 // ══════════════════════════════════════════════
@@ -34,14 +36,25 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // Set today's date defaults
     const today = new Date().toISOString().split('T')[0];
-    document.getElementById('oncall-date').value = today;
-    document.getElementById('avail-date').value = today;
+    
+    const fpConfig = {
+        dateFormat: "Y-m-d",
+        altInput: true,
+        altFormat: "d/m/Y",
+        defaultDate: today,
+        firstDayOfWeek: 1, // Monday
+        locale: "gr"
+    };
+    
+    flatpickr("#oncall-date", fpConfig);
+    flatpickr("#avail-date", fpConfig);
 
     await loadAll();
     showSection('oncall');
 });
 
 async function loadAll() {
+    await loadExamCategories();
     await Promise.all([
         loadDiagnosticians(),
         loadPartnerships(),
@@ -50,6 +63,19 @@ async function loadAll() {
         loadAvailability(),
         loadOncall(),
     ]);
+}
+
+async function loadExamCategories() {
+    try {
+        const data = await apiCall('/admin/exam-categories');
+        if (data) {
+            data.forEach(ex => {
+                EXAM_CODE_MAP[String(ex.examnumcode)] = ex.name;
+            });
+        }
+    } catch {
+        console.warn("Could not load exam categories");
+    }
 }
 
 
@@ -199,7 +225,16 @@ function populateDoctorSelects() {
 
 function renderDiagnosticians() {
     const tbody = document.getElementById('diag-tbody');
-    tbody.innerHTML = diagnosticians.map(d => `
+    
+    // Sort diagnosticians: Active first, then inactive. Sort alphabetically within those groups.
+    const sortedDiags = [...diagnosticians].sort((a, b) => {
+        if (a.active !== b.active) {
+            return a.active ? -1 : 1;
+        }
+        return a.name.localeCompare(b.name, 'el');
+    });
+
+    tbody.innerHTML = sortedDiags.map(d => `
         <tr>
             <td style="font-weight:600;">${d.name}</td>
             <td>
@@ -207,8 +242,8 @@ function renderDiagnosticians() {
                     ${d.active ? '● Ενεργός' : '● Ανενεργός'}
                 </span>
             </td>
-            <td>${d.can_ct ? '✅' : '—'}</td>
-            <td>${d.can_mri ? '✅' : '—'}</td>
+            <td><input type="checkbox" style="accent-color:var(--accent-primary);" ${d.can_ct ? 'checked' : ''} onchange="toggleDiagCT(${d.id}, this.checked)"></td>
+            <td><input type="checkbox" style="accent-color:var(--accent-primary);" ${d.can_mri ? 'checked' : ''} onchange="toggleDiagMRI(${d.id}, this.checked)"></td>
             <td>
                 <div style="display:flex;align-items:center;gap:6px;">
                     <input type="number" id="quota-${d.id}" class="form-input" style="width:60px;padding:4px;" value="${d.daily_quota}" min="1">
@@ -216,12 +251,28 @@ function renderDiagnosticians() {
                 </div>
             </td>
             <td>
-                <button class="btn btn-secondary btn-sm" onclick="toggleDiagActive(${d.id}, ${!d.active})">
+                <button class="btn btn-sm" style="background-color: ${d.active ? '#ef4444' : '#22c55e'}; color:white; border:none;" onclick="toggleDiagActive(${d.id}, ${!d.active})">
                     ${d.active ? 'Απενεργοποίηση' : 'Ενεργοποίηση'}
                 </button>
             </td>
         </tr>
     `).join('');
+}
+
+async function toggleDiagCT(id, newCanCT) {
+    const d = diagnosticians.find(x => x.id === id);
+    if (!d) return;
+    d.can_ct = newCanCT;
+    try { await apiCall(`/admin/diagnosticians/${id}`, 'PUT', d); } catch { /* mock mode */ }
+    showToast(`Η ικανότητα CT ενημερώθηκε: ${d.name}`, 'success');
+}
+
+async function toggleDiagMRI(id, newCanMRI) {
+    const d = diagnosticians.find(x => x.id === id);
+    if (!d) return;
+    d.can_mri = newCanMRI;
+    try { await apiCall(`/admin/diagnosticians/${id}`, 'PUT', d); } catch { /* mock mode */ }
+    showToast(`Η ικανότητα MRI ενημερώθηκε: ${d.name}`, 'success');
 }
 
 function renderAvailability() {
@@ -258,21 +309,30 @@ function renderSkills() {
 
     let html = '';
     for (const [diagName, diagSkills] of Object.entries(grouped)) {
+        // Main collapsible row
+        const diagIdForCollapse = diagSkills[0].diagnostician_id || diagName.replace(/\s+/g, '');
+        html += `
+            <tr style="cursor:pointer; background:var(--surface-color); border-bottom:1px solid var(--border-color);" onclick="toggleSkillsRow('${diagIdForCollapse}')">
+                <td colspan="5" style="font-weight:600; padding:12px;">
+                    <span id="icon-${diagIdForCollapse}" style="display:inline-block; width:20px; transition:transform 0.2s;">▶</span> 
+                    ${diagName} <span style="color:var(--text-tertiary); font-weight:normal; font-size:13px;">(${diagSkills.length} δεξιότητες)</span>
+                </td>
+            </tr>
+        `;
+        
+        // Children rows
         diagSkills.forEach((s, index) => {
             const isPreferred = s.is_preferred || false;
             const examCode = s.exam_code || '—';
-            const examTitle = s.exam_title || s.body_part || '—';
+            const examTitle = s.exam_title || s.body_part || EXAM_CODE_MAP[s.exam_code] || '—';
             
-            html += `<tr>`;
-            if (index === 0) {
-                html += `<td rowspan="${diagSkills.length}" style="font-weight:500; vertical-align:top; padding-top:16px;">${diagName}</td>`;
-            }
-            html += `
+            html += `<tr class="skills-row-${diagIdForCollapse}" style="display:none; background:#fafafa;">
+                <td style="padding-left:32px;"></td>
                 <td style="font-family:monospace;font-size:var(--font-size-sm);">${examCode}</td>
                 <td style="font-size:var(--font-size-sm);">${examTitle}</td>
                 <td>
                     <button class="btn btn-sm ${isPreferred ? 'btn-primary' : 'btn-secondary'}" onclick="toggleSkillPreference(${s.id}, ${!isPreferred})" style="padding:4px 8px; font-size:12px;">
-                        ${isPreferred ? '★ Προτιμά' : '— (Κλικ για αλλαγή)'}
+                        ${isPreferred ? '★ Προτιμά' : 'Προτίμηση'}
                     </button>
                 </td>
                 <td>
@@ -282,6 +342,24 @@ function renderSkills() {
         });
     }
     tbody.innerHTML = html;
+}
+
+// Helper to toggle skills display
+function toggleSkillsRow(diagId) {
+    const rows = document.querySelectorAll('.skills-row-' + diagId);
+    const icon = document.getElementById('icon-' + diagId);
+    let isHidden = false;
+    rows.forEach(r => {
+        if (r.style.display === 'none') {
+            r.style.display = 'table-row';
+            isHidden = true;
+        } else {
+            r.style.display = 'none';
+        }
+    });
+    if (icon) {
+        icon.style.transform = isHidden ? 'rotate(90deg)' : 'rotate(0deg)';
+    }
 }
 
 function renderPartnerships() {
@@ -312,7 +390,6 @@ function renderDoctors() {
         <tr>
             <td style="color:var(--text-tertiary);font-size:var(--font-size-xs);">${d.id}</td>
             <td style="font-weight:500;">${d.name}</td>
-            <td style="color:var(--text-secondary);">${d.specialty || '—'}</td>
         </tr>
     `).join('');
 }
@@ -433,12 +510,6 @@ async function setSkill() {
     if (!exam_code) { showToast('Εισάγετε κωδικό εξέτασης', 'warning'); return; }
 
     // Build title from code map
-    const EXAM_CODE_MAP = {
-        '22100': 'Αγγειογραφία Αώρτας (CT)', '22140': 'CT Θώρακα', '21063': 'MRI Εγκεφάλου',
-        '22200': 'CT Κοιλίας', '21100': 'MRI Κοιλίας', '22310': 'CT Σπονδυλικής Στήλης',
-        '21200': 'MRI Σπονδυλικής Στήλης', '22400': 'CT Πυέλου', '21300': 'MRI Πυέλου',
-        '22500': 'CT Μυοσκελετικού', '21400': 'MRI Μυοσκελετικού',
-    };
     const exam_title = EXAM_CODE_MAP[exam_code] || `Εξέταση ${exam_code}`;
 
     const record = { diagnostician_id: diagId, diagnostician_name: diagName, exam_code, exam_title, is_preferred };
@@ -525,20 +596,18 @@ async function deletePartnership(id) {
 
 async function addDoctor() {
     const name = document.getElementById('new-doc-name').value.trim();
-    const specialty = document.getElementById('new-doc-specialty').value.trim();
 
     if (!name) { showToast('Εισάγετε ονοματεπώνυμο', 'warning'); return; }
 
     try {
-        const result = await apiCall('/admin/doctors', 'POST', { name, specialty });
-        doctors.push(result || { id: `DR-${Date.now()}`, name, specialty });
+        const result = await apiCall('/admin/doctors', 'POST', { name });
+        doctors.push(result || { id: `DR-${Date.now()}`, name });
     } catch {
-        doctors.push({ id: `DR-${Date.now()}`, name, specialty });
+        doctors.push({ id: `DR-${Date.now()}`, name });
     }
 
     renderDoctors();
     document.getElementById('new-doc-name').value = '';
-    document.getElementById('new-doc-specialty').value = '';
     showToast(`✅ Ο/Η ${name} προστέθηκε στη λίστα ιατρών`, 'success');
 }
 

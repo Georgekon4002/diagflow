@@ -25,6 +25,7 @@ let currentTab = 'pending';   // 'pending' | 'assigned'
 let filterOnlyComments = false;
 let filterOnlyHistory = false;
 let sortConfig = { key: null, direction: null };
+let selectedExams = new Set();
 
 let dateRangePicker = null;
 
@@ -44,6 +45,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         mode: "range",
         dateFormat: "d/m/Y",
         locale: "gr",
+        firstDayOfWeek: 1, // Start on Monday
         onChange: function (selectedDates, dateStr, instance) {
             applyFilters();
         }
@@ -535,9 +537,13 @@ function renderPendingRows(exams) {
         const notesHtml = buildNotesCell(exam.notes || exam.comments || '');
         const oldVisitHtml = buildOldVisitCell(exam);
 
+        const isSelected = selectedExams.has(exam.exam_id) ? 'checked' : '';
         return `
-            <tr id="row-${exam.exam_id}">
-                <td class="extracode-cell"><span class="extracode-badge">${exam.extracode || exam.exam_id}</span></td>
+            <tr id="row-${exam.exam_id}" class="${isSelected ? 'selected-row' : ''}">
+                <td class="frozen-col-1" style="width: 48px; min-width: 48px; padding: 0; text-align: center;">
+                    <input type="checkbox" class="row-checkbox" value="${exam.exam_id}" onchange="toggleSelectExam('${exam.exam_id}')" ${isSelected}>
+                </td>
+                <td class="extracode-cell frozen-col-2"><span class="extracode-badge">${exam.extracode || exam.exam_id}</span></td>
                 <td class="date-cell">${dateStr}</td>
                 <td>${exam.lab_name || exam.laboratoryname || '—'}</td>
                 <td class="demogid-cell" style="border-left: 1px solid rgba(255, 255, 255, 0.2);">${exam.demogid || exam.patient_id || '—'}</td>
@@ -603,7 +609,7 @@ function renderAssignedRows(exams) {
 
         return `
             <tr>
-                <td class="extracode-cell"><span class="extracode-badge">${exam.extracode || exam.exam_id}</span></td>
+                <td class="extracode-cell frozen-col-1"><span class="extracode-badge">${exam.extracode || exam.exam_id}</span></td>
                 <td class="date-cell">${dateStr}</td>
                 <td>${exam.lab_name || exam.laboratoryname || '—'}</td>
                 <td class="demogid-cell" style="border-left: 1px solid rgba(255, 255, 255, 0.2);">${exam.demogid || exam.patient_id || '—'}</td>
@@ -617,6 +623,11 @@ function renderAssignedRows(exams) {
                 <td class="comment-cell">${notesHtml}</td>
                 <td class="comment-cell">${oldVisitHtml}</td>
                 <td><span class="assigned-name">${diagName}</span></td>
+                <td>
+                    <button class="btn btn-secondary" onclick="changeAssignment('${exam.exam_id}')">
+                        Αλλαγή
+                    </button>
+                </td>
             </tr>
         `;
     }).join('');
@@ -652,8 +663,32 @@ async function getSuggestion(examId) {
 }
 
 function viewSuggestion(examId) {
-    const exam = pendingExams.find(e => e.exam_id === examId);
+    let exam = pendingExams.find(e => e.exam_id === examId);
+    if (!exam) exam = assignedExams.find(e => e.exam_id === examId);
     if (exam && exam.suggestion) openSuggestionModal(examId, exam.suggestion);
+}
+
+async function changeAssignment(examId) {
+    const btn = event.target.closest('.btn');
+    const originalHTML = btn.innerHTML;
+    btn.innerHTML = '<span class="loading-spinner"></span>';
+    btn.disabled = true;
+
+    try {
+        let suggestion = await apiCall('/assignments/suggest', 'POST', { exam_id: examId });
+        if (!suggestion) suggestion = getMockSuggestion(examId);
+
+        const exam = assignedExams.find(e => e.exam_id === examId);
+        if (exam) exam.suggestion = suggestion;
+
+        openSuggestionModal(examId, suggestion);
+
+    } catch (err) {
+        showToast(`Σφάλμα: ${err.message}`, 'error');
+    } finally {
+        btn.innerHTML = originalHTML;
+        btn.disabled = false;
+    }
 }
 
 
@@ -664,7 +699,8 @@ function viewSuggestion(examId) {
 function openSuggestionModal(examId, suggestion) {
     currentExamId = examId;
     currentSuggestion = suggestion;
-    const exam = pendingExams.find(e => e.exam_id === examId);
+    let exam = pendingExams.find(e => e.exam_id === examId);
+    if (!exam) exam = assignedExams.find(e => e.exam_id === examId);
 
     // Exam summary
     document.getElementById('modal-exam-summary').innerHTML = `
@@ -731,7 +767,7 @@ function openSuggestionModal(examId, suggestion) {
                         <span class="alt-rank">—</span>
                         <span class="alt-name">${alt.name}</span>
                         <span class="alt-eliminated-badge">⛔ 0% Βαθμολογία</span>
-                        <span class="alt-elimination-reason">Χωρίς βαθμολογία (0%)</span>
+                        <span class="alt-elimination-reason">Δεν πληροί κανένα κριτήριο προτίμησης</span>
                     </div>
                 `;
             } else {
@@ -822,19 +858,32 @@ async function confirmAssignment() {
         });
     } catch { /* Continue in mock mode */ }
 
-    // Move exam from pending to assigned
-    const exam = pendingExams.find(e => e.exam_id === currentExamId);
+    // Handle moving or updating exam state
+    let exam = pendingExams.find(e => e.exam_id === currentExamId);
+    let wasPending = true;
+    if (!exam) {
+        exam = assignedExams.find(e => e.exam_id === currentExamId);
+        wasPending = false;
+    }
+
     if (exam) {
-        assignedExams.unshift({
+        const updatedExam = {
             ...exam,
             status: 'assigned',
             assigned_diagnostician_id: currentSuggestion.suggested_diagnostician_id,
             assigned_diagnostician_name: currentSuggestion.suggested_diagnostician_name,
+            code: currentSuggestion.suggested_diagnostician_name,
+            diagnostis: currentSuggestion.suggested_diagnostician_id,
             assigned_at: new Date().toISOString(),
-        });
+        };
+
+        if (wasPending) {
+            pendingExams = pendingExams.filter(e => e.exam_id !== currentExamId);
+        }
+        assignedExams = assignedExams.filter(e => e.exam_id !== currentExamId);
+        assignedExams.unshift(updatedExam);
     }
 
-    pendingExams = pendingExams.filter(e => e.exam_id !== currentExamId);
     renderPendingTable();
     renderAssignedTable();
     updateTabCounts();
@@ -871,19 +920,32 @@ async function overrideAssignment() {
         });
     } catch { /* Continue in mock mode */ }
 
-    // Move exam from pending to assigned
-    const exam = pendingExams.find(e => e.exam_id === currentExamId);
+    // Handle moving or updating exam state
+    let exam = pendingExams.find(e => e.exam_id === currentExamId);
+    let wasPending = true;
+    if (!exam) {
+        exam = assignedExams.find(e => e.exam_id === currentExamId);
+        wasPending = false;
+    }
+
     if (exam) {
-        assignedExams.unshift({
+        const updatedExam = {
             ...exam,
             status: 'assigned',
             assigned_diagnostician_id: overrideId,
             assigned_diagnostician_name: overrideName,
+            code: overrideName,
+            diagnostis: overrideId,
             assigned_at: new Date().toISOString(),
-        });
+        };
+
+        if (wasPending) {
+            pendingExams = pendingExams.filter(e => e.exam_id !== currentExamId);
+        }
+        assignedExams = assignedExams.filter(e => e.exam_id !== currentExamId);
+        assignedExams.unshift(updatedExam);
     }
 
-    pendingExams = pendingExams.filter(e => e.exam_id !== currentExamId);
     renderPendingTable();
     renderAssignedTable();
     updateTabCounts();
@@ -1331,4 +1393,155 @@ function getMockSuggestion(examId) {
         solver_status: 'GREEDY', is_direct_assignment: false, direct_assignment_reason: '',
         pipeline_timestamp: new Date().toISOString(),
     };
+}
+
+// ══════════════════════════════════════════════
+//  Bulk Assignment Logic
+// ══════════════════════════════════════════════
+
+function toggleSelectAll() {
+    const selectAllCb = document.getElementById('selectAllCheckbox');
+    const isChecked = selectAllCb.checked;
+    const checkboxes = document.querySelectorAll('.row-checkbox');
+    
+    checkboxes.forEach(cb => {
+        cb.checked = isChecked;
+        if (isChecked) {
+            selectedExams.add(cb.value);
+            document.getElementById(`row-${cb.value}`).classList.add('selected-row');
+        } else {
+            selectedExams.delete(cb.value);
+            document.getElementById(`row-${cb.value}`).classList.remove('selected-row');
+        }
+    });
+    updateBulkActionsUI();
+}
+
+function toggleSelectExam(examId) {
+    const cb = document.querySelector(`.row-checkbox[value="${examId}"]`);
+    if (cb && cb.checked) {
+        selectedExams.add(examId);
+        document.getElementById(`row-${examId}`).classList.add('selected-row');
+    } else {
+        selectedExams.delete(examId);
+        document.getElementById(`row-${examId}`).classList.remove('selected-row');
+    }
+    
+    // Update select all checkbox state
+    const selectAllCb = document.getElementById('selectAllCheckbox');
+    const checkboxes = document.querySelectorAll('.row-checkbox');
+    selectAllCb.checked = checkboxes.length > 0 && selectedExams.size === checkboxes.length;
+    
+    updateBulkActionsUI();
+}
+
+function clearSelection() {
+    selectedExams.clear();
+    const selectAllCb = document.getElementById('selectAllCheckbox');
+    if (selectAllCb) selectAllCb.checked = false;
+    
+    document.querySelectorAll('.row-checkbox').forEach(cb => {
+        cb.checked = false;
+    });
+    document.querySelectorAll('.selected-row').forEach(row => {
+        row.classList.remove('selected-row');
+    });
+    
+    updateBulkActionsUI();
+}
+
+function updateBulkActionsUI() {
+    const fab = document.getElementById('floating-action-bar');
+    const countEl = document.getElementById('fab-selected-count');
+    
+    if (selectedExams.size > 0 && currentTab === 'pending') {
+        countEl.textContent = `${selectedExams.size} επιλεγμένα`;
+        fab.style.display = 'flex';
+        populateFabDropdown();
+    } else {
+        fab.style.display = 'none';
+        closeFabDropdown();
+    }
+}
+
+async function bulkAssignToProposed() {
+    if (selectedExams.size === 0) return;
+    
+    const examIds = Array.from(selectedExams);
+    
+    try {
+        const results = await apiCall('/assignments/bulk-confirm', 'POST', { exam_ids: examIds });
+        showToast(`${results.length} εξετάσεις ανατέθηκαν επιτυχώς.`, 'success');
+        clearSelection();
+        loadPendingExams();
+        loadAssignedExams();
+    } catch (err) {
+        showToast(`Σφάλμα: ${err.message}`, 'error');
+    }
+}
+
+function toggleFabDropdown(event) {
+    event.stopPropagation();
+    const menu = document.getElementById('fab-dropdown-menu');
+    menu.style.display = menu.style.display === 'none' ? 'block' : 'none';
+    if (menu.style.display === 'block') {
+        document.getElementById('fab-diag-search').focus();
+    }
+}
+
+function closeFabDropdown() {
+    const menu = document.getElementById('fab-dropdown-menu');
+    if (menu) menu.style.display = 'none';
+}
+
+// Close dropdown when clicking outside
+document.addEventListener('click', (e) => {
+    const wrap = e.target.closest('.fab-dropdown-wrap');
+    if (!wrap) {
+        closeFabDropdown();
+    }
+});
+
+function populateFabDropdown() {
+    const list = document.getElementById('fab-diag-list');
+    list.innerHTML = diagnosticians
+        .filter(d => d.available)
+        .map(d => `
+            <div class="fab-diag-item" onclick="bulkAssignToSpecific(${d.id}, '${escapeHtmlFull(d.name)}')" style="padding: 8px; cursor: pointer; border-radius: 4px; border-bottom: 1px solid var(--border-color); color: var(--text-primary);">
+                ${d.name} <span style="opacity: 0.5; font-size: 11px;">(${d.current_day_count}/${d.daily_quota})</span>
+            </div>
+        `).join('');
+}
+
+function filterFabDiagnosticians() {
+    const search = document.getElementById('fab-diag-search').value.toLowerCase();
+    const list = document.getElementById('fab-diag-list');
+    list.innerHTML = diagnosticians
+        .filter(d => d.available && d.name.toLowerCase().includes(search))
+        .map(d => `
+            <div class="fab-diag-item" onclick="bulkAssignToSpecific(${d.id}, '${escapeHtmlFull(d.name)}')" style="padding: 8px; cursor: pointer; border-radius: 4px; border-bottom: 1px solid var(--border-color); color: var(--text-primary);">
+                ${d.name} <span style="opacity: 0.5; font-size: 11px;">(${d.current_day_count}/${d.daily_quota})</span>
+            </div>
+        `).join('');
+}
+
+async function bulkAssignToSpecific(diagId, diagName) {
+    if (selectedExams.size === 0) return;
+    
+    const examIds = Array.from(selectedExams);
+    closeFabDropdown();
+    
+    try {
+        const results = await apiCall('/assignments/bulk-override', 'POST', { 
+            exam_ids: examIds,
+            override_diagnostician_id: diagId,
+            reason: 'Bulk assignment via UI'
+        });
+        showToast(`${results.length} εξετάσεις ανατέθηκαν επιτυχώς σε ${diagName}.`, 'success');
+        clearSelection();
+        loadPendingExams();
+        loadAssignedExams();
+    } catch (err) {
+        showToast(`Σφάλμα: ${err.message}`, 'error');
+    }
 }

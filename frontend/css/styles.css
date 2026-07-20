@@ -764,7 +764,7 @@ input[type="date"].filter-select::-webkit-calendar-picker-indicator {
 }
 
 .suggestion-cell .suggested-name {
-    color: var(--accent-primary);
+    color: #60A5FA;
     font-weight: 600;
 }
 
@@ -837,29 +837,29 @@ input[type="date"].filter-select::-webkit-calendar-picker-indicator {
 }
 
 .btn-suggest {
-    background: rgba(99, 102, 241, 0.1);
-    color: var(--accent-primary);
-    border: 1px solid rgba(99, 102, 241, 0.2);
+    background: rgba(96, 165, 250, 0.1);
+    color: #60A5FA;
+    border: 1px solid rgba(96, 165, 250, 0.2);
     padding: 6px 12px;
     font-size: var(--font-size-xs);
 }
 
 .btn-suggest:hover {
-    background: rgba(99, 102, 241, 0.2);
-    box-shadow: 0 0 12px rgba(99, 102, 241, 0.15);
+    background: rgba(96, 165, 250, 0.2);
+    box-shadow: 0 0 12px rgba(96, 165, 250, 0.15);
 }
 
 .btn-view {
     background: transparent;
-    color: var(--accent-primary);
+    color: #60A5FA;
     padding: 6px 12px;
     font-size: var(--font-size-xs);
     border: 1px solid transparent;
 }
 
 .btn-view:hover {
-    background: rgba(99, 102, 241, 0.08);
-    border-color: rgba(99, 102, 241, 0.15);
+    background: rgba(96, 165, 250, 0.08);
+    border-color: rgba(96, 165, 250, 0.2);
 }
 
 .btn-group {
@@ -1835,4 +1835,105 @@ input[type="date"].filter-select::-webkit-calendar-picker-indicator {
     word-break: break-word;
     display: inline-block;
     max-width: 220px;
+}
+
+/* ── Floating Action Bar ── */
+.floating-action-bar {
+    position: fixed;
+    bottom: 24px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    padding: 12px 24px;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(255, 255, 255, 0.05);
+    z-index: 1000;
+    display: flex;
+    align-items: center;
+    gap: 24px;
+    animation: slideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes slideUp {
+    from { transform: translate(-50%, 100%); opacity: 0; }
+    to { transform: translate(-50%, 0); opacity: 1; }
+}
+
+.fab-content {
+    display: flex;
+    align-items: center;
+    gap: 24px;
+}
+
+.fab-count {
+    font-weight: 600;
+    color: var(--text-primary);
+    background: var(--bg-tertiary);
+    padding: 4px 12px;
+    border-radius: 16px;
+    font-size: 14px;
+}
+
+.fab-actions {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+
+.fab-dropdown-menu .fab-diag-item:hover {
+    background: rgba(255, 255, 255, 0.1);
+}
+
+/* Checkbox styling */
+.row-checkbox {
+    width: 16px;
+    height: 16px;
+    accent-color: var(--accent-primary);
+    cursor: pointer;
+}
+
+#selectAllCheckbox {
+    width: 16px;
+    height: 16px;
+    accent-color: var(--accent-primary);
+    cursor: pointer;
+}
+
+tr.selected-row td {
+    background-color: rgba(99, 102, 241, 0.15) !important;
+}
+
+/* ── Frozen Columns ── */
+.frozen-col-1 {
+    position: sticky;
+    left: 0;
+    z-index: 10;
+}
+
+.frozen-col-2 {
+    position: sticky;
+    left: 48px; /* width of frozen-col-1 */
+    z-index: 10;
+}
+
+.exams-table thead th.frozen-col-1,
+.exams-table thead th.frozen-col-2 {
+    background-color: #DB241E;
+    z-index: 20;
+}
+
+.exams-table tbody td.frozen-col-1,
+.exams-table tbody td.frozen-col-2 {
+    background-color: #0C3072;
+}
+
+.exams-table tbody tr:nth-child(even) td.frozen-col-1,
+.exams-table tbody tr:nth-child(even) td.frozen-col-2 {
+    background-color: #153879;
+}
+
+.exams-table tbody tr:hover td.frozen-col-1,
+.exams-table tbody tr:hover td.frozen-col-2 {
+    background-color: #244585;
 }

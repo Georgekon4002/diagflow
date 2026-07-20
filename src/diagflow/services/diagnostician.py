@@ -32,6 +32,7 @@ class DiagnosticianService:
         issuing_doctor_id: str,
         patient_id: str,
         exam_code: str = "",
+        lab_name: str = "",
     ) -> list[CandidateDiagnostician]:
         """
         Load all potentially eligible diagnosticians for an exam.
@@ -83,8 +84,47 @@ class DiagnosticianService:
             can_ct = bool(diag["can_ct"])
             can_mri = bool(diag["can_mri"])
 
-            # Availability
+            # Base Availability & Quota
             is_available = diag_id not in absent_ids
+            daily_quota = int(diag["daily_quota"])
+            accepts_lab = True
+
+            # --- CUSTOM BUSINESS RULES ---
+            today_date = date.today()
+            weekday = today_date.weekday() # 0 = Monday, 6 = Sunday
+
+            # Παπαδάκης (269) rules
+            if diag_id == 269:
+                if weekday in [3, 4, 6]: # Thu, Fri, Sun
+                    is_available = False
+                elif weekday == 5: # Sat
+                    daily_quota = 50
+                else: # Mon, Tue, Wed
+                    daily_quota = 15
+
+            # Μαντζουράνης (79) rules
+            if diag_id == 79 and weekday == 0: # Mon
+                is_available = False
+
+            # Ανδριώτης (205) rules
+            if diag_id == 205 and weekday in [3, 4]: # Thu, Fri
+                is_available = False
+
+            # Κυπριώτης (89) rules
+            if diag_id == 89:
+                if modality.upper() == "CT":
+                    daily_quota = 20
+                elif modality.upper() == "MRI":
+                    daily_quota = 2
+                
+                if "Χαλκίδ" not in lab_name:
+                    accepts_lab = False
+
+            # Νικολακόπουλος (74) rules
+            if diag_id == 74:
+                if "Σεπόλ" not in lab_name:
+                    accepts_lab = False
+            # ------------------------------
 
             # Partnership
             pship = partnership_map.get(diag_id)
@@ -101,14 +141,14 @@ class DiagnosticianService:
                 can_ct=can_ct,
                 can_mri=can_mri,
                 is_available=is_available,
-                daily_quota=int(diag["daily_quota"]),
+                daily_quota=daily_quota,
                 current_day_count=0,          # TODO: track live from assignment_log
                 current_subcategory_count=0,  # TODO: track per body-part
                 subcategory_soft_cap=None,
                 skill_proficiency=skill_proficiency,
                 has_skill_match=skill_match is not None,
                 has_skill_data=len(skills) > 0,
-                accepts_lab=True,             # All labs accepted unless restricted
+                accepts_lab=accepts_lab,
                 is_partnership_match=is_partner,
                 is_partnership_exclusive=is_exclusive,
                 has_patient_history=has_history,

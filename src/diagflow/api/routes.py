@@ -34,6 +34,8 @@ from diagflow.api.dependencies import (
 )
 from diagflow.api.schemas import (
     AssignmentConfirmation,
+    BulkConfirmRequest,
+    BulkOverrideRequest,
     ConfirmAssignmentRequest,
     DiagnosticianResponse,
     ExamResponse,
@@ -44,7 +46,6 @@ from diagflow.api.schemas import (
 )
 from diagflow.engine.filters import ExamContext
 from diagflow.services.assignment import AssignmentService
-from diagflow.services.comment_parser import parse_comment
 from diagflow.services.diagnostician import DiagnosticianService
 from diagflow.services.pamakristos import PamakristosScheduler
 import diagflow.db.diagflow_db as cfg_db
@@ -95,7 +96,7 @@ def _require_admin(x_admin_token: str = Header(default="")):
 # ─────────────────────────────────────────────────────
 
 @router.get("/exams/pending")
-async def get_pending_exams(
+def get_pending_exams(
     svc: AssignmentService = Depends(get_assignment_service),
 ):
     """Fetch all pending (unassigned) exams from Slis / mock DB."""
@@ -103,7 +104,7 @@ async def get_pending_exams(
 
 
 @router.get("/exams/assigned")
-async def get_assigned_exams(
+def get_assigned_exams(
     svc: AssignmentService = Depends(get_assignment_service),
 ):
     """Fetch assigned exams from Slis / mock DB."""
@@ -123,6 +124,10 @@ async def suggest_assignment(
     """Generate an assignment suggestion for a specific exam."""
     pending = assign_svc.get_pending_exams()
     exam_data = next((e for e in pending if e["exam_id"] == request.exam_id), None)
+    
+    if not exam_data:
+        assigned = assign_svc.get_assigned_exams()
+        exam_data = next((e for e in assigned if e["exam_id"] == request.exam_id), None)
 
     if not exam_data:
         raise HTTPException(status_code=404, detail=f"Exam {request.exam_id} not found")
@@ -147,13 +152,13 @@ async def suggest_assignment(
         modality=exam.modality,
         body_part=exam.body_part,
         lab_id=exam.lab_id,
+        lab_name=exam.lab_name,
         issuing_doctor_id=exam.issuing_doctor_id,
         patient_id=exam.patient_id,
         exam_code=exam.exam_code,
     )
 
-    comment_analysis = None
-    suggestion = await assign_svc.suggest_assignment(exam, candidates, comment_analysis)
+    suggestion = await assign_svc.suggest_assignment(exam, candidates)
 
     if not suggestion:
         raise HTTPException(
@@ -174,8 +179,6 @@ async def suggest_assignment(
         alternatives=suggestion.alternatives,
         rules_fired=suggestion.rules_fired,
         solver_status=suggestion.solver_status,
-        is_direct_assignment=suggestion.is_direct_assignment,
-        direct_assignment_reason=suggestion.direct_assignment_reason,
         pipeline_timestamp=suggestion.pipeline_timestamp,
     )
 
@@ -240,6 +243,73 @@ async def override_assignment(
     )
 
 
+@router.post("/assignments/bulk-confirm", response_model=list[AssignmentConfirmation])
+async def bulk_confirm_assignments(
+    request: BulkConfirmRequest,
+    svc: AssignmentService = Depends(get_assignment_service),
+):
+    """Confirm suggested assignments for multiple exams."""
+    results = []
+    for exam_id in request.exam_ids:
+        suggestion = _suggestion_cache.get(exam_id)
+        if not suggestion:
+            continue
+            
+        result = await svc.confirm_assignment(
+            exam_id=exam_id,
+            diagnostician_id=suggestion.suggested_diagnostician_id,
+            suggestion=suggestion,
+        )
+        _suggestion_cache.pop(exam_id, None)
+        
+        results.append(
+            AssignmentConfirmation(
+                exam_id=exam_id,
+                diagnostician_id=suggestion.suggested_diagnostician_id,
+                was_overridden=False,
+                status="confirmed",
+                timestamp=result["decision_timestamp"],
+            )
+        )
+    return results
+
+
+@router.post("/assignments/bulk-override", response_model=list[AssignmentConfirmation])
+async def bulk_override_assignments(
+    request: BulkOverrideRequest,
+    svc: AssignmentService = Depends(get_assignment_service),
+):
+    """Override suggested assignments for multiple exams."""
+    results = []
+    for exam_id in request.exam_ids:
+        suggestion = _suggestion_cache.get(exam_id)
+        if not suggestion:
+            continue
+            
+        # Extract the original assigned diagnostician ID if one exists, otherwise default to 0
+        original_diagnostician_id = suggestion.suggested_diagnostician_id
+            
+        result = await svc.override_assignment(
+            exam_id=exam_id,
+            original_diagnostician_id=original_diagnostician_id,
+            override_diagnostician_id=request.override_diagnostician_id,
+            reason=request.reason,
+            suggestion=suggestion,
+        )
+        _suggestion_cache.pop(exam_id, None)
+        
+        results.append(
+            AssignmentConfirmation(
+                exam_id=exam_id,
+                diagnostician_id=request.override_diagnostician_id,
+                was_overridden=True,
+                status="overridden",
+                timestamp=result["decision_timestamp"],
+            )
+        )
+    return results
+
+
 # ─────────────────────────────────────────────────────
 #  Diagnosticians (public read)
 # ─────────────────────────────────────────────────────
@@ -283,6 +353,13 @@ async def set_pamakristos_oncall(
 #  Admin — Diagnosticians  (diagflow.db — persistent)
 # ─────────────────────────────────────────────────────
 
+@router.get("/admin/exam-categories")
+def admin_get_exam_categories(
+    svc: AssignmentService = Depends(get_assignment_service),
+    _: str = Depends(_require_admin)
+):
+    return svc.get_exam_categories()
+
 class DiagnosticianCreateRequest(BaseModel):
     name: str
     active: bool = True
@@ -292,12 +369,12 @@ class DiagnosticianCreateRequest(BaseModel):
 
 
 @router.get("/admin/diagnosticians")
-async def admin_list_diagnosticians(_: str = Depends(_require_admin)):
+def admin_list_diagnosticians(_: str = Depends(_require_admin)):
     return cfg_db.get_all_diagnosticians()
 
 
 @router.post("/admin/diagnosticians")
-async def admin_create_diagnostician(
+def admin_create_diagnostician(
     req: DiagnosticianCreateRequest,
     _: str = Depends(_require_admin),
 ):
@@ -311,7 +388,7 @@ async def admin_create_diagnostician(
 
 
 @router.put("/admin/diagnosticians/{diag_id}")
-async def admin_update_diagnostician(
+def admin_update_diagnostician(
     diag_id: int,
     req: DiagnosticianCreateRequest,
     _: str = Depends(_require_admin),
@@ -330,7 +407,7 @@ async def admin_update_diagnostician(
 
 
 @router.delete("/admin/diagnosticians/{diag_id}")
-async def admin_delete_diagnostician(diag_id: int, _: str = Depends(_require_admin)):
+def admin_delete_diagnostician(diag_id: int, _: str = Depends(_require_admin)):
     if not cfg_db.delete_diagnostician(diag_id):
         raise HTTPException(status_code=404, detail="Ο ακτινοδιαγνώστης δεν βρέθηκε")
     return {"deleted": diag_id}
@@ -349,12 +426,12 @@ class PartnershipCreateRequest(BaseModel):
 
 
 @router.get("/admin/partnerships")
-async def admin_list_partnerships(_: str = Depends(_require_admin)):
+def admin_list_partnerships(_: str = Depends(_require_admin)):
     return cfg_db.get_all_partnerships()
 
 
 @router.post("/admin/partnerships")
-async def admin_create_partnership(
+def admin_create_partnership(
     req: PartnershipCreateRequest,
     _: str = Depends(_require_admin),
 ):
@@ -368,7 +445,7 @@ async def admin_create_partnership(
 
 
 @router.delete("/admin/partnerships/{part_id}")
-async def admin_delete_partnership(part_id: int, _: str = Depends(_require_admin)):
+def admin_delete_partnership(part_id: int, _: str = Depends(_require_admin)):
     if not cfg_db.delete_partnership(part_id):
         raise HTTPException(status_code=404, detail="Η σύμπραξη δεν βρέθηκε")
     return {"deleted": part_id}
@@ -385,19 +462,19 @@ class DoctorCreateRequest(BaseModel):
 
 
 @router.get("/admin/doctors")
-async def admin_list_doctors(_: str = Depends(_require_admin)):
+def admin_list_doctors(_: str = Depends(_require_admin)):
     return cfg_db.get_all_doctors()
 
 
 @router.post("/admin/doctors")
-async def admin_create_doctor(req: DoctorCreateRequest, _: str = Depends(_require_admin)):
+def admin_create_doctor(req: DoctorCreateRequest, _: str = Depends(_require_admin)):
     import secrets
     doc_id = req.id if req.id else f"DR-{secrets.token_hex(4).upper()}"
     return cfg_db.upsert_doctor(doctor_id=doc_id, name=req.name, specialty=req.specialty)
 
 
 @router.delete("/admin/doctors/{doctor_id}")
-async def admin_delete_doctor(doctor_id: str, _: str = Depends(_require_admin)):
+def admin_delete_doctor(doctor_id: str, _: str = Depends(_require_admin)):
     if not cfg_db.delete_doctor(doctor_id):
         raise HTTPException(status_code=404, detail="Ο γιατρός δεν βρέθηκε")
     return {"deleted": doctor_id}
@@ -416,12 +493,12 @@ class AvailabilitySetRequest(BaseModel):
 
 
 @router.get("/admin/availability")
-async def admin_list_availability(_: str = Depends(_require_admin)):
+def admin_list_availability(_: str = Depends(_require_admin)):
     return cfg_db.get_all_availability()
 
 
 @router.post("/admin/availability")
-async def admin_set_availability(
+def admin_set_availability(
     req: AvailabilitySetRequest,
     _: str = Depends(_require_admin),
 ):
@@ -449,7 +526,7 @@ class SkillDeleteRequest(BaseModel):
 
 
 @router.get("/admin/skills")
-async def admin_list_skills(
+def admin_list_skills(
     diagnostician_id: int | None = None,
     _: str = Depends(_require_admin),
 ):
@@ -457,7 +534,7 @@ async def admin_list_skills(
 
 
 @router.post("/admin/skills")
-async def admin_set_skill(req: SkillSetRequest, _: str = Depends(_require_admin)):
+def admin_set_skill(req: SkillSetRequest, _: str = Depends(_require_admin)):
     return cfg_db.upsert_skill(
         diagnostician_id=req.diagnostician_id,
         exam_code=req.exam_code,
@@ -466,7 +543,7 @@ async def admin_set_skill(req: SkillSetRequest, _: str = Depends(_require_admin)
 
 
 @router.delete("/admin/skills/{skill_id}")
-async def admin_delete_skill(skill_id: int, _: str = Depends(_require_admin)):
+def admin_delete_skill(skill_id: int, _: str = Depends(_require_admin)):
     if not cfg_db.delete_skill(skill_id):
         raise HTTPException(status_code=404, detail="Η δεξιότητα δεν βρέθηκε")
     return {"deleted": skill_id}
@@ -482,7 +559,7 @@ class OncallSetRequest(BaseModel):
 
 
 @router.get("/admin/oncall")
-async def admin_get_oncall(_: str = Depends(_require_admin)):
+def admin_get_oncall(_: str = Depends(_require_admin)):
     today = str(date.today())
     record = cfg_db.get_oncall_diagnostician(today)
     if record:
@@ -492,7 +569,7 @@ async def admin_get_oncall(_: str = Depends(_require_admin)):
 
 
 @router.post("/admin/oncall")
-async def admin_set_oncall(
+def admin_set_oncall(
     req: OncallSetRequest,
     _: str = Depends(_require_admin),
     scheduler: PamakristosScheduler = Depends(get_pamakristos_scheduler),
