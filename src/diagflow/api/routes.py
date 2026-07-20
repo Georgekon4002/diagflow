@@ -96,7 +96,7 @@ def _require_admin(x_admin_token: str = Header(default="")):
 # ─────────────────────────────────────────────────────
 
 @router.get("/exams/pending")
-def get_pending_exams(
+async def get_pending_exams(
     svc: AssignmentService = Depends(get_assignment_service),
 ):
     """Fetch all pending (unassigned) exams from Slis / mock DB."""
@@ -104,7 +104,7 @@ def get_pending_exams(
 
 
 @router.get("/exams/assigned")
-def get_assigned_exams(
+async def get_assigned_exams(
     svc: AssignmentService = Depends(get_assignment_service),
 ):
     """Fetch assigned exams from Slis / mock DB."""
@@ -354,7 +354,7 @@ async def set_pamakristos_oncall(
 # ─────────────────────────────────────────────────────
 
 @router.get("/admin/exam-categories")
-def admin_get_exam_categories(
+async def admin_get_exam_categories(
     svc: AssignmentService = Depends(get_assignment_service),
     _: str = Depends(_require_admin)
 ):
@@ -369,12 +369,12 @@ class DiagnosticianCreateRequest(BaseModel):
 
 
 @router.get("/admin/diagnosticians")
-def admin_list_diagnosticians(_: str = Depends(_require_admin)):
+async def admin_list_diagnosticians(_: str = Depends(_require_admin)):
     return cfg_db.get_all_diagnosticians()
 
 
 @router.post("/admin/diagnosticians")
-def admin_create_diagnostician(
+async def admin_create_diagnostician(
     req: DiagnosticianCreateRequest,
     _: str = Depends(_require_admin),
 ):
@@ -388,7 +388,7 @@ def admin_create_diagnostician(
 
 
 @router.put("/admin/diagnosticians/{diag_id}")
-def admin_update_diagnostician(
+async def admin_update_diagnostician(
     diag_id: int,
     req: DiagnosticianCreateRequest,
     _: str = Depends(_require_admin),
@@ -407,7 +407,7 @@ def admin_update_diagnostician(
 
 
 @router.delete("/admin/diagnosticians/{diag_id}")
-def admin_delete_diagnostician(diag_id: int, _: str = Depends(_require_admin)):
+async def admin_delete_diagnostician(diag_id: int, _: str = Depends(_require_admin)):
     if not cfg_db.delete_diagnostician(diag_id):
         raise HTTPException(status_code=404, detail="Ο ακτινοδιαγνώστης δεν βρέθηκε")
     return {"deleted": diag_id}
@@ -426,12 +426,12 @@ class PartnershipCreateRequest(BaseModel):
 
 
 @router.get("/admin/partnerships")
-def admin_list_partnerships(_: str = Depends(_require_admin)):
+async def admin_list_partnerships(_: str = Depends(_require_admin)):
     return cfg_db.get_all_partnerships()
 
 
 @router.post("/admin/partnerships")
-def admin_create_partnership(
+async def admin_create_partnership(
     req: PartnershipCreateRequest,
     _: str = Depends(_require_admin),
 ):
@@ -445,7 +445,7 @@ def admin_create_partnership(
 
 
 @router.delete("/admin/partnerships/{part_id}")
-def admin_delete_partnership(part_id: int, _: str = Depends(_require_admin)):
+async def admin_delete_partnership(part_id: int, _: str = Depends(_require_admin)):
     if not cfg_db.delete_partnership(part_id):
         raise HTTPException(status_code=404, detail="Η σύμπραξη δεν βρέθηκε")
     return {"deleted": part_id}
@@ -462,19 +462,24 @@ class DoctorCreateRequest(BaseModel):
 
 
 @router.get("/admin/doctors")
-def admin_list_doctors(_: str = Depends(_require_admin)):
-    return cfg_db.get_all_doctors()
+def admin_list_doctors(
+    q: str = "",
+    skip: int = 0,
+    limit: int = 50,
+    _: str = Depends(_require_admin)
+):
+    return cfg_db.get_all_doctors(q=q, skip=skip, limit=limit)
 
 
 @router.post("/admin/doctors")
-def admin_create_doctor(req: DoctorCreateRequest, _: str = Depends(_require_admin)):
+async def admin_create_doctor(req: DoctorCreateRequest, _: str = Depends(_require_admin)):
     import secrets
     doc_id = req.id if req.id else f"DR-{secrets.token_hex(4).upper()}"
     return cfg_db.upsert_doctor(doctor_id=doc_id, name=req.name, specialty=req.specialty)
 
 
 @router.delete("/admin/doctors/{doctor_id}")
-def admin_delete_doctor(doctor_id: str, _: str = Depends(_require_admin)):
+async def admin_delete_doctor(doctor_id: str, _: str = Depends(_require_admin)):
     if not cfg_db.delete_doctor(doctor_id):
         raise HTTPException(status_code=404, detail="Ο γιατρός δεν βρέθηκε")
     return {"deleted": doctor_id}
@@ -493,12 +498,12 @@ class AvailabilitySetRequest(BaseModel):
 
 
 @router.get("/admin/availability")
-def admin_list_availability(_: str = Depends(_require_admin)):
+async def admin_list_availability(_: str = Depends(_require_admin)):
     return cfg_db.get_all_availability()
 
 
 @router.post("/admin/availability")
-def admin_set_availability(
+async def admin_set_availability(
     req: AvailabilitySetRequest,
     _: str = Depends(_require_admin),
 ):
@@ -526,7 +531,7 @@ class SkillDeleteRequest(BaseModel):
 
 
 @router.get("/admin/skills")
-def admin_list_skills(
+async def admin_list_skills(
     diagnostician_id: int | None = None,
     _: str = Depends(_require_admin),
 ):
@@ -534,7 +539,7 @@ def admin_list_skills(
 
 
 @router.post("/admin/skills")
-def admin_set_skill(req: SkillSetRequest, _: str = Depends(_require_admin)):
+async def admin_set_skill(req: SkillSetRequest, _: str = Depends(_require_admin)):
     return cfg_db.upsert_skill(
         diagnostician_id=req.diagnostician_id,
         exam_code=req.exam_code,
@@ -543,7 +548,7 @@ def admin_set_skill(req: SkillSetRequest, _: str = Depends(_require_admin)):
 
 
 @router.delete("/admin/skills/{skill_id}")
-def admin_delete_skill(skill_id: int, _: str = Depends(_require_admin)):
+async def admin_delete_skill(skill_id: int, _: str = Depends(_require_admin)):
     if not cfg_db.delete_skill(skill_id):
         raise HTTPException(status_code=404, detail="Η δεξιότητα δεν βρέθηκε")
     return {"deleted": skill_id}
@@ -559,7 +564,7 @@ class OncallSetRequest(BaseModel):
 
 
 @router.get("/admin/oncall")
-def admin_get_oncall(_: str = Depends(_require_admin)):
+async def admin_get_oncall(_: str = Depends(_require_admin)):
     today = str(date.today())
     record = cfg_db.get_oncall_diagnostician(today)
     if record:
@@ -569,7 +574,7 @@ def admin_get_oncall(_: str = Depends(_require_admin)):
 
 
 @router.post("/admin/oncall")
-def admin_set_oncall(
+async def admin_set_oncall(
     req: OncallSetRequest,
     _: str = Depends(_require_admin),
     scheduler: PamakristosScheduler = Depends(get_pamakristos_scheduler),

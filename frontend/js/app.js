@@ -27,6 +27,10 @@ let filterOnlyHistory = false;
 let sortConfig = { key: null, direction: null };
 let selectedExams = new Set();
 
+let currentPendingPage = 0;
+let currentAssignedPage = 0;
+const examsPageSize = 20;
+
 let dateRangePicker = null;
 
 // Admin session
@@ -105,22 +109,8 @@ async function loadPendingExams() {
     }
     // Build the dynamic lab filter from real data
     buildLabDropdown(pendingExams);
-    renderPendingTable();
     updateTabCounts();
-
-    // Auto-fetch suggestions in background
-    Promise.all(pendingExams.filter(e => !e.suggestion).map(async exam => {
-        try {
-            let suggestion = await apiCall('/assignments/suggest', 'POST', { exam_id: exam.exam_id });
-            if (!suggestion) suggestion = getMockSuggestion(exam.exam_id);
-            exam.suggestion = suggestion;
-        } catch (e) { }
-    })).then(() => {
-        if (currentTab === 'pending') {
-            renderPendingTable();
-            applyFilters();
-        }
-    });
+    applyFilters();
 }
 
 async function loadAssignedExams() {
@@ -130,8 +120,8 @@ async function loadAssignedExams() {
     } catch {
         assignedExams = getMockAssignedExams();
     }
-    renderAssignedTable();
     updateTabCounts();
+    applyFilters();
 }
 
 async function loadDiagnosticians() {
@@ -267,7 +257,14 @@ function applyFilters() {
     if (currentTab === 'pending') {
         let filtered = pendingExams.filter(e => matchesFilters(e, search, selectedModalities, selectedLabs, dateFrom, dateTo));
         filtered = sortExams(filtered);
-        renderPendingRows(filtered);
+        
+        // Pagination logic
+        const start = currentPendingPage * examsPageSize;
+        const sliced = filtered.slice(start, start + examsPageSize);
+        
+        renderPendingRows(sliced);
+        updatePendingPagination(filtered.length);
+        
         document.getElementById('section-count').textContent =
             filtered.length === pendingExams.length
                 ? `${pendingExams.length} σύνολο`
@@ -275,7 +272,14 @@ function applyFilters() {
     } else {
         let filtered = assignedExams.filter(e => matchesFilters(e, search, selectedModalities, selectedLabs, dateFrom, dateTo));
         filtered = sortExams(filtered);
-        renderAssignedRows(filtered);
+        
+        // Pagination logic
+        const start = currentAssignedPage * examsPageSize;
+        const sliced = filtered.slice(start, start + examsPageSize);
+        
+        renderAssignedRows(sliced);
+        updateAssignedPagination(filtered.length);
+        
         document.getElementById('section-count').textContent =
             filtered.length === assignedExams.length
                 ? `${assignedExams.length} σύνολο`
@@ -560,14 +564,14 @@ function renderPendingRows(exams) {
                     ${hasSuggestion
                 ? `<span class="suggested-name">${exam.suggestion.suggested_diagnostician_name}</span>
                            <span class="suggested-score">${Math.round(exam.suggestion.confidence_score * 100)}%</span>`
-                : '<span class="no-suggestion">—</span>'
+                : '<span class="no-suggestion" id="sugg-status-' + exam.exam_id + '">—</span>'
             }
                 </td>
                 <td>
                     <div class="btn-group">
                         ${hasSuggestion
                 ? `<button class="btn btn-view" onclick="viewSuggestion('${exam.exam_id}')">Προβολή</button>`
-                : `<button class="btn btn-suggest" onclick="getSuggestion('${exam.exam_id}')">
+                : `<button class="btn btn-suggest" id="sugg-btn-${exam.exam_id}" onclick="getSuggestion('${exam.exam_id}')">
                                 <span class="btn-text">Πρόταση</span>
                                </button>`
             }
@@ -576,6 +580,40 @@ function renderPendingRows(exams) {
             </tr>
         `;
     }).join('');
+
+    // Background fetch suggestions for visible exams that lack one
+    fetchVisibleSuggestions(exams);
+}
+
+function fetchVisibleSuggestions(exams) {
+    const missing = exams.filter(e => !e.suggestion && !e._fetchingSuggestion);
+    if (missing.length === 0) return;
+    
+    missing.forEach(async exam => {
+        exam._fetchingSuggestion = true;
+        try {
+            const btn = document.getElementById(`sugg-btn-${exam.exam_id}`);
+            if (btn) btn.innerHTML = '<span class="spinner" style="width:14px;height:14px;border-width:2px;margin:auto;"></span>';
+            
+            let suggestion = await apiCall('/assignments/suggest', 'POST', { exam_id: exam.exam_id });
+            if (!suggestion) suggestion = getMockSuggestion(exam.exam_id);
+            exam.suggestion = suggestion;
+            
+            // Re-render if it's still visible
+            if (currentTab === 'pending') {
+                const tr = document.getElementById(`row-${exam.exam_id}`);
+                if (tr) {
+                    const rowSelected = selectedExams.has(exam.exam_id);
+                    // To avoid full re-render, we just re-run applyFilters which is fast
+                    applyFilters();
+                }
+            }
+        } catch (e) {
+            exam._fetchingSuggestion = false;
+            const btn = document.getElementById(`sugg-btn-${exam.exam_id}`);
+            if (btn) btn.innerHTML = '<span class="btn-text">Πρόταση</span>';
+        }
+    });
 }
 
 
@@ -1544,4 +1582,39 @@ async function bulkAssignToSpecific(diagId, diagName) {
     } catch (err) {
         showToast(`Σφάλμα: ${err.message}`, 'error');
     }
+}
+
+// Pagination functions
+function changePendingPage(dir) {
+    currentPendingPage += dir;
+    if (currentPendingPage < 0) currentPendingPage = 0;
+    applyFilters();
+}
+
+function changeAssignedPage(dir) {
+    currentAssignedPage += dir;
+    if (currentAssignedPage < 0) currentAssignedPage = 0;
+    applyFilters();
+}
+
+function updatePendingPagination(total) {
+    const info = document.getElementById('pending-pagination-info');
+    if (!info) return;
+    const start = currentPendingPage * examsPageSize + 1;
+    const end = Math.min((currentPendingPage + 1) * examsPageSize, total);
+    info.textContent = `Εμφάνιση ${total === 0 ? 0 : start}-${end} από ${total}`;
+    
+    document.getElementById('btn-pending-prev').disabled = currentPendingPage === 0;
+    document.getElementById('btn-pending-next').disabled = (currentPendingPage + 1) * examsPageSize >= total;
+}
+
+function updateAssignedPagination(total) {
+    const info = document.getElementById('assigned-pagination-info');
+    if (!info) return;
+    const start = currentAssignedPage * examsPageSize + 1;
+    const end = Math.min((currentAssignedPage + 1) * examsPageSize, total);
+    info.textContent = `Εμφάνιση ${total === 0 ? 0 : start}-${end} από ${total}`;
+    
+    document.getElementById('btn-assigned-prev').disabled = currentAssignedPage === 0;
+    document.getElementById('btn-assigned-next').disabled = (currentAssignedPage + 1) * examsPageSize >= total;
 }

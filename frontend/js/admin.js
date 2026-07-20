@@ -20,6 +20,10 @@ let doctors = [];
 let skills = [];
 let availability = [];
 
+let doctorsPage = 0;
+const doctorsPageSize = 50;
+let totalDoctors = 0;
+
 let EXAM_CODE_MAP = {};
 
 // ══════════════════════════════════════════════
@@ -169,11 +173,45 @@ async function loadPartnerships() {
     renderPartnerships();
 }
 
-async function loadDoctors() {
-    const data = await apiCall('/admin/doctors');
-    doctors = data || getMockDoctors();
+async function loadDoctors(page = 0) {
+    doctorsPage = page;
+    const skip = page * doctorsPageSize;
+    const limit = doctorsPageSize;
+    
+    let data;
+    try {
+        data = await apiCall(`/admin/doctors?skip=${skip}&limit=${limit}`);
+    } catch {
+        data = null;
+    }
+
+    if (data && data.items) {
+        doctors = data.items;
+        totalDoctors = data.total;
+    } else {
+        const mock = getMockDoctors();
+        doctors = mock.slice(skip, skip + limit);
+        totalDoctors = mock.length;
+    }
     renderDoctors();
-    populateDoctorSelects();
+    updateDoctorPagination();
+}
+
+function changeDoctorPage(dir) {
+    const newPage = doctorsPage + dir;
+    if (newPage < 0 || newPage * doctorsPageSize >= totalDoctors) return;
+    loadDoctors(newPage);
+}
+
+function updateDoctorPagination() {
+    const info = document.getElementById('doc-pagination-info');
+    if (!info) return;
+    const start = doctorsPage * doctorsPageSize + 1;
+    const end = Math.min((doctorsPage + 1) * doctorsPageSize, totalDoctors);
+    info.textContent = `Εμφάνιση ${totalDoctors === 0 ? 0 : start}-${end} από ${totalDoctors}`;
+    
+    document.getElementById('btn-doc-prev').disabled = doctorsPage === 0;
+    document.getElementById('btn-doc-next').disabled = (doctorsPage + 1) * doctorsPageSize >= totalDoctors;
 }
 
 async function loadSkills() {
@@ -202,19 +240,16 @@ function populateDiagnosticianSelects() {
     selects.forEach(id => {
         const sel = document.getElementById(id);
         if (!sel) return;
-        sel.innerHTML = '<option value="">— Επιλέξτε —</option>';
+        
+        let html = '<option value="">— Επιλέξτε —</option>';
         diagnosticians.forEach(d => {
-            sel.innerHTML += `<option value="${d.id}" data-name="${d.name}">${d.name}</option>`;
+            // Filter out inactive diagnosticians
+            if (!d.active) {
+                return;
+            }
+            html += `<option value="${d.id}" data-name="${d.name}">${d.name}</option>`;
         });
-    });
-}
-
-function populateDoctorSelects() {
-    const sel = document.getElementById('part-doctor-select');
-    if (!sel) return;
-    sel.innerHTML = '<option value="">— Επιλέξτε Ιατρό —</option>';
-    doctors.forEach(d => {
-        sel.innerHTML += `<option value="${d.id}" data-name="${d.name}">${d.name} (${d.id})</option>`;
+        sel.innerHTML = html;
     });
 }
 
@@ -443,6 +478,7 @@ async function addDiagnostician() {
     showToast(`✅ Ο/Η ${name} προστέθηκε`, 'success');
 }
 
+
 async function toggleDiagActive(id, newActive) {
     const d = diagnosticians.find(x => x.id === id);
     if (!d) return;
@@ -551,9 +587,8 @@ async function toggleSkillPreference(id, newPreference) {
 }
 
 async function addPartnership() {
-    const docSelEl = document.getElementById('part-doctor-select');
-    const doctorId = docSelEl.value;
-    const doctorName = docSelEl.options[docSelEl.selectedIndex]?.dataset?.name || '';
+    const doctorId = document.getElementById('part-doctor-id').value;
+    const doctorName = document.getElementById('part-doctor-search').value.split(' (')[0];
     const diagSelEl = document.getElementById('part-diag');
     const diagId = parseInt(diagSelEl.value);
     const diagName = diagSelEl.options[diagSelEl.selectedIndex]?.dataset?.name || '';
@@ -580,9 +615,10 @@ async function addPartnership() {
     }
 
     renderPartnerships();
-    document.getElementById('part-doctor-select').value = '';
+    document.getElementById('part-doctor-search').value = '';
+    document.getElementById('part-doctor-id').value = '';
     document.getElementById('part-exclusive').checked = false;
-    showToast(`✅ Συνεργασία προστέθηκε: ${doctorName} → ${diagName}${exclusive ? ' (Αποκλειστική)' : ''}`, 'success');
+    showToast(`✅ Συνεργασία αποθηκεύτηκε`, 'success');
 }
 
 async function deletePartnership(id) {
@@ -686,3 +722,48 @@ function getMockAvailability() {
         { id: 1, diagnostician_id: 6, diagnostician_name: 'Αντωνίου Ζ.', date: today, status: 'on_leave', notes: 'Άδεια' },
     ];
 }
+
+// ══════════════════════════════════════════════
+//  Autocomplete for Doctor Search
+// ══════════════════════════════════════════════
+let doctorSearchTimeout = null;
+
+function debounceDoctorSearch() {
+    const q = document.getElementById('part-doctor-search').value.trim();
+    if (q.length < 2) {
+        document.getElementById('part-doctor-results').style.display = 'none';
+        return;
+    }
+    clearTimeout(doctorSearchTimeout);
+    doctorSearchTimeout = setTimeout(async () => {
+        const data = await apiCall(`/admin/doctors?q=${encodeURIComponent(q)}&limit=15`);
+        const resDiv = document.getElementById('part-doctor-results');
+        if (!data || !data.items || data.items.length === 0) {
+            resDiv.innerHTML = '<div style="padding:8px; color:var(--text-tertiary);">Δεν βρέθηκαν αποτελέσματα</div>';
+            resDiv.style.display = 'block';
+            return;
+        }
+        resDiv.innerHTML = data.items.map(d => `
+            <div style="padding:8px; cursor:pointer; border-bottom:1px solid var(--border-color);"
+                 onclick="selectDoctor('${d.id}', '${d.name.replace(/'/g, "\\'")}')" 
+                 onmouseover="this.style.background='var(--bg-tertiary)'"
+                 onmouseout="this.style.background='transparent'">
+                 ${d.name} <span style="color:var(--text-tertiary);font-size:0.85em;">(${d.id})</span>
+            </div>
+        `).join('');
+        resDiv.style.display = 'block';
+    }, 300);
+}
+
+function selectDoctor(id, name) {
+    document.getElementById('part-doctor-id').value = id;
+    document.getElementById('part-doctor-search').value = `${name} (${id})`;
+    document.getElementById('part-doctor-results').style.display = 'none';
+}
+
+document.addEventListener('click', (e) => {
+    const res = document.getElementById('part-doctor-results');
+    if (res && e.target.id !== 'part-doctor-search') {
+        res.style.display = 'none';
+    }
+});

@@ -267,12 +267,25 @@ def get_oncall_diagnostician(date: str) -> dict | None:
 
 # ── Doctors ───────────────────────────────────────────────────────────────────
 
-def get_all_doctors() -> list[dict]:
+def get_all_doctors(q: str = "", skip: int = 0, limit: int = 50) -> dict:
     with _conn() as con:
-        rows = con.execute(
-            "SELECT id, name, specialty FROM doctors ORDER BY name"
-        ).fetchall()
-    return [_row_to_dict(r) for r in rows]
+        if q:
+            like_q = f"%{q}%"
+            total = con.execute("SELECT count(*) FROM doctors WHERE name LIKE ? OR id LIKE ?", (like_q, like_q)).fetchone()[0]
+            rows = con.execute(
+                "SELECT id, name, specialty FROM doctors WHERE name LIKE ? OR id LIKE ? ORDER BY name LIMIT ? OFFSET ?",
+                (like_q, like_q, limit, skip)
+            ).fetchall()
+        else:
+            total = con.execute("SELECT count(*) FROM doctors").fetchone()[0]
+            rows = con.execute(
+                "SELECT id, name, specialty FROM doctors ORDER BY name LIMIT ? OFFSET ?",
+                (limit, skip)
+            ).fetchall()
+    return {
+        "items": [_row_to_dict(r) for r in rows],
+        "total": total
+    }
 
 
 def upsert_doctor(doctor_id: str, name: str, specialty: str = "") -> dict:
