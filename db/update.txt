@@ -1,0 +1,5 @@
+begin tran
+	update exammore 
+	set diagnostisid=222 
+	where exammoreid=20475133
+commit
