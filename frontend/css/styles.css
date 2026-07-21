@@ -580,6 +580,8 @@ input[type="date"].filter-select::-webkit-calendar-picker-indicator {
 
 .exams-table-container {
     overflow-x: auto;
+    overflow-y: auto;
+    max-height: calc(100vh - 280px);
 }
 
 
@@ -593,6 +595,10 @@ input[type="date"].filter-select::-webkit-calendar-picker-indicator {
 }
 
 .exams-table thead th {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    background-color: #DB241E;
     padding: var(--space-md) var(--space-lg);
     text-align: left;
     font-weight: 600;
@@ -867,6 +873,40 @@ input[type="date"].filter-select::-webkit-calendar-picker-indicator {
     gap: var(--space-xs);
 }
 
+/* ── Slis Update button — green accent ── */
+.btn-slis-update {
+    background: rgba(16, 185, 129, 0.12);
+    color: #10b981;
+    border: 1px solid rgba(16, 185, 129, 0.3);
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    border-radius: var(--radius-md);
+    font-family: var(--font-family);
+    font-size: var(--font-size-sm);
+    font-weight: 600;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+    white-space: nowrap;
+}
+
+.btn-slis-update:hover {
+    background: rgba(16, 185, 129, 0.22);
+    box-shadow: 0 2px 10px rgba(16, 185, 129, 0.25);
+    transform: translateY(-1px);
+}
+
+.btn-slis-update:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    transform: none;
+}
+
+.btn-slis-update.btn-sm {
+    font-size: 11px;
+    padding: 4px 10px;
+}
 
 /* ── Modal ── */
 .modal-overlay {
@@ -1598,6 +1638,7 @@ input[type="date"].filter-select::-webkit-calendar-picker-indicator {
     border-radius: var(--radius-full);
     font-size: 11px;
     font-weight: 700;
+    white-space: nowrap;
 }
 
 .status-badge.active {
@@ -1936,4 +1977,30 @@ tr.selected-row td {
 .exams-table tbody tr:hover td.frozen-col-1,
 .exams-table tbody tr:hover td.frozen-col-2 {
     background-color: #244585;
+}
+
+/* Pammakristos Row Highlighting */
+tr.pammakristos-row {
+    background-color: rgba(219, 36, 30, 0.4) !important;
+}
+tr.pammakristos-row:hover {
+    background-color: rgba(219, 36, 30, 0.6) !important;
+}
+tr.pammakristos-row td.frozen-col-1,
+tr.pammakristos-row td.frozen-col-2 {
+    background-color: rgba(219, 36, 30, 0.4) !important;
+}
+tr.pammakristos-row:hover td.frozen-col-1,
+tr.pammakristos-row:hover td.frozen-col-2 {
+    background-color: rgba(219, 36, 30, 0.6) !important;
+}
+
+/* Comment Button Alert */
+.comment-btn.comment-btn-alert {
+    background-color: #DB241E !important;
+    color: #ffffff !important;
+    border-color: #DB241E !important;
+}
+.comment-btn.comment-btn-alert:hover {
+    background-color: #b51c18 !important;
 }

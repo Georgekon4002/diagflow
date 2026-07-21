@@ -158,6 +158,7 @@
                                     <th>CT</th>
                                     <th>MRI</th>
                                     <th>Ημερήσια Χωρητικότητα</th>
+                                    <th>Προτίμηση (Εργαστήριο)</th>
                                     <th>Ενέργειες</th>
                                 </tr>
                             </thead>
@@ -191,7 +192,7 @@
                     </div>
 
                     <div class="admin-card">
-                        <div class="admin-card-title">Εγγεγραμμένες Αποχές</div>
+                        <div class="admin-card-title">Άδειες (Σήμερα και Μελλοντικά)</div>
                         <table class="admin-table">
                             <thead>
                                 <tr>
@@ -203,6 +204,51 @@
                             </thead>
                             <tbody id="avail-tbody"></tbody>
                         </table>
+                    </div>
+
+                    <div class="admin-card" style="margin-top:20px;">
+                        <div class="admin-card-title">Σήμερα δεν κάνουν διαγνώσεις (Βάσει Εβδομαδιαίου Προγράμματος)</div>
+                        <table class="admin-table">
+                            <thead>
+                                <tr>
+                                    <th>Διαγνώστης</th>
+                                    <th>Σταθερό Ρεπό</th>
+                                </tr>
+                            </thead>
+                            <tbody id="today-off-tbody"></tbody>
+                        </table>
+                    </div>
+                    
+                    <div class="admin-card" style="margin-top:20px;">
+                        <div class="admin-card-title">Εβδομαδιαίο Πρόγραμμα (Σταθερά Ρεπό)</div>
+                        <div class="admin-form">
+                            <div class="form-group" style="margin:0;">
+                                <label class="form-label">Διαγνώστης</label>
+                                <select id="schedule-diag" class="form-input filter-select" style="width:100%;"></select>
+                            </div>
+                            <div class="form-group" style="margin:0;">
+                                <label class="form-label">Ημέρα</label>
+                                <select id="schedule-day" class="form-input filter-select" style="width:100%;">
+                                    <option value="0">Δευτέρα</option>
+                                    <option value="1">Τρίτη</option>
+                                    <option value="2">Τετάρτη</option>
+                                    <option value="3">Πέμπτη</option>
+                                    <option value="4">Παρασκευή</option>
+                                    <option value="5">Σάββατο</option>
+                                    <option value="6">Κυριακή</option>
+                                </select>
+                            </div>
+                            <div class="form-group" style="margin:0;">
+                                <label class="form-label">Ρεπό;</label>
+                                <label style="display:flex;align-items:center;gap:8px;padding:10px 0;font-size:var(--font-size-sm);cursor:pointer;">
+                                    <input type="checkbox" id="schedule-is-off" style="accent-color:var(--accent-primary);width:16px;height:16px;">
+                                    Δεν εργάζεται (Ρεπό)
+                                </label>
+                            </div>
+                            <div class="form-group admin-form-actions" style="margin:0;">
+                                <button class="btn btn-primary" onclick="setWeeklySchedule()">Αποθήκευση</button>
+                            </div>
+                        </div>
                     </div>
                 </div>
 
@@ -294,8 +340,9 @@
                         <table class="admin-table">
                             <thead>
                                 <tr>
-                                    <th>Ιατρός</th>
                                     <th>Διαγνώστης</th>
+                                    <th>Ιατρός</th>
+                                    <th>Κατάσταση</th>
                                     <th>Αποκλειστική</th>
                                     <th>Ενέργειες</th>
                                 </tr>

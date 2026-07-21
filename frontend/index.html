@@ -202,7 +202,7 @@
                     <button class="btn btn-ghost" onclick="clearFilters()" id="btn-clear-filters" style="display:none;">
                         ✕ Καθαρισμός
                     </button>
-                    <button class="btn btn-secondary" id="btn-refresh" onclick="refreshCurrentTab()">
+                    <button class="btn btn-secondary" id="btn-refresh" onclick="handleRefreshClick()">
                         <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
                             <path d="M12 7A5 5 0 1 1 7 2" stroke="currentColor" stroke-width="1.5"
                                 stroke-linecap="round" />
@@ -210,6 +210,12 @@
                                 stroke-linejoin="round" />
                         </svg>
                         Ανανέωση
+                    </button>
+                    <button class="btn btn-slis-update" id="btn-update-slis-all" onclick="updateAllToSlis()" style="display:none;">
+                        <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                            <path d="M2 7h10M8 3l4 4-4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                        </svg>
+                        Update Slis
                     </button>
                 </div>
             </div>
@@ -274,7 +280,10 @@
                     <table class="exams-table" id="exams-table-assigned">
                         <thead>
                             <tr style="background-color: #DB241E;">
-                                <th class="frozen-col-1" style="text-align: center; cursor: pointer;" onclick="handleSort('extracode')">
+                                <th class="frozen-col-1" style="width: 48px; min-width: 48px; padding: 0; text-align: center;">
+                                    <input type="checkbox" id="selectAllAssignedCheckbox" onclick="toggleSelectAllAssigned()">
+                                </th>
+                                <th style="text-align: center; cursor: pointer;" onclick="handleSort('extracode')">
                                     Εντολή <span id="sort-icon-extracode-assigned"
                                         style="opacity:0.5; font-size:10px;">↕️</span></th>
                                 <th style="cursor: pointer;" onclick="handleSort('date')">Ημερομηνία <span
@@ -303,7 +312,15 @@
                     <!-- Pagination Controls -->
                     <div style="display:flex; justify-content:space-between; align-items:center; margin-top:12px; padding: 0 16px;">
                         <span id="assigned-pagination-info" style="font-size:var(--font-size-sm); color:var(--text-tertiary);"></span>
-                        <div style="display:flex; gap:8px;">
+                        <div style="display:flex; gap:8px; align-items:center;">
+                            <!-- Bulk Slis update for selected assigned exams -->
+                            <div id="assigned-bulk-slis-bar" style="display:none; gap:8px; align-items:center;">
+                                <span id="assigned-selected-count" style="font-size:var(--font-size-sm); color:var(--text-secondary); font-weight:500;">0 επιλεγμένα</span>
+                                <button class="btn btn-slis-update btn-sm" onclick="updateSelectedToSlis()">
+                                    Update επιλεγμένων στο Slis
+                                </button>
+                                <button class="btn btn-ghost btn-sm" onclick="clearAssignedSelection()">&#x2715;</button>
+                            </div>
                             <button class="btn btn-secondary btn-sm" id="btn-assigned-prev" onclick="changeAssignedPage(-1)">Προηγούμενο</button>
                             <button class="btn btn-secondary btn-sm" id="btn-assigned-next" onclick="changeAssignedPage(1)">Επόμενο</button>
                         </div>

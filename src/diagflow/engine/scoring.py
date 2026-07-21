@@ -140,15 +140,21 @@ def score_lab_preference(candidate: CandidateDiagnostician, exam: ExamContext) -
     """
     Priority e: Weighted score for lab preference (NOT a hard filter).
 
-    Diagnosticians who accept the lab get full score.
-    Those who don't prefer it still stay in the pool but get a lower score.
+    Diagnosticians who explicitly prefer this lab get full score.
+    If they have no preference or it doesn't match, they get a neutral/low score,
+    so they are not excluded but ranked lower if someone else prefers this lab.
     """
-    if candidate.accepts_lab:
+    preferred_lab_id = getattr(candidate, "preferred_lab_id", "")
+    
+    if preferred_lab_id and preferred_lab_id == str(exam.lab_id):
         raw = 1.0
-        explanation = f"Αποδέχεται εξετάσεις από '{exam.lab_name}'"
+        explanation = f"Προτιμά τις εξετάσεις από '{exam.lab_name}'"
+    elif preferred_lab_id:
+        raw = 0.1  # They prefer another lab
+        explanation = f"Δεν είναι το προτιμώμενο εργαστήριό του/της (προτιμά άλλο)"
     else:
-        raw = 0.1  # Low but not zero — they can still be manually overridden
-        explanation = f"Δεν προτιμά εξετάσεις από '{exam.lab_name}' (χαμηλή βαθμολογία)"
+        raw = 0.5  # No specific preference
+        explanation = f"Δεν έχει συγκεκριμένη προτίμηση εργαστηρίου (ουδέτερο)"
 
     return ScoreComponent(
         rule_name="lab_preference",

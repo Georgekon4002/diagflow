@@ -14,10 +14,14 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
+import structlog
+
 from diagflow import __app_name__, __version__
 from diagflow.config import settings
 from diagflow.api.routes import router as api_router
 from diagflow.utils.logging import setup_logging
+
+logger = structlog.get_logger(__name__)
 
 
 @asynccontextmanager
@@ -25,7 +29,18 @@ async def lifespan(app: FastAPI):
     """Application lifespan — runs setup on startup and cleanup on shutdown."""
     setup_logging(settings.log_level)
 
-    # TODO: Initialize database engines when DB access is available
+    # ── Pull from Slis on startup ──
+    # Expires old synced rows and verifies the DB schema is current.
+    # In production this would trigger the real Slis stored-procedure pull.
+    from diagflow.services.slis_sync import pull_from_slis
+    result = pull_from_slis()
+    logger.info(
+        "startup_slis_pull",
+        expired=result.get("expired", 0),
+        total_pending=result.get("total_pending", 0),
+    )
+
+    # TODO: Initialize database engines when real MSSQL DB access is available
     # from diagflow.db.engines import init_engines
     # init_engines()
 

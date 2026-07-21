@@ -39,7 +39,7 @@ def _row_to_dict(row: sqlite3.Row) -> dict:
 def get_all_diagnosticians() -> list[dict]:
     with _conn() as con:
         rows = con.execute(
-            "SELECT id, name, active, can_ct, can_mri, daily_quota FROM diagnosticians ORDER BY name"
+            "SELECT id, name, active, can_ct, can_mri, daily_quota, preferred_lab_id FROM diagnosticians ORDER BY name"
         ).fetchall()
     return [_row_to_dict(r) for r in rows]
 
@@ -47,36 +47,36 @@ def get_all_diagnosticians() -> list[dict]:
 def get_diagnostician(diag_id: int) -> dict | None:
     with _conn() as con:
         row = con.execute(
-            "SELECT id, name, active, can_ct, can_mri, daily_quota FROM diagnosticians WHERE id = ?",
+            "SELECT id, name, active, can_ct, can_mri, daily_quota, preferred_lab_id FROM diagnosticians WHERE id = ?",
             (diag_id,),
         ).fetchone()
     return _row_to_dict(row) if row else None
 
 
 def create_diagnostician(name: str, active: bool = True, can_ct: bool = True,
-                         can_mri: bool = True, daily_quota: int = 15) -> dict:
+                         can_mri: bool = True, daily_quota: int = 15, preferred_lab_id: int | None = None) -> dict:
     with _conn() as con:
         cur = con.execute(
-            "INSERT INTO diagnosticians (name, active, can_ct, can_mri, daily_quota) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (name, int(active), int(can_ct), int(can_mri), daily_quota),
+            "INSERT INTO diagnosticians (name, active, can_ct, can_mri, daily_quota, preferred_lab_id) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (name, int(active), int(can_ct), int(can_mri), daily_quota, preferred_lab_id),
         )
         row = con.execute(
-            "SELECT id, name, active, can_ct, can_mri, daily_quota FROM diagnosticians WHERE id = ?",
+            "SELECT id, name, active, can_ct, can_mri, daily_quota, preferred_lab_id FROM diagnosticians WHERE id = ?",
             (cur.lastrowid,),
         ).fetchone()
     return _row_to_dict(row)
 
 
 def update_diagnostician(diag_id: int, name: str, active: bool,
-                         can_ct: bool, can_mri: bool, daily_quota: int) -> dict | None:
+                         can_ct: bool, can_mri: bool, daily_quota: int, preferred_lab_id: int | None = None) -> dict | None:
     with _conn() as con:
         con.execute(
-            "UPDATE diagnosticians SET name=?, active=?, can_ct=?, can_mri=?, daily_quota=? WHERE id=?",
-            (name, int(active), int(can_ct), int(can_mri), daily_quota, diag_id),
+            "UPDATE diagnosticians SET name=?, active=?, can_ct=?, can_mri=?, daily_quota=?, preferred_lab_id=? WHERE id=?",
+            (name, int(active), int(can_ct), int(can_mri), daily_quota, preferred_lab_id, diag_id),
         )
         row = con.execute(
-            "SELECT id, name, active, can_ct, can_mri, daily_quota FROM diagnosticians WHERE id = ?",
+            "SELECT id, name, active, can_ct, can_mri, daily_quota, preferred_lab_id FROM diagnosticians WHERE id = ?",
             (diag_id,),
         ).fetchone()
     return _row_to_dict(row) if row else None
@@ -156,7 +156,7 @@ def get_all_partnerships() -> list[dict]:
         rows = con.execute(
             "SELECT p.id, p.issuing_doctor_id, p.issuing_doctor_name, "
             "p.preferred_diagnostician_id, d.name AS preferred_diagnostician_name, "
-            "p.priority, p.exclusive "
+            "p.priority, p.exclusive, p.is_active "
             "FROM partnerships p "
             "JOIN diagnosticians d ON d.id = p.preferred_diagnostician_id "
             "ORDER BY p.issuing_doctor_name",
@@ -166,19 +166,19 @@ def get_all_partnerships() -> list[dict]:
 
 def create_partnership(issuing_doctor_id: str, issuing_doctor_name: str,
                        preferred_diagnostician_id: int, priority: int = 1,
-                       exclusive: bool = False) -> dict:
+                       exclusive: bool = False, is_active: bool = True) -> dict:
     with _conn() as con:
         cur = con.execute(
             "INSERT INTO partnerships "
-            "(issuing_doctor_id, issuing_doctor_name, preferred_diagnostician_id, priority, exclusive) "
-            "VALUES (?, ?, ?, ?, ?)",
+            "(issuing_doctor_id, issuing_doctor_name, preferred_diagnostician_id, priority, exclusive, is_active) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
             (issuing_doctor_id, issuing_doctor_name, preferred_diagnostician_id,
-             priority, int(exclusive)),
+             priority, int(exclusive), int(is_active)),
         )
         row = con.execute(
             "SELECT p.id, p.issuing_doctor_id, p.issuing_doctor_name, "
             "p.preferred_diagnostician_id, d.name AS preferred_diagnostician_name, "
-            "p.priority, p.exclusive "
+            "p.priority, p.exclusive, p.is_active "
             "FROM partnerships p "
             "JOIN diagnosticians d ON d.id = p.preferred_diagnostician_id "
             "WHERE p.id = ?",
@@ -193,12 +193,45 @@ def delete_partnership(part_id: int) -> bool:
     return cur.rowcount > 0
 
 
+def update_partnership(part_id: int, exclusive: bool | None = None, is_active: bool | None = None) -> dict | None:
+    with _conn() as con:
+        # Build dynamic update query
+        updates = []
+        params = []
+        if exclusive is not None:
+            updates.append("exclusive = ?")
+            params.append(int(exclusive))
+        if is_active is not None:
+            updates.append("is_active = ?")
+            params.append(int(is_active))
+            
+        if not updates:
+            return None
+            
+        params.append(part_id)
+        query = f"UPDATE partnerships SET {', '.join(updates)} WHERE id = ?"
+        con.execute(query, tuple(params))
+        
+        row = con.execute(
+            "SELECT p.id, p.issuing_doctor_id, p.issuing_doctor_name, "
+            "p.preferred_diagnostician_id, d.name AS preferred_diagnostician_name, "
+            "p.priority, p.exclusive, p.is_active "
+            "FROM partnerships p "
+            "JOIN diagnosticians d ON d.id = p.preferred_diagnostician_id "
+            "WHERE p.id = ?",
+            (part_id,),
+        ).fetchone()
+    return _row_to_dict(row) if row else None
+
+
 def get_partnerships_by_doctor(issuing_doctor_id: str) -> list[dict]:
     """Used by the engine to look up partnerships for an issuing doctor."""
     with _conn() as con:
         rows = con.execute(
-            "SELECT preferred_diagnostician_id, priority, exclusive "
-            "FROM partnerships WHERE issuing_doctor_id = ? ORDER BY priority DESC",
+            "SELECT preferred_diagnostician_id, priority, exclusive, is_active "
+            "FROM partnerships "
+            "WHERE issuing_doctor_id = ? "
+            "ORDER BY priority DESC",
             (issuing_doctor_id,),
         ).fetchall()
     return [_row_to_dict(r) for r in rows]
@@ -263,6 +296,41 @@ def get_oncall_diagnostician(date: str) -> dict | None:
             (date,),
         ).fetchone()
     return _row_to_dict(row) if row else None
+
+
+# ── Weekly Schedules ────────────────────────────────────────────────────────────
+
+def get_all_weekly_schedules() -> list[dict]:
+    with _conn() as con:
+        rows = con.execute(
+            "SELECT diagnostician_id, day_of_week, is_off FROM weekly_schedules"
+        ).fetchall()
+    return [_row_to_dict(r) for r in rows]
+
+
+def get_weekly_schedule_for_diagnostician(diag_id: int) -> list[dict]:
+    with _conn() as con:
+        rows = con.execute(
+            "SELECT day_of_week, is_off FROM weekly_schedules WHERE diagnostician_id = ?",
+            (diag_id,),
+        ).fetchall()
+    return [_row_to_dict(r) for r in rows]
+
+
+def upsert_weekly_schedule(diagnostician_id: int, day_of_week: int, is_off: bool) -> dict:
+    with _conn() as con:
+        con.execute(
+            "INSERT INTO weekly_schedules (diagnostician_id, day_of_week, is_off) "
+            "VALUES (?, ?, ?) "
+            "ON CONFLICT(diagnostician_id, day_of_week) DO UPDATE SET is_off=excluded.is_off",
+            (diagnostician_id, day_of_week, int(is_off)),
+        )
+        row = con.execute(
+            "SELECT diagnostician_id, day_of_week, is_off FROM weekly_schedules "
+            "WHERE diagnostician_id = ? AND day_of_week = ?",
+            (diagnostician_id, day_of_week),
+        ).fetchone()
+    return _row_to_dict(row)
 
 
 # ── Doctors ───────────────────────────────────────────────────────────────────

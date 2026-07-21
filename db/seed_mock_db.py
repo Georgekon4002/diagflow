@@ -1,8 +1,14 @@
 """
 DiagFlow — Mock Slis DB Seeder
 ==============================
-Reads data.xlsx and exam_codes.xlsx from the db/ folder and
+Reads docs/init_data.xlsx and db/exam_codes.xlsx and
 populates db/mock_slis.db (SQLite) using the schema in init.sql.
+
+The init_data.xlsx contains real exam data.  This seeder
+remaps all visitdates to the last 5 days (today through 4 days ago)
+so the app's "3-day window" filter will return meaningful data.
+Most rows have their diagnostician deliberately cleared so
+the Pending tab has data to work with.
 
 Usage:
     python db/seed_mock_db.py
@@ -11,18 +17,18 @@ Run from the project root (the diagflow/ workspace folder).
 Re-running is safe — it drops and re-creates the tables each time.
 """
 
-import os
 import sqlite3
 import sys
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 # ── Locate files relative to this script ──────────────────────────
 SCRIPT_DIR   = Path(__file__).parent
+PROJECT_ROOT = SCRIPT_DIR.parent
 DB_PATH      = SCRIPT_DIR / "mock_slis.db"
 INIT_SQL     = SCRIPT_DIR / "init.sql"
-DATA_XLSX    = SCRIPT_DIR / "data.xlsx"
-CODES_XLSX   = SCRIPT_DIR / "exam_codes.xlsx"
+DATA_XLSX    = PROJECT_ROOT / "docs" / "init_data.xlsx"   # initial exam data
+CODES_XLSX   = PROJECT_ROOT / "docs" / "exam_codes.xlsx"  # exam category codes
 
 try:
     import openpyxl
@@ -88,6 +94,38 @@ def load_exam_categories(path: Path) -> dict[int, tuple[str, str]]:
     return result
 
 
+# ── Date remapping logic ───────────────────────────────────────────
+def build_date_remap(source_dates: list) -> dict:
+    """
+    Maps the unique source visitdates to the last 5 days relative to today.
+
+    Strategy:
+      - Collect distinct source dates (oldest first)
+      - Assign them to target dates: today, today-1, today-2, today-3, today-4
+      - If there are more source dates than 5, cycle through the target dates
+      - Result: ~all exams spread across the last 5 days
+    """
+    today = date.today()
+    # Target dates: last 5 days, most recent first
+    target_dates = [(today - timedelta(days=i)).isoformat() for i in range(5)]
+
+    # Gather and sort unique source dates
+    unique_src = sorted({d for d in source_dates if d}, reverse=True)  # newest first
+
+    remap: dict[str, str] = {}
+    for i, src in enumerate(unique_src):
+        remap[src] = target_dates[i % len(target_dates)]
+
+    # Print summary
+    from collections import Counter
+    tgt_counts = Counter(remap.values())
+    print("  Date remap targets:")
+    for d, n in sorted(tgt_counts.items(), reverse=True):
+        print(f"    {d}: {n} source date(s) -> this target")
+
+    return remap
+
+
 # ── Seed the database ─────────────────────────────────────────────
 def seed(db_path: Path, init_sql: Path, data_xlsx: Path, codes_xlsx: Path):
     print(f"Seeding {db_path} ...")
@@ -124,7 +162,7 @@ def seed(db_path: Path, init_sql: Path, data_xlsx: Path, codes_xlsx: Path):
             oldpers         INTEGER,
             olddiagnostis   TEXT,
             aa              INTEGER,
-            extracode       INTEGER PRIMARY KEY,
+            extracode       INTEGER,          -- Order ID; NOT unique per exam
             visitid         INTEGER,
             demogid         INTEGER,
             fname           TEXT,
@@ -143,13 +181,15 @@ def seed(db_path: Path, init_sql: Path, data_xlsx: Path, codes_xlsx: Path):
             code            TEXT,
             name            TEXT,
             notes           TEXT,
-            exammoreid      INTEGER,
+            exammoreid      INTEGER PRIMARY KEY,  -- Unique exam instance ID (TRUE PK)
             category        TEXT,
+            slis_synced_at  TEXT DEFAULT NULL,
             FOREIGN KEY (examnumcode) REFERENCES exam_categories (examnumcode)
         );
 
         CREATE INDEX IF NOT EXISTS idx_slis_exams_diagnostis  ON slis_exams (diagnostis);
         CREATE INDEX IF NOT EXISTS idx_slis_exams_visitdate    ON slis_exams (visitdate);
+        CREATE INDEX IF NOT EXISTS idx_slis_exams_extracode    ON slis_exams (extracode);
         CREATE INDEX IF NOT EXISTS idx_slis_exams_examnumcode  ON slis_exams (examnumcode);
     """)
 
@@ -166,11 +206,41 @@ def seed(db_path: Path, init_sql: Path, data_xlsx: Path, codes_xlsx: Path):
     con.commit()
     print(f"  >> {len(cat_rows)} category rows inserted")
 
-    # Load and insert slis_exams
-    print("Loading data.xlsx ...")
+    # Load and process slis_exams from init_data.xlsx
+    print(f"Loading {data_xlsx} ...")
     wb = openpyxl.load_workbook(data_xlsx)
     ws = wb.active
     headers = [cell.value for cell in ws[1]]
+
+    # ── Pass 1: collect all raw rows and original visitdates ──────
+    raw_rows = []
+    for row in ws.iter_rows(min_row=2, values_only=True):
+        d = dict(zip(headers, row))
+        extracode = _int_or_none(d.get("EXTRACODE"))
+        if extracode is None:
+            continue
+        raw_rows.append(d)
+
+    print(f"  Loaded {len(raw_rows)} rows from xlsx")
+
+    # ── Build date remap ──────────────────────────────────────────
+    source_dates = [_iso_date(d.get("VISITDATE")) for d in raw_rows]
+    date_remap = build_date_remap(source_dates)
+
+    # ── Pass 2: build insert rows with remapped dates ─────────────
+    today = date.today()
+    cutoff = (today - timedelta(days=3)).isoformat()
+
+    # We want most rows (70%) to fall in the last 3 days (cutoff <= date <= today)
+    # and some (30%) in days 4-5 to test the expiry window.
+    # The date_remap already cycles through all 5 days, so just mark which ones
+    # to keep their original diagnostician and which to clear.
+    #
+    # Rule:
+    #   - If remapped date < cutoff (day 4 or 5): keep original diagnostician
+    #     (these simulate "older" exams that were already assigned before the window)
+    #   - If remapped date >= cutoff (last 3 days): clear diagnostician for ~85% of rows
+    #     (these are the fresh unassigned ones the app should process)
 
     insert_sql = """
         INSERT OR REPLACE INTO slis_exams (
@@ -181,7 +251,7 @@ def seed(db_path: Path, init_sql: Path, data_xlsx: Path, codes_xlsx: Path):
             visitdate, labcodeid, laboratoryname,
             wardid, wcode, wname,
             diagnostis, personelid, code, name,
-            notes, exammoreid, category
+            notes, exammoreid, category, slis_synced_at
         ) VALUES (
             ?, ?, ?, ?, ?,
             ?, ?, ?, ?,
@@ -190,22 +260,16 @@ def seed(db_path: Path, init_sql: Path, data_xlsx: Path, codes_xlsx: Path):
             ?, ?, ?,
             ?, ?, ?,
             ?, ?, ?, ?,
-            ?, ?, ?
+            ?, ?, ?, NULL
         )
     """
 
-    rows_inserted = 0
-    skipped = 0
     exam_rows = []
+    kept_assigned = 0
+    cleared = 0
 
-    for row in ws.iter_rows(min_row=2, values_only=True):
-        d = dict(zip(headers, row))
-
-        extracode = _int_or_none(d.get("EXTRACODE"))
-        if extracode is None:
-            skipped += 1
-            continue
-
+    for i, d in enumerate(raw_rows):
+        extracode   = _int_or_none(d.get("EXTRACODE"))
         examnumcode = _int_or_none(d.get("EXAMNUMCODE"))
 
         # Derive category from exam_codes.xlsx, fall back to CATEGORY column
@@ -233,8 +297,31 @@ def seed(db_path: Path, init_sql: Path, data_xlsx: Path, codes_xlsx: Path):
             if iso and iso != "1900-01-01":
                 oldorder = iso
 
-        # diagnostis: NULL in xlsx means unassigned
-        diagnostis = _int_or_none(d.get("DIAGNOSTIS"))
+        # Remap visitdate to last 5 days
+        original_visitdate = _iso_date(d.get("VISITDATE"))
+        visitdate = date_remap.get(original_visitdate, today.isoformat())
+
+        # Decide whether to keep or clear the diagnostician
+        original_diagnostis = _int_or_none(d.get("DIAGNOSTIS"))
+        if visitdate < cutoff:
+            # Older than 3 days — keep original diagnostician (simulate old assigned)
+            diagnostis  = original_diagnostis
+            diag_code   = _str_or_none(d.get("CODE"))
+            diag_name   = _str_or_none(d.get("NAME"))
+            kept_assigned += 1
+        else:
+            # Within last 3 days — clear diagnostician for 85% of rows
+            # Keep assigned for only 15% (every ~7th row that had one)
+            if original_diagnostis and (i % 7 == 0):
+                diagnostis = original_diagnostis
+                diag_code  = _str_or_none(d.get("CODE"))
+                diag_name  = _str_or_none(d.get("NAME"))
+                kept_assigned += 1
+            else:
+                diagnostis = None
+                diag_code  = None
+                diag_name  = None
+                cleared += 1
 
         exam_rows.append((
             _int_or_none(d.get("OLDEXAM")),
@@ -255,7 +342,7 @@ def seed(db_path: Path, init_sql: Path, data_xlsx: Path, codes_xlsx: Path):
             examnumcode,
             _str_or_none(d.get("EXAMNAME")),
 
-            _iso_date(d.get("VISITDATE")),
+            visitdate,
             _int_or_none(d.get("LABCODEID")),
             _str_or_none(d.get("LABORATORYNAME")),
 
@@ -265,8 +352,8 @@ def seed(db_path: Path, init_sql: Path, data_xlsx: Path, codes_xlsx: Path):
 
             diagnostis,
             _int_or_none(d.get("PERSONELID")),
-            _str_or_none(d.get("CODE")),
-            _str_or_none(d.get("NAME")),
+            diag_code,
+            diag_name,
 
             _str_or_none(d.get("NOTES")),
             _int_or_none(d.get("EXAMMOREID")),
@@ -278,7 +365,7 @@ def seed(db_path: Path, init_sql: Path, data_xlsx: Path, codes_xlsx: Path):
 
     cur.execute("SELECT COUNT(*) FROM slis_exams")
     rows_inserted = cur.fetchone()[0]
-    print(f"  >> {rows_inserted} unique exam rows in DB  ({skipped} skipped, {len(exam_rows) - rows_inserted} dupes collapsed)")
+    print(f"  >> {rows_inserted} unique exam rows in DB")
 
     # Summary
     cur.execute("SELECT COUNT(*) FROM slis_exams WHERE diagnostis IS NULL")
@@ -287,13 +374,19 @@ def seed(db_path: Path, init_sql: Path, data_xlsx: Path, codes_xlsx: Path):
     assigned = cur.fetchone()[0]
     cur.execute("SELECT category, COUNT(*) FROM slis_exams GROUP BY category ORDER BY category")
     by_cat = cur.fetchall()
+    cur.execute("SELECT visitdate, COUNT(*) FROM slis_exams GROUP BY visitdate ORDER BY visitdate DESC")
+    by_date = cur.fetchall()
 
     print()
     print("-- Summary ------------------------------------------")
     print(f"  Total exams   : {rows_inserted}")
-    print(f"  Pending       : {pending}")
-    print(f"  Assigned      : {assigned}")
+    print(f"  Pending       : {pending}  (diagnostician cleared)")
+    print(f"  Kept assigned : {kept_assigned}  (older or sampled rows)")
     print(f"  By category   : {dict(by_cat)}")
+    print(f"  By date       :")
+    for d, c in by_date:
+        marker = " <-- within 3-day window" if d and d >= cutoff else " <-- older (4-5 days)"
+        print(f"    {d}: {c} exams{marker}")
     print(f"  DB written to : {db_path.resolve()}")
     print("-----------------------------------------------------")
 

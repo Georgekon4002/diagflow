@@ -65,6 +65,7 @@ async function loadAll() {
         loadDoctors(),
         loadSkills(),
         loadAvailability(),
+        loadWeeklySchedules(),
         loadOncall(),
     ]);
 }
@@ -87,6 +88,8 @@ async function loadExamCategories() {
 //  API Call Helper
 // ══════════════════════════════════════════════
 
+let isLoggedOut = false;
+
 async function apiCall(endpoint, method = 'GET', body = null) {
     const options = {
         method,
@@ -100,8 +103,11 @@ async function apiCall(endpoint, method = 'GET', body = null) {
     try {
         const response = await fetch(`${API_BASE}${endpoint}`, options);
         if (response.status === 403) {
-            showToast('Η σύνδεση έχει λήξει. Παρακαλώ συνδεθείτε ξανά.', 'error');
-            setTimeout(() => window.location.href = 'index.html', 2000);
+            if (!isLoggedOut) {
+                isLoggedOut = true;
+                showToast('Η σύνδεση έχει λήξει. Παρακαλώ συνδεθείτε ξανά.', 'error');
+                setTimeout(() => window.location.href = 'index.html', 2000);
+            }
             return null;
         }
         if (!response.ok) {
@@ -160,11 +166,19 @@ function adminLogout() {
 //  Load Functions
 // ══════════════════════════════════════════════
 
+let weeklySchedules = [];
+
 async function loadDiagnosticians() {
     const data = await apiCall('/admin/diagnosticians');
     diagnosticians = data || getMockDiagnosticians();
     renderDiagnosticians();
     populateDiagnosticianSelects();
+}
+
+async function loadWeeklySchedules() {
+    const data = await apiCall('/admin/weekly-schedules');
+    weeklySchedules = data || [];
+    renderTodayOffSchedules();
 }
 
 async function loadPartnerships() {
@@ -236,7 +250,7 @@ async function loadOncall() {
 }
 
 function populateDiagnosticianSelects() {
-    const selects = ['oncall-diag-select', 'avail-diag', 'skill-diag', 'part-diag'];
+    const selects = ['oncall-diag-select', 'avail-diag', 'skill-diag', 'part-diag', 'schedule-diag'];
     selects.forEach(id => {
         const sel = document.getElementById(id);
         if (!sel) return;
@@ -286,6 +300,16 @@ function renderDiagnosticians() {
                 </div>
             </td>
             <td>
+                <select class="form-input filter-select" style="width:120px;padding:4px;font-size:12px;" onchange="updatePreferredLab(${d.id}, this.value)">
+                    <option value="" ${!d.preferred_lab_id ? 'selected' : ''}>Κανένα</option>
+                    <option value="1" ${d.preferred_lab_id === 1 ? 'selected' : ''}>ΚΟΛΙΑΤΣΟΥ (1)</option>
+                    <option value="5" ${d.preferred_lab_id === 5 ? 'selected' : ''}>ΣΕΠΟΛΙΑ (5)</option>
+                    <option value="6" ${d.preferred_lab_id === 6 ? 'selected' : ''}>ΑΝΩ ΠΑΤΗΣΙΑ (6)</option>
+                    <option value="7" ${d.preferred_lab_id === 7 ? 'selected' : ''}>ΙΛΙΟΝ (7)</option>
+                    <option value="8" ${d.preferred_lab_id === 8 ? 'selected' : ''}>ΧΑΛΚΙΔΟΣ (8)</option>
+                </select>
+            </td>
+            <td>
                 <button class="btn btn-sm" style="background-color: ${d.active ? '#ef4444' : '#22c55e'}; color:white; border:none;" onclick="toggleDiagActive(${d.id}, ${!d.active})">
                     ${d.active ? 'Απενεργοποίηση' : 'Ενεργοποίηση'}
                 </button>
@@ -312,13 +336,18 @@ async function toggleDiagMRI(id, newCanMRI) {
 
 function renderAvailability() {
     const tbody = document.getElementById('avail-tbody');
-    if (!availability.length) {
-        tbody.innerHTML = '<tr><td colspan="4" style="color:var(--text-tertiary);text-align:center;padding:20px;">Καμία καταγεγραμμένη αποχή</td></tr>';
+    
+    // Filter only today and future dates
+    const todayStr = new Date().toISOString().split('T')[0];
+    const filteredAvailability = availability.filter(a => a.date >= todayStr);
+
+    if (!filteredAvailability.length) {
+        tbody.innerHTML = '<tr><td colspan="4" style="color:var(--text-tertiary);text-align:center;padding:20px;">Καμία καταγεγραμμένη άδεια</td></tr>';
         return;
     }
     const statusLabel = { available: 'Διαθέσιμος/η', on_leave: 'Άδεια', half_day: 'Μισή Μέρα' };
     const statusClass = { available: 'active', on_leave: 'on-leave', half_day: 'inactive' };
-    tbody.innerHTML = availability.map(a => `
+    tbody.innerHTML = filteredAvailability.map(a => `
         <tr>
             <td style="font-weight:500;">${a.diagnostician_name}</td>
             <td class="date-cell">${formatDate(a.date)}</td>
@@ -326,6 +355,31 @@ function renderAvailability() {
             <td style="color:var(--text-tertiary);">${a.notes || '—'}</td>
         </tr>
     `).join('');
+}
+
+function renderTodayOffSchedules() {
+    const tbody = document.getElementById('today-off-tbody');
+    const todayWeekday = new Date().getDay(); // 0 is Sunday, 1 is Monday... wait JS getDay() is Sunday=0, Monday=1
+    // Python weekday: Monday=0, Sunday=6
+    // We map JS getDay() to Python weekday
+    const pyWeekday = todayWeekday === 0 ? 6 : todayWeekday - 1;
+
+    const offToday = weeklySchedules.filter(s => s.day_of_week === pyWeekday && s.is_off);
+    
+    if (!offToday.length) {
+        tbody.innerHTML = '<tr><td colspan="2" style="color:var(--text-tertiary);text-align:center;padding:20px;">Κανένα σταθερό ρεπό για σήμερα</td></tr>';
+        return;
+    }
+    
+    tbody.innerHTML = offToday.map(s => {
+        const diag = diagnosticians.find(d => d.id === s.diagnostician_id);
+        return `
+            <tr>
+                <td style="font-weight:500;">${diag ? diag.name : 'Άγνωστος'}</td>
+                <td><span class="status-badge on-leave">Ρεπό</span></td>
+            </tr>
+        `;
+    }).join('');
 }
 
 function renderSkills() {
@@ -397,26 +451,83 @@ function toggleSkillsRow(diagId) {
     }
 }
 
+function togglePartnershipsRow(diagId) {
+    const rows = document.querySelectorAll('.part-row-' + diagId);
+    const icon = document.getElementById('part-icon-' + diagId);
+    let isHidden = false;
+    rows.forEach(r => {
+        if (r.style.display === 'none') {
+            r.style.display = 'table-row';
+            isHidden = true;
+        } else {
+            r.style.display = 'none';
+        }
+    });
+    if (icon) {
+        icon.style.transform = isHidden ? 'rotate(90deg)' : 'rotate(0deg)';
+    }
+}
+
 function renderPartnerships() {
     const tbody = document.getElementById('part-tbody');
     if (!partnerships.length) {
         tbody.innerHTML = '<tr><td colspan="5" style="color:var(--text-tertiary);text-align:center;padding:20px;">Δεν υπάρχουν συνεργασίες</td></tr>';
         return;
     }
-    tbody.innerHTML = partnerships.map(p => `
-        <tr>
-            <td style="font-weight:500;">${p.issuing_doctor_name} <span style="color:var(--text-tertiary);font-size:11px;">(${p.issuing_doctor_id})</span></td>
-            <td style="color:var(--accent-primary);font-weight:600;">${p.preferred_diagnostician_name}</td>
-            <td>
-                ${p.exclusive
-            ? '<span class="exclusive-badge">⚡ Αποκλειστική</span>'
-            : '<span style="color:var(--text-tertiary);font-size:var(--font-size-xs);">—</span>'}
-            </td>
-            <td>
-                <button class="btn btn-secondary btn-sm" style="color:var(--accent-danger);" onclick="deletePartnership(${p.id})">Διαγραφή</button>
-            </td>
-        </tr>
-    `).join('');
+
+    // Group by diagnostician
+    const grouped = {};
+    partnerships.forEach(p => {
+        if (!grouped[p.preferred_diagnostician_name]) grouped[p.preferred_diagnostician_name] = [];
+        grouped[p.preferred_diagnostician_name].push(p);
+    });
+
+    let html = '';
+    for (const [diagName, diagPartners] of Object.entries(grouped)) {
+        // Main collapsible row
+        const diagIdForCollapse = diagPartners[0].preferred_diagnostician_id || diagName.replace(/\s+/g, '');
+        html += `
+            <tr style="cursor:pointer; background:var(--surface-color); border-bottom:1px solid var(--border-color);" onclick="togglePartnershipsRow('${diagIdForCollapse}')">
+                <td colspan="5" style="font-weight:600; padding:12px;">
+                    <span id="part-icon-${diagIdForCollapse}" style="display:inline-block; width:20px; transition:transform 0.2s;">▶</span> 
+                    <span style="color:var(--accent-primary);">${diagName}</span> <span style="color:var(--text-tertiary); font-weight:normal; font-size:13px;">(${diagPartners.length} συνεργασίες)</span>
+                </td>
+            </tr>
+        `;
+        
+        // Sort: active first, then inactive, then alphabetically by issuing doctor name
+        diagPartners.sort((a, b) => {
+            const aActive = a.is_active === undefined ? 1 : a.is_active;
+            const bActive = b.is_active === undefined ? 1 : b.is_active;
+            if (aActive !== bActive) return bActive - aActive;
+            return a.issuing_doctor_name.localeCompare(b.issuing_doctor_name, 'el');
+        });
+        
+        // Children rows
+        diagPartners.forEach(p => {
+            const isActive = p.is_active === undefined ? true : Boolean(p.is_active);
+            const isExclusive = Boolean(p.exclusive);
+            
+            html += `<tr class="part-row-${diagIdForCollapse}" style="display:none; background:#fafafa;">
+                <td style="padding-left:32px;"></td>
+                <td style="font-weight:500;">${p.issuing_doctor_name} <span style="color:var(--text-tertiary);font-size:11px;">(${p.issuing_doctor_id})</span></td>
+                <td>
+                    <button class="btn btn-sm ${isActive ? 'btn-primary' : 'btn-secondary'}" onclick="togglePartnershipProperty(${p.id}, 'is_active', ${!isActive})" style="padding:4px 8px; font-size:12px;">
+                        ${isActive ? 'Ενεργή' : 'Ανενεργή'}
+                    </button>
+                </td>
+                <td>
+                    <button class="btn btn-sm ${isExclusive ? 'btn-primary' : 'btn-secondary'}" onclick="togglePartnershipProperty(${p.id}, 'exclusive', ${!isExclusive})" style="padding:4px 8px; font-size:12px;">
+                        ${isExclusive ? '⚡ Αποκλειστική' : 'Όχι'}
+                    </button>
+                </td>
+                <td>
+                    <button class="btn btn-secondary btn-sm" style="color:var(--accent-danger);" onclick="deletePartnership(${p.id})">Διαγραφή</button>
+                </td>
+            </tr>`;
+        });
+    }
+    tbody.innerHTML = html;
 }
 
 function renderDoctors() {
@@ -532,7 +643,38 @@ async function setAvailability() {
     }
 
     renderAvailability();
-    showToast(`✅ Αποχή καταγράφηκε: ${diagName}`, 'success');
+    showToast(`✅ Άδεια καταγράφηκε: ${diagName}`, 'success');
+}
+
+async function updatePreferredLab(id, val) {
+    const d = diagnosticians.find(x => x.id === id);
+    if (!d) return;
+    d.preferred_lab_id = val ? parseInt(val) : null;
+
+    try {
+        await apiCall(`/admin/diagnosticians/${id}`, 'PUT', d);
+    } catch { /* mock mode */ }
+
+    showToast(`✅ Προτίμηση εργαστηρίου ενημερώθηκε: ${d.name}`, 'success');
+}
+
+async function setWeeklySchedule() {
+    const selEl = document.getElementById('schedule-diag');
+    const diagId = parseInt(selEl.value);
+    const dayOfWeek = parseInt(document.getElementById('schedule-day').value);
+    const isOff = document.getElementById('schedule-is-off').checked;
+
+    if (!diagId) { showToast('Επιλέξτε διαγνώστη', 'warning'); return; }
+
+    const record = { diagnostician_id: diagId, day_of_week: dayOfWeek, is_off: isOff };
+
+    try {
+        await apiCall('/admin/weekly-schedules', 'POST', record);
+        showToast('✅ Το εβδομαδιαίο πρόγραμμα ενημερώθηκε', 'success');
+        await loadWeeklySchedules();
+    } catch {
+        showToast('Σφάλμα κατά την ενημέρωση του προγράμματος', 'error');
+    }
 }
 
 async function setSkill() {
@@ -622,14 +764,37 @@ async function addPartnership() {
 }
 
 async function deletePartnership(id) {
+    if (!confirm('Διαγραφή συνεργασίας;')) return;
     try {
         await apiCall(`/admin/partnerships/${id}`, 'DELETE');
-    } catch { /* mock mode */ }
-    partnerships = partnerships.filter(p => p.id !== id);
-    renderPartnerships();
-    showToast('Η συνεργασία διαγράφηκε', 'info');
+        showToast('Η συνεργασία διαγράφηκε', 'success');
+        await loadData();
+    } catch (err) {
+        // mock fallback
+        partnerships = partnerships.filter(p => p.id !== id);
+        renderPartnerships();
+        showToast('Η συνεργασία διαγράφηκε (Mock)', 'success');
+    }
 }
 
+async function togglePartnershipProperty(id, property, newValue) {
+    try {
+        const payload = {};
+        payload[property] = newValue;
+        await apiCall(`/admin/partnerships/${id}`, 'PATCH', payload);
+        const propName = property === 'is_active' ? 'Η κατάσταση' : 'Η αποκλειστικότητα';
+        showToast(`${propName} της συνεργασίας ενημερώθηκε`, 'success');
+        await loadData();
+    } catch (err) {
+        // mock fallback
+        const p = partnerships.find(x => x.id === id);
+        if (p) {
+            p[property] = newValue;
+        }
+        renderPartnerships();
+        showToast(`Ενημερώθηκε (Mock)`, 'success');
+    }
+}
 async function addDoctor() {
     const name = document.getElementById('new-doc-name').value.trim();
 

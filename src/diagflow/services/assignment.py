@@ -40,7 +40,9 @@ def _row_to_exam_dict(row: sqlite3.Row) -> dict:
     """
     return {
         # ── Identifiers ──
-        "exam_id":        str(row["extracode"]),
+        # exam_id is exammoreid (globally unique per exam instance).
+        # extracode is the order ID — one order can contain multiple exams.
+        "exam_id":        str(row["exammoreid"]),
         "extracode":      row["extracode"],
         "visitid":        row["visitid"],
         "exammoreid":     row["exammoreid"],
@@ -89,6 +91,11 @@ def _row_to_exam_dict(row: sqlite3.Row) -> dict:
         "oldorder":       row["oldorder"] or "",
         "olddiagnostis":  row["olddiagnostis"] or "",
         "oldpers":        row["oldpers"],
+
+        # ── Slis sync tracking ──
+        # None = assigned locally but NOT yet pushed to Slis
+        # value = ISO timestamp of the push (row will expire on next pull)
+        "slis_synced_at": row["slis_synced_at"] if "slis_synced_at" in row.keys() else None,
 
         # ── Extras ──
         "suggestion":     None,
@@ -174,7 +181,7 @@ class AssignmentService:
                 d_info = cfg_db.get_diagnostician(diagnostician_id)
                 d_name = d_info["name"] if d_info else None
                 con.execute(
-                    "UPDATE slis_exams SET diagnostis = ?, code = ? WHERE extracode = ?",
+                    "UPDATE slis_exams SET diagnostis = ?, code = ? WHERE exammoreid = ?",
                     (diagnostician_id, d_name, int(exam_id)),
                 )
                 con.commit()
@@ -227,7 +234,7 @@ class AssignmentService:
                 d_info = cfg_db.get_diagnostician(override_diagnostician_id)
                 d_name = d_info["name"] if d_info else None
                 con.execute(
-                    "UPDATE slis_exams SET diagnostis = ?, code = ? WHERE extracode = ?",
+                    "UPDATE slis_exams SET diagnostis = ?, code = ? WHERE exammoreid = ?",
                     (override_diagnostician_id, d_name, int(exam_id)),
                 )
                 con.commit()
@@ -259,13 +266,20 @@ def _get_pending_exams_from_db() -> list[dict]:
 
 
 def _get_assigned_exams_from_db() -> list[dict]:
-    """Fetch assigned exams from the SQLite mock DB."""
+    """
+    Fetch assigned exams that have NOT yet been pushed to Slis.
+
+    Only rows where slis_synced_at IS NULL are returned — once an exam
+    is pushed to Slis its slis_synced_at is set and it disappears from
+    the Assigned tab.
+    """
     try:
         con = _get_mock_db()
         cur = con.execute(
             """
             SELECT * FROM slis_exams
             WHERE diagnostis IS NOT NULL
+              AND slis_synced_at IS NULL
             ORDER BY visitdate DESC, extracode ASC
             """
         )
@@ -276,7 +290,6 @@ def _get_assigned_exams_from_db() -> list[dict]:
     except Exception as e:
         logger.error("mock_db_read_failed", error=str(e))
         return []
-
 
 def _get_exam_categories_from_db() -> list[dict]:
     """Fetch exam categories from the SQLite mock DB."""

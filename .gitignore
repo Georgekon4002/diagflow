@@ -33,3 +33,6 @@ Desktop.ini
 ## Logs
 *.log
 logs/
+
+##Scratch
+scratch*

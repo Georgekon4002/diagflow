@@ -39,9 +39,9 @@ CREATE TABLE IF NOT EXISTS slis_exams (
     olddiagnostis   TEXT,           -- Diagnostician name from last same-type visit
 
     -- ── Visit identifiers ──
-    aa              INTEGER,        -- Sequential number (omittable)
-    extracode       INTEGER PRIMARY KEY,  -- Unique order code shown to secretariat
-    visitid         INTEGER,        -- Visit ID (omittable; extracode is the key)
+    aa              INTEGER,        -- Sequential number
+    extracode       INTEGER,        -- Order code (NOT unique per exam — one order can have many exams)
+    visitid         INTEGER,        -- Visit ID
     demogid         INTEGER,        -- Patient's demographic/ID number
 
     -- ── Patient ──
@@ -74,17 +74,26 @@ CREATE TABLE IF NOT EXISTS slis_exams (
     -- Empty/null is stored as ' *  * ' (two spaces between asterisks)
     notes           TEXT,
 
-    -- ── Unique exam instance ──
-    exammoreid      INTEGER,        -- Globally-unique exam instance ID
+    -- ── Unique exam instance (TRUE PRIMARY KEY) ──
+    -- One order (extracode) can contain multiple exams; exammoreid
+    -- is the globally-unique ID for each individual exam instance.
+    exammoreid      INTEGER PRIMARY KEY,
 
     -- ── Category (derived from exam_categories, not from xlsx CATEGORY column) ──
     -- 'CT' | 'MRI' | 'MRA'
     category        TEXT,
 
+    -- ── Slis sync tracking ──
+    -- NULL  = exam is assigned locally but NOT yet pushed to the real Slis DB
+    -- value = ISO-8601 timestamp of when the Slis update was confirmed
+    --         (exam will be removed from the app DB on the next pull cycle)
+    slis_synced_at  TEXT DEFAULT NULL,
+
     FOREIGN KEY (examnumcode) REFERENCES exam_categories (examnumcode)
 );
 
--- Index to speed up the most common query (pending = diagnostis IS NULL)
-CREATE INDEX IF NOT EXISTS idx_slis_exams_diagnostis ON slis_exams (diagnostis);
-CREATE INDEX IF NOT EXISTS idx_slis_exams_visitdate   ON slis_exams (visitdate);
-CREATE INDEX IF NOT EXISTS idx_slis_exams_examnumcode ON slis_exams (examnumcode);
+-- Index to speed up the most common queries
+CREATE INDEX IF NOT EXISTS idx_slis_exams_diagnostis  ON slis_exams (diagnostis);
+CREATE INDEX IF NOT EXISTS idx_slis_exams_visitdate    ON slis_exams (visitdate);
+CREATE INDEX IF NOT EXISTS idx_slis_exams_extracode    ON slis_exams (extracode);  -- order ID lookup
+CREATE INDEX IF NOT EXISTS idx_slis_exams_examnumcode  ON slis_exams (examnumcode);

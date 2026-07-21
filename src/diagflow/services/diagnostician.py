@@ -54,8 +54,18 @@ class DiagnosticianService:
         # Load partnerships for this issuing doctor
         partnerships = cfg_db.get_partnerships_by_doctor(issuing_doctor_id)
         partnership_map: dict[int, dict] = {
-            p["preferred_diagnostician_id"]: p for p in partnerships
+            p["preferred_diagnostician_id"]: p for p in partnerships if p.get("is_active", 1) == 1
         }
+
+        # Load weekly schedules
+        all_schedules = cfg_db.get_all_weekly_schedules()
+        schedule_map = {}
+        for s in all_schedules:
+            diag_id = s["diagnostician_id"]
+            if diag_id not in schedule_map:
+                schedule_map[diag_id] = set()
+            if s["is_off"]:
+                schedule_map[diag_id].add(s["day_of_week"])
 
         candidates = []
 
@@ -89,42 +99,22 @@ class DiagnosticianService:
             daily_quota = int(diag["daily_quota"])
             accepts_lab = True
 
-            # --- CUSTOM BUSINESS RULES ---
+            # Check weekly schedules
             today_date = date.today()
             weekday = today_date.weekday() # 0 = Monday, 6 = Sunday
-
-            # Παπαδάκης (269) rules
-            if diag_id == 269:
-                if weekday in [3, 4, 6]: # Thu, Fri, Sun
-                    is_available = False
-                elif weekday == 5: # Sat
-                    daily_quota = 50
-                else: # Mon, Tue, Wed
-                    daily_quota = 15
-
-            # Μαντζουράνης (79) rules
-            if diag_id == 79 and weekday == 0: # Mon
+            
+            if diag_id in schedule_map and weekday in schedule_map[diag_id]:
                 is_available = False
 
-            # Ανδριώτης (205) rules
-            if diag_id == 205 and weekday in [3, 4]: # Thu, Fri
-                is_available = False
-
-            # Κυπριώτης (89) rules
-            if diag_id == 89:
-                if modality.upper() == "CT":
-                    daily_quota = 20
-                elif modality.upper() == "MRI":
-                    daily_quota = 2
-                
-                if "Χαλκίδ" not in lab_name:
-                    accepts_lab = False
-
-            # Νικολακόπουλος (74) rules
-            if diag_id == 74:
-                if "Σεπόλ" not in lab_name:
-                    accepts_lab = False
-            # ------------------------------
+            # Check lab preference
+            # Note: Lab preference gives a score boost, it does NOT exclude other labs.
+            # However, accepts_lab is currently used for hard/soft filtering.
+            # We set accepts_lab=False ONLY if there is a preferred_lab_id AND it doesn't match the current lab_id.
+            # Actually, the user says: "These diagnosticians don't accept ONLY from these labs. They simply have a preference towards these labs".
+            # This means accepts_lab should ALWAYS be True! 
+            # The scoring boost will be handled separately in scoring.py.
+            accepts_lab = True
+            preferred_lab_id = str(diag.get("preferred_lab_id") or "")
 
             # Partnership
             pship = partnership_map.get(diag_id)
@@ -154,6 +144,9 @@ class DiagnosticianService:
                 has_patient_history=has_history,
                 patient_history_count=history_count,
             )
+            # Monkey-patch preferred_lab_id onto the candidate object to be used by scoring.py
+            setattr(candidate, "preferred_lab_id", preferred_lab_id)
+            
             candidates.append(candidate)
 
         logger.info(

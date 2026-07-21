@@ -3,13 +3,18 @@ DiagFlow — API Route Definitions
 
 REST endpoints for the secretariat review dashboard:
 - GET  /api/exams/pending         — List pending exams
-- GET  /api/exams/assigned        — List assigned exams (today)
+- GET  /api/exams/assigned        — List assigned exams (not yet synced to Slis)
 - POST /api/assignments/suggest   — Generate assignment suggestion
 - POST /api/assignments/confirm   — Confirm a suggestion
 - POST /api/assignments/override  — Override a suggestion
 - GET  /api/diagnosticians        — List all diagnosticians
 - GET  /api/pamakristos/oncall    — Get today's on-call
 - POST /api/pamakristos/oncall    — Set on-call manually
+
+Slis Sync endpoints:
+- POST /api/slis/pull             — Pull/refresh exam data from Slis (on-demand)
+- POST /api/slis/push-all         — Push ALL assigned-not-yet-synced exams to Slis
+- POST /api/slis/push-selected    — Push selected exams (by exammoreid list) to Slis
 
 Admin endpoints (backed by diagflow.db — persistent):
 - POST /api/admin/auth/login
@@ -366,6 +371,7 @@ class DiagnosticianCreateRequest(BaseModel):
     can_ct: bool = True
     can_mri: bool = True
     daily_quota: int = 15
+    preferred_lab_id: int | None = None
 
 
 @router.get("/admin/diagnosticians")
@@ -384,6 +390,7 @@ async def admin_create_diagnostician(
         can_ct=req.can_ct,
         can_mri=req.can_mri,
         daily_quota=req.daily_quota,
+        preferred_lab_id=req.preferred_lab_id,
     )
 
 
@@ -400,6 +407,7 @@ async def admin_update_diagnostician(
         can_ct=req.can_ct,
         can_mri=req.can_mri,
         daily_quota=req.daily_quota,
+        preferred_lab_id=req.preferred_lab_id,
     )
     if not record:
         raise HTTPException(status_code=404, detail="Ο ακτινοδιαγνώστης δεν βρέθηκε")
@@ -414,6 +422,31 @@ async def admin_delete_diagnostician(diag_id: int, _: str = Depends(_require_adm
 
 
 # ─────────────────────────────────────────────────────
+#  Admin — Weekly Schedules (diagflow.db — persistent)
+# ─────────────────────────────────────────────────────
+
+class WeeklyScheduleRequest(BaseModel):
+    diagnostician_id: int
+    day_of_week: int
+    is_off: bool
+
+@router.get("/admin/weekly-schedules")
+async def admin_list_weekly_schedules(_: str = Depends(_require_admin)):
+    return cfg_db.get_all_weekly_schedules()
+
+@router.post("/admin/weekly-schedules")
+async def admin_upsert_weekly_schedule(
+    req: WeeklyScheduleRequest,
+    _: str = Depends(_require_admin)
+):
+    return cfg_db.upsert_weekly_schedule(
+        diagnostician_id=req.diagnostician_id,
+        day_of_week=req.day_of_week,
+        is_off=req.is_off
+    )
+
+
+# ─────────────────────────────────────────────────────
 #  Admin — Partnerships  (diagflow.db — persistent)
 # ─────────────────────────────────────────────────────
 
@@ -423,6 +456,11 @@ class PartnershipCreateRequest(BaseModel):
     preferred_diagnostician_id: int
     priority: int = 1
     exclusive: bool = False
+    is_active: bool = True
+
+class PartnershipUpdateRequest(BaseModel):
+    exclusive: bool | None = None
+    is_active: bool | None = None
 
 
 @router.get("/admin/partnerships")
@@ -441,7 +479,24 @@ async def admin_create_partnership(
         preferred_diagnostician_id=req.preferred_diagnostician_id,
         priority=req.priority,
         exclusive=req.exclusive,
+        is_active=req.is_active,
     )
+
+
+@router.patch("/admin/partnerships/{part_id}")
+async def admin_update_partnership(
+    part_id: int,
+    req: PartnershipUpdateRequest,
+    _: str = Depends(_require_admin),
+):
+    record = cfg_db.update_partnership(
+        part_id=part_id,
+        exclusive=req.exclusive,
+        is_active=req.is_active,
+    )
+    if not record:
+        raise HTTPException(status_code=404, detail="Η σύμπραξη δεν βρέθηκε")
+    return record
 
 
 @router.delete("/admin/partnerships/{part_id}")
@@ -599,3 +654,51 @@ async def admin_set_oncall(
     )
     scheduler.set_manual_override_from_admin(record)
     return record
+
+
+# ─────────────────────────────────────────────────────
+#  Slis Sync Endpoints
+# ─────────────────────────────────────────────────────
+
+class PushSelectedRequest(BaseModel):
+    exammoreid_list: list[int]
+
+
+@router.post("/slis/pull")
+async def slis_pull():
+    """
+    Pull fresh exam data from Slis (or refresh the mock DB).
+    Runs automatically on startup; can also be triggered via the
+    'Ανανέωση' button on the frontend.
+    """
+    from diagflow.services.slis_sync import pull_from_slis
+    result = pull_from_slis()
+    return {
+        "status": "ok",
+        "pulled": result.get("pulled", 0),
+        "expired": result.get("expired", 0),
+        "total_pending": result.get("total_pending", 0),
+    }
+
+
+@router.post("/slis/push-all")
+async def slis_push_all():
+    """
+    Push ALL assigned-but-not-yet-synced exams to Slis in one operation.
+    After a successful push the exam's slis_synced_at is set and it will
+    be removed from the Assigned tab.
+    """
+    from diagflow.services.slis_sync import push_all_to_slis
+    result = push_all_to_slis()
+    return result
+
+
+@router.post("/slis/push-selected")
+async def slis_push_selected(req: PushSelectedRequest):
+    """
+    Push a specific list of exams (by exammoreid) to Slis.
+    Used when the user selects individual rows in the Assigned tab.
+    """
+    from diagflow.services.slis_sync import push_selected_to_slis
+    result = push_selected_to_slis(req.exammoreid_list)
+    return result
