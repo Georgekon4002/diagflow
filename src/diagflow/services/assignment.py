@@ -174,20 +174,13 @@ class AssignmentService:
         )
 
         # Update the SQLite mock DB so the assignment persists
-        if settings.use_mock_slis_db:
-            try:
-                con = _get_mock_db()
-                import diagflow.db.diagflow_db as cfg_db
-                d_info = cfg_db.get_diagnostician(diagnostician_id)
-                d_name = d_info["name"] if d_info else None
-                con.execute(
-                    "UPDATE slis_exams SET diagnostis = ?, code = ? WHERE exammoreid = ?",
-                    (diagnostician_id, d_name, int(exam_id)),
-                )
-                con.commit()
-                con.close()
-            except Exception as e:
-                logger.warning("mock_db_update_failed", error=str(e))
+        try:
+            import diagflow.db.diagflow_db as cfg_db
+            d_info = cfg_db.get_diagnostician(diagnostician_id)
+            d_name = d_info["name"] if d_info else ""
+            cfg_db.upsert_local_assignment(int(exam_id), diagnostician_id, d_name, datetime.now().isoformat())
+        except Exception as e:
+            logger.warning("local_assignment_update_failed", error=str(e))
 
         return log_entry
 
@@ -197,15 +190,13 @@ class AssignmentService:
         original_diagnostician_id: int,
         override_diagnostician_id: int,
         reason: str,
-        suggestion: AssignmentSuggestion,
+        suggestion: AssignmentSuggestion | None = None,
     ) -> dict:
         """
         Override the suggested assignment with a different diagnostician.
 
         This is the critical feedback signal — every override is logged
         for weight tuning and rule refinement.
-
-        TODO: Write to Slis DB and assignment_log when DB access is available.
         """
         log_entry = {
             "exam_id": exam_id,
@@ -213,8 +204,8 @@ class AssignmentService:
             "final_diagnostician_id": override_diagnostician_id,
             "was_overridden": True,
             "override_reason": reason,
-            "rules_fired": json.dumps(suggestion.rules_fired, ensure_ascii=False),
-            "score_breakdown": json.dumps(suggestion.score_breakdown, ensure_ascii=False),
+            "rules_fired": json.dumps(suggestion.rules_fired, ensure_ascii=False) if suggestion else "[]",
+            "score_breakdown": json.dumps(suggestion.score_breakdown, ensure_ascii=False) if suggestion else "[]",
             "decision_timestamp": datetime.now().isoformat(),
         }
 
@@ -226,37 +217,40 @@ class AssignmentService:
             reason=reason,
         )
 
-        # Update the SQLite mock DB
-        if settings.use_mock_slis_db:
-            try:
-                con = _get_mock_db()
-                import diagflow.db.diagflow_db as cfg_db
-                d_info = cfg_db.get_diagnostician(override_diagnostician_id)
-                d_name = d_info["name"] if d_info else None
-                con.execute(
-                    "UPDATE slis_exams SET diagnostis = ?, code = ? WHERE exammoreid = ?",
-                    (override_diagnostician_id, d_name, int(exam_id)),
-                )
-                con.commit()
-                con.close()
-            except Exception as e:
-                logger.warning("mock_db_update_failed", error=str(e))
+        # Update the local assignments DB
+        try:
+            import diagflow.db.diagflow_db as cfg_db
+            d_info = cfg_db.get_diagnostician(override_diagnostician_id)
+            d_name = d_info["name"] if d_info else ""
+            cfg_db.upsert_local_assignment(int(exam_id), override_diagnostician_id, d_name, datetime.now().isoformat())
+        except Exception as e:
+            logger.warning("local_assignment_update_failed", error=str(e))
 
         return log_entry
 
 
 def _get_pending_exams_from_db() -> list[dict]:
-    """Fetch pending exams from the SQLite mock DB."""
+    """Fetch pending exams from the SQLite mock DB (past 3 days, no diagnostician)."""
     try:
+        from datetime import date, timedelta
+        import diagflow.db.diagflow_db as cfg_db
+        local_assignments = cfg_db.get_all_local_assignments()
+        cutoff_date = (date.today() - timedelta(days=3)).isoformat()
+        
         con = _get_mock_db()
         cur = con.execute(
             """
             SELECT * FROM slis_exams
             WHERE diagnostis IS NULL
+              AND visitdate >= ?
             ORDER BY visitdate DESC, extracode ASC
-            """
+            """,
+            (cutoff_date,)
         )
-        rows = [_row_to_exam_dict(r) for r in cur.fetchall()]
+        rows = []
+        for r in cur.fetchall():
+            if int(r["exammoreid"]) not in local_assignments:
+                rows.append(_row_to_exam_dict(r))
         con.close()
         logger.info("pending_exams_loaded_from_db", count=len(rows))
         return rows
@@ -267,23 +261,33 @@ def _get_pending_exams_from_db() -> list[dict]:
 
 def _get_assigned_exams_from_db() -> list[dict]:
     """
-    Fetch assigned exams that have NOT yet been pushed to Slis.
-
-    Only rows where slis_synced_at IS NULL are returned — once an exam
-    is pushed to Slis its slis_synced_at is set and it disappears from
-    the Assigned tab.
+    Fetch exams that have been locally assigned but NOT yet pushed to Slis.
     """
     try:
+        import diagflow.db.diagflow_db as cfg_db
+        local_assignments = cfg_db.get_all_local_assignments()
+        if not local_assignments:
+            return []
+            
         con = _get_mock_db()
+        placeholders = ",".join("?" * len(local_assignments))
         cur = con.execute(
-            """
+            f"""
             SELECT * FROM slis_exams
-            WHERE diagnostis IS NOT NULL
-              AND slis_synced_at IS NULL
+            WHERE exammoreid IN ({placeholders})
             ORDER BY visitdate DESC, extracode ASC
-            """
+            """,
+            list(local_assignments.keys())
         )
-        rows = [_row_to_exam_dict(r) for r in cur.fetchall()]
+        rows = []
+        for r in cur.fetchall():
+            exam_dict = _row_to_exam_dict(r)
+            loc = local_assignments[int(exam_dict["exammoreid"])]
+            exam_dict["diagnostis"] = loc["diagnostician_id"]
+            exam_dict["code"] = loc["diagnostician_name"]
+            exam_dict["diagnostician_name"] = loc["diagnostician_name"]
+            exam_dict["status"] = "assigned"
+            rows.append(exam_dict)
         con.close()
         logger.info("assigned_exams_loaded_from_db", count=len(rows))
         return rows

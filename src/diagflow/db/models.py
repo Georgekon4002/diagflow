@@ -74,7 +74,14 @@ class DiagnosticianCapacity(Base):
     diagnostician_id: int = Column(
         Integer, ForeignKey("diagnosticians.id"), nullable=False, unique=True
     )
-    daily_hard_quota: int = Column(Integer, nullable=False, default=15)
+    daily_hard_quota: int = Column(Integer, nullable=False, default=15) # TODO: Migrate to 7 daily columns if ORM used
+    quota_monday: int = Column(Integer, nullable=False, default=15)
+    quota_tuesday: int = Column(Integer, nullable=False, default=15)
+    quota_wednesday: int = Column(Integer, nullable=False, default=15)
+    quota_thursday: int = Column(Integer, nullable=False, default=15)
+    quota_friday: int = Column(Integer, nullable=False, default=15)
+    quota_saturday: int = Column(Integer, nullable=False, default=0)
+    quota_sunday: int = Column(Integer, nullable=False, default=0)
 
     # Soft sub-caps — optional limits per body-part category
     # When a diagnostician hits these, they get a scoring penalty, not a hard stop

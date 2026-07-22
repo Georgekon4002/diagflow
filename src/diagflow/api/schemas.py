@@ -54,6 +54,13 @@ class SetOncallRequest(BaseModel):
 
     date: str = Field(..., description="Date in ISO format (YYYY-MM-DD)")
     diagnostician_id: int
+    quota_monday: int = 15
+    quota_tuesday: int = 15
+    quota_wednesday: int = 15
+    quota_thursday: int = 15
+    quota_friday: int = 15
+    quota_saturday: int = 0
+    quota_sunday: int = 0
 
 
 # ── Response schemas ──
@@ -123,7 +130,13 @@ class DiagnosticianResponse(BaseModel):
     name: str
     can_ct: bool
     can_mri: bool
-    daily_quota: int
+    quota_monday: int
+    quota_tuesday: int
+    quota_wednesday: int
+    quota_thursday: int
+    quota_friday: int
+    quota_saturday: int
+    quota_sunday: int
     current_day_count: int
     available: bool
 

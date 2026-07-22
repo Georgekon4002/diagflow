@@ -111,45 +111,10 @@
                 <!-- ════════════ SECTION: Διαγνώστες ════════════ -->
                 <div id="section-diagnosticians" class="admin-section" style="display:none;">
                     <div class="admin-card">
-                        <div class="admin-card-title">👨‍⚕️ Προσθήκη Νέου Διαγνώστη</div>
-                        <div class="admin-form">
-                            <div class="form-group" style="margin:0;">
-                                <label class="form-label">Ονοματεπώνυμο</label>
-                                <input type="text" id="new-diag-name" class="form-input"
-                                    placeholder="π.χ. ΓΕΩΡΓΙΟΥ ΓΕΩΡΓΙΟΣ">
-                            </div>
-                            <div class="form-group" style="margin:0;">
-                                <label class="form-label">Ημερήσια Χωρητικότητα</label>
-                                <input type="number" id="new-diag-quota" class="form-input" value="15" min="1" max="50">
-                            </div>
-                            <div class="form-group" style="margin:0;">
-                                <label class="form-label">Δεξιότητες</label>
-                                <div style="display:flex;gap:12px;padding:10px 0;">
-                                    <label
-                                        style="display:flex;align-items:center;gap:6px;font-size:var(--font-size-sm);cursor:pointer;">
-                                        <input type="checkbox" id="new-diag-ct" checked
-                                            style="accent-color:var(--accent-primary);"> CT
-                                    </label>
-                                    <label
-                                        style="display:flex;align-items:center;gap:6px;font-size:var(--font-size-sm);cursor:pointer;">
-                                        <input type="checkbox" id="new-diag-mri" checked
-                                            style="accent-color:var(--accent-primary);"> MRI
-                                    </label>
-                                    <label
-                                        style="display:flex;align-items:center;gap:6px;font-size:var(--font-size-sm);cursor:pointer;">
-                                        <input type="checkbox" id="new-diag-active" checked
-                                            style="accent-color:var(--accent-success);"> Ενεργός
-                                    </label>
-                                </div>
-                            </div>
-                            <div class="form-group admin-form-actions" style="margin:0;">
-                                <button class="btn btn-primary" onclick="addDiagnostician()">+ Προσθήκη</button>
-                            </div>
+                        <div class="admin-card-title" style="display: flex; justify-content: space-between; align-items: center;">
+                            Λίστα Διαγνωστών
+                            <input type="text" id="diag-search" class="form-input" placeholder="Αναζήτηση..." style="width: 250px; font-weight: normal; font-size: var(--font-size-sm);" onkeyup="filterDiags(this.value)">
                         </div>
-                    </div>
-
-                    <div class="admin-card">
-                        <div class="admin-card-title">Λίστα Διαγνωστών</div>
                         <table class="admin-table" id="diag-table">
                             <thead>
                                 <tr>
@@ -157,13 +122,25 @@
                                     <th>Κατάσταση</th>
                                     <th>CT</th>
                                     <th>MRI</th>
-                                    <th>Ημερήσια Χωρητικότητα</th>
                                     <th>Προτίμηση (Εργαστήριο)</th>
                                     <th>Ενέργειες</th>
                                 </tr>
                             </thead>
                             <tbody id="diag-tbody"></tbody>
                         </table>
+                        
+                        <!-- Pagination Controls -->
+                        <div
+                            style="display:flex; flex-direction:column; align-items:center; justify-content:center; margin-top:16px; margin-bottom:12px; gap:8px; width:100%;">
+                            <span id="diag-pagination-info"
+                                style="font-size:var(--font-size-sm); color:var(--text-tertiary); text-align:center;"></span>
+                            <div style="display:flex; gap:8px; align-items:center;">
+                                <button class="btn btn-secondary btn-sm" id="btn-diag-prev"
+                                    onclick="changeDiagPage(-1)">Προηγούμενο</button>
+                                <button class="btn btn-secondary btn-sm" id="btn-diag-next"
+                                    onclick="changeDiagPage(1)">Επόμενο</button>
+                            </div>
+                        </div>
                     </div>
                 </div>
 
@@ -192,7 +169,7 @@
                     </div>
 
                     <div class="admin-card">
-                        <div class="admin-card-title">Άδειες (Σήμερα και Μελλοντικά)</div>
+                        <div class="admin-card-title">Σήμερα δεν κάνουν διαγνώσεις</div>
                         <table class="admin-table">
                             <thead>
                                 <tr>
@@ -207,48 +184,22 @@
                     </div>
 
                     <div class="admin-card" style="margin-top:20px;">
-                        <div class="admin-card-title">Σήμερα δεν κάνουν διαγνώσεις (Βάσει Εβδομαδιαίου Προγράμματος)</div>
+                        <div class="admin-card-title"> Εβδομαδιαίο Πρόγραμμα (Ημερήσιο Όριο)</div>
                         <table class="admin-table">
                             <thead>
                                 <tr>
                                     <th>Διαγνώστης</th>
-                                    <th>Σταθερό Ρεπό</th>
+                                    <th style="text-align:center;">Δευτέρα</th>
+                                    <th style="text-align:center;">Τρίτη</th>
+                                    <th style="text-align:center;">Τετάρτη</th>
+                                    <th style="text-align:center;">Πέμπτη</th>
+                                    <th style="text-align:center;">Παρασκευή</th>
+                                    <th style="text-align:center;">Σάββατο</th>
+                                    <th style="text-align:center;">Κυριακή</th>
                                 </tr>
                             </thead>
-                            <tbody id="today-off-tbody"></tbody>
+                            <tbody id="weekly-schedule-tbody"></tbody>
                         </table>
-                    </div>
-                    
-                    <div class="admin-card" style="margin-top:20px;">
-                        <div class="admin-card-title">Εβδομαδιαίο Πρόγραμμα (Σταθερά Ρεπό)</div>
-                        <div class="admin-form">
-                            <div class="form-group" style="margin:0;">
-                                <label class="form-label">Διαγνώστης</label>
-                                <select id="schedule-diag" class="form-input filter-select" style="width:100%;"></select>
-                            </div>
-                            <div class="form-group" style="margin:0;">
-                                <label class="form-label">Ημέρα</label>
-                                <select id="schedule-day" class="form-input filter-select" style="width:100%;">
-                                    <option value="0">Δευτέρα</option>
-                                    <option value="1">Τρίτη</option>
-                                    <option value="2">Τετάρτη</option>
-                                    <option value="3">Πέμπτη</option>
-                                    <option value="4">Παρασκευή</option>
-                                    <option value="5">Σάββατο</option>
-                                    <option value="6">Κυριακή</option>
-                                </select>
-                            </div>
-                            <div class="form-group" style="margin:0;">
-                                <label class="form-label">Ρεπό;</label>
-                                <label style="display:flex;align-items:center;gap:8px;padding:10px 0;font-size:var(--font-size-sm);cursor:pointer;">
-                                    <input type="checkbox" id="schedule-is-off" style="accent-color:var(--accent-primary);width:16px;height:16px;">
-                                    Δεν εργάζεται (Ρεπό)
-                                </label>
-                            </div>
-                            <div class="form-group admin-form-actions" style="margin:0;">
-                                <button class="btn btn-primary" onclick="setWeeklySchedule()">Αποθήκευση</button>
-                            </div>
-                        </div>
                     </div>
                 </div>
 
@@ -309,9 +260,12 @@
                             <div class="form-group" style="margin:0;">
                                 <label class="form-label">Παραπέμπων Ιατρός</label>
                                 <div style="position:relative;">
-                                    <input type="text" id="part-doctor-search" class="form-input" placeholder="Αναζήτηση με όνομα ή ID..." oninput="debounceDoctorSearch()" style="width:100%;" autocomplete="off">
+                                    <input type="text" id="part-doctor-search" class="form-input"
+                                        placeholder="Αναζήτηση με όνομα ή ID..." oninput="debounceDoctorSearch()"
+                                        style="width:100%;" autocomplete="off">
                                     <input type="hidden" id="part-doctor-id">
-                                    <div id="part-doctor-results" style="position:absolute; top:100%; left:0; right:0; background:var(--bg-secondary); border:1px solid var(--border-color); border-radius:4px; max-height:200px; overflow-y:auto; z-index:10; display:none; box-shadow:var(--shadow-md);">
+                                    <div id="part-doctor-results"
+                                        style="position:absolute; top:100%; left:0; right:0; background:var(--bg-secondary); border:1px solid var(--border-color); border-radius:4px; max-height:200px; overflow-y:auto; z-index:10; display:none; box-shadow:var(--shadow-md);">
                                     </div>
                                 </div>
                             </div>
@@ -355,21 +309,10 @@
                 <!-- ════════════ SECTION: Ιατροί ════════════ -->
                 <div id="section-doctors" class="admin-section" style="display:none;">
                     <div class="admin-card">
-                        <div class="admin-card-title">🩺 Προσθήκη Ιατρού</div>
-                        <div class="admin-form">
-                            <div class="form-group" style="margin:0;">
-                                <label class="form-label">Ονοματεπώνυμο</label>
-                                <input type="text" id="new-doc-name" class="form-input"
-                                    placeholder="π.χ. ΙΩΑΝΝΟΥ ΙΩΑΝΝΗΣ">
-                            </div>
-                            <div class="form-group admin-form-actions" style="margin:0;">
-                                <button class="btn btn-primary" onclick="addDoctor()">+ Προσθήκη</button>
-                            </div>
+                        <div class="admin-card-title" style="display: flex; justify-content: space-between; align-items: center;">
+                            Λίστα Ιατρών
+                            <input type="text" id="doc-search" class="form-input" placeholder="Αναζήτηση..." style="width: 250px; font-weight: normal; font-size: var(--font-size-sm);" onkeyup="filterDoctors(this.value)">
                         </div>
-                    </div>
-
-                    <div class="admin-card">
-                        <div class="admin-card-title">Λίστα Ιατρών</div>
                         <table class="admin-table">
                             <thead>
                                 <tr>
@@ -379,13 +322,17 @@
                             </thead>
                             <tbody id="doc-tbody"></tbody>
                         </table>
-                        
+
                         <!-- Pagination Controls -->
-                        <div style="display:flex; justify-content:space-between; align-items:center; margin-top:16px;">
-                            <span id="doc-pagination-info" style="font-size:var(--font-size-sm); color:var(--text-tertiary);"></span>
-                            <div style="display:flex; gap:8px;">
-                                <button class="btn btn-secondary btn-sm" id="btn-doc-prev" onclick="changeDoctorPage(-1)">Προηγούμενο</button>
-                                <button class="btn btn-secondary btn-sm" id="btn-doc-next" onclick="changeDoctorPage(1)">Επόμενο</button>
+                        <div
+                            style="display:flex; flex-direction:column; align-items:center; justify-content:center; margin-top:16px; margin-bottom:12px; gap:8px; width:100%;">
+                            <span id="doc-pagination-info"
+                                style="font-size:var(--font-size-sm); color:var(--text-tertiary); text-align:center;"></span>
+                            <div style="display:flex; gap:8px; align-items:center;">
+                                <button class="btn btn-secondary btn-sm" id="btn-doc-prev"
+                                    onclick="changeDoctorPage(-1)">Προηγούμενο</button>
+                                <button class="btn btn-secondary btn-sm" id="btn-doc-next"
+                                    onclick="changeDoctorPage(1)">Επόμενο</button>
                             </div>
                         </div>
                     </div>

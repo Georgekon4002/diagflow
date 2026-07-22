@@ -288,12 +288,8 @@ async def bulk_override_assignments(
     results = []
     for exam_id in request.exam_ids:
         suggestion = _suggestion_cache.get(exam_id)
-        if not suggestion:
-            continue
-            
-        # Extract the original assigned diagnostician ID if one exists, otherwise default to 0
-        original_diagnostician_id = suggestion.suggested_diagnostician_id
-            
+        original_diagnostician_id = suggestion.suggested_diagnostician_id if suggestion else 0
+
         result = await svc.override_assignment(
             exam_id=exam_id,
             original_diagnostician_id=original_diagnostician_id,
@@ -302,7 +298,7 @@ async def bulk_override_assignments(
             suggestion=suggestion,
         )
         _suggestion_cache.pop(exam_id, None)
-        
+
         results.append(
             AssignmentConfirmation(
                 exam_id=exam_id,
@@ -370,7 +366,13 @@ class DiagnosticianCreateRequest(BaseModel):
     active: bool = True
     can_ct: bool = True
     can_mri: bool = True
-    daily_quota: int = 15
+    quota_monday: int = 15
+    quota_tuesday: int = 15
+    quota_wednesday: int = 15
+    quota_thursday: int = 15
+    quota_friday: int = 15
+    quota_saturday: int = 0
+    quota_sunday: int = 0
     preferred_lab_id: int | None = None
 
 
@@ -389,7 +391,13 @@ async def admin_create_diagnostician(
         active=req.active,
         can_ct=req.can_ct,
         can_mri=req.can_mri,
-        daily_quota=req.daily_quota,
+        quota_monday=req.quota_monday,
+        quota_tuesday=req.quota_tuesday,
+        quota_wednesday=req.quota_wednesday,
+        quota_thursday=req.quota_thursday,
+        quota_friday=req.quota_friday,
+        quota_saturday=req.quota_saturday,
+        quota_sunday=req.quota_sunday,
         preferred_lab_id=req.preferred_lab_id,
     )
 
@@ -406,7 +414,13 @@ async def admin_update_diagnostician(
         active=req.active,
         can_ct=req.can_ct,
         can_mri=req.can_mri,
-        daily_quota=req.daily_quota,
+        quota_monday=req.quota_monday,
+        quota_tuesday=req.quota_tuesday,
+        quota_wednesday=req.quota_wednesday,
+        quota_thursday=req.quota_thursday,
+        quota_friday=req.quota_friday,
+        quota_saturday=req.quota_saturday,
+        quota_sunday=req.quota_sunday,
         preferred_lab_id=req.preferred_lab_id,
     )
     if not record:
@@ -419,31 +433,6 @@ async def admin_delete_diagnostician(diag_id: int, _: str = Depends(_require_adm
     if not cfg_db.delete_diagnostician(diag_id):
         raise HTTPException(status_code=404, detail="Ο ακτινοδιαγνώστης δεν βρέθηκε")
     return {"deleted": diag_id}
-
-
-# ─────────────────────────────────────────────────────
-#  Admin — Weekly Schedules (diagflow.db — persistent)
-# ─────────────────────────────────────────────────────
-
-class WeeklyScheduleRequest(BaseModel):
-    diagnostician_id: int
-    day_of_week: int
-    is_off: bool
-
-@router.get("/admin/weekly-schedules")
-async def admin_list_weekly_schedules(_: str = Depends(_require_admin)):
-    return cfg_db.get_all_weekly_schedules()
-
-@router.post("/admin/weekly-schedules")
-async def admin_upsert_weekly_schedule(
-    req: WeeklyScheduleRequest,
-    _: str = Depends(_require_admin)
-):
-    return cfg_db.upsert_weekly_schedule(
-        diagnostician_id=req.diagnostician_id,
-        day_of_week=req.day_of_week,
-        is_off=req.is_off
-    )
 
 
 # ─────────────────────────────────────────────────────

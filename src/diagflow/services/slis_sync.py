@@ -167,18 +167,46 @@ def push_exam_to_slis(exammoreid: int, diagnostician_id: int, diagnostician_name
           SET slis_synced_at = <now>  (marks it as pushed)
         The real Slis DB is simulated by updating the same row's diagnostis
         field too (so the mock data stays consistent).
+      - Deletes the row from local_assignments.
 
     In production:
-      - Run: BEGIN TRAN; UPDATE exammore SET diagnostisid=? WHERE exammoreid=?; COMMIT
-      - Then set slis_synced_at locally so the row expires on next pull cycle.
+      - Runs: BEGIN TRAN; UPDATE exammore SET diagnostisid=? WHERE exammoreid=?; COMMIT
+      - Deletes the local_assignments row.
 
     Returns:
         dict with success, exammoreid, diagnostician_id
     """
     if not settings.use_mock_slis_db:
-        # TODO: run real Slis MSSQL update via pyodbc
-        logger.warning("push_exam_to_slis: real Slis DB not configured")
-        return {"success": False, "exammoreid": exammoreid, "error": "Real Slis DB not configured"}
+        try:
+            from sqlalchemy import create_engine, text
+            engine = create_engine(settings.slis_db_connection_string)
+            with engine.begin() as conn:
+                conn.execute(
+                    text("UPDATE exammore SET diagnostisid = :did WHERE exammoreid = :eid"),
+                    {"did": diagnostician_id, "eid": exammoreid}
+                )
+            
+            now_iso = datetime.now().isoformat()
+            
+            # Now we must delete from local_assignments!
+            import diagflow.db.diagflow_db as cfg_db
+            cfg_db.delete_local_assignment(exammoreid)
+            
+            logger.info(
+                "pushed_to_slis_production",
+                exammoreid=exammoreid,
+                diagnostician_id=diagnostician_id,
+            )
+            return {
+                "success": True,
+                "exammoreid": exammoreid,
+                "diagnostician_id": diagnostician_id,
+                "synced_at": now_iso,
+                "sql": f"UPDATE exammore SET diagnostisid = {diagnostician_id} WHERE exammoreid = {exammoreid};"
+            }
+        except Exception as exc:
+            logger.error("push_to_slis_error", exammoreid=exammoreid, error=str(exc))
+            return {"success": False, "exammoreid": exammoreid, "error": str(exc)}
 
     try:
         con = _get_db()
@@ -197,6 +225,10 @@ def push_exam_to_slis(exammoreid: int, diagnostician_id: int, diagnostician_name
         )
         con.commit()
         con.close()
+        
+        # Delete from local_assignments!
+        import diagflow.db.diagflow_db as cfg_db
+        cfg_db.delete_local_assignment(exammoreid)
 
         if cur.rowcount == 0:
             return {
@@ -215,6 +247,7 @@ def push_exam_to_slis(exammoreid: int, diagnostician_id: int, diagnostician_name
             "exammoreid": exammoreid,
             "diagnostician_id": diagnostician_id,
             "synced_at": now_iso,
+            "sql": f"UPDATE slis_exams SET slis_synced_at = '{now_iso}', diagnostis = {diagnostician_id}, code = '{diagnostician_name}' WHERE exammoreid = {exammoreid};"
         }
 
     except Exception as exc:
@@ -229,30 +262,22 @@ def push_all_to_slis() -> dict:
     Returns:
         dict with total, succeeded, failed lists
     """
-    try:
-        con = _get_db()
-        rows = con.execute(
-            """
-            SELECT exammoreid, diagnostis, code
-            FROM slis_exams
-            WHERE diagnostis IS NOT NULL
-              AND slis_synced_at IS NULL
-            """
-        ).fetchall()
-        con.close()
-    except Exception as exc:
-        logger.error("push_all_to_slis_query_error", error=str(exc))
-        return {"total": 0, "succeeded": [], "failed": []}
+    import diagflow.db.diagflow_db as cfg_db
+    local_assignments = cfg_db.get_all_local_assignments()
+    rows = list(local_assignments.values())
 
     succeeded = []
     failed = []
+    queries = []
     for row in rows:
         exammoreid       = row["exammoreid"]
-        diagnostician_id = row["diagnostis"]
-        diagnostician_name = row["code"] or ""
+        diagnostician_id = row["diagnostician_id"]
+        diagnostician_name = row["diagnostician_name"] or ""
         result = push_exam_to_slis(exammoreid, diagnostician_id, diagnostician_name)
         if result.get("success"):
             succeeded.append(exammoreid)
+            if "sql" in result:
+                queries.append(result["sql"])
         else:
             failed.append({"exammoreid": exammoreid, "error": result.get("error")})
 
@@ -261,6 +286,7 @@ def push_all_to_slis() -> dict:
         "total": len(rows),
         "succeeded": succeeded,
         "failed": failed,
+        "queries": queries,
     }
 
 
@@ -276,46 +302,35 @@ def push_selected_to_slis(exammoreid_list: list[int]) -> dict:
     """
     succeeded = []
     failed = []
+    queries = []
 
     if not exammoreid_list:
-        return {"total": 0, "succeeded": [], "failed": []}
+        return {"total": 0, "succeeded": [], "failed": [], "queries": []}
 
-    try:
-        con = _get_db()
-        placeholders = ",".join("?" * len(exammoreid_list))
-        rows = con.execute(
-            f"""
-            SELECT exammoreid, diagnostis, code
-            FROM slis_exams
-            WHERE exammoreid IN ({placeholders})
-              AND diagnostis IS NOT NULL
-              AND slis_synced_at IS NULL
-            """,
-            exammoreid_list,
-        ).fetchall()
-        con.close()
-    except Exception as exc:
-        logger.error("push_selected_query_error", error=str(exc))
-        return {"total": 0, "succeeded": [], "failed": []}
+    import diagflow.db.diagflow_db as cfg_db
+    local_assignments = cfg_db.get_all_local_assignments()
 
-    for row in rows:
-        exammoreid         = row["exammoreid"]
-        diagnostician_id   = row["diagnostis"]
-        diagnostician_name = row["code"] or ""
+    for exammoreid in exammoreid_list:
+        if exammoreid not in local_assignments:
+            failed.append({"exammoreid": exammoreid, "error": "Not locally assigned or already pushed."})
+            continue
+
+        row = local_assignments[exammoreid]
+        diagnostician_id = row["diagnostician_id"]
+        diagnostician_name = row["diagnostician_name"] or ""
+        
         result = push_exam_to_slis(exammoreid, diagnostician_id, diagnostician_name)
         if result.get("success"):
             succeeded.append(exammoreid)
+            if "sql" in result:
+                queries.append(result["sql"])
         else:
             failed.append({"exammoreid": exammoreid, "error": result.get("error")})
 
-    logger.info(
-        "push_selected_complete",
-        requested=len(exammoreid_list),
-        succeeded=len(succeeded),
-        failed=len(failed),
-    )
+    logger.info("push_selected_complete", total=len(exammoreid_list), succeeded=len(succeeded), failed=len(failed))
     return {
-        "total": len(rows),
+        "total": len(exammoreid_list),
         "succeeded": succeeded,
         "failed": failed,
+        "queries": queries,
     }

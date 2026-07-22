@@ -131,12 +131,39 @@ def filter_by_availability(
         return FilterResult(
             passed=False,
             rule_name="availability",
-            reason="Μη διαθέσιμος σήμερα",
+            reason="Δεν είναι διαθέσιμος/η σήμερα",
         )
     return FilterResult(
         passed=True,
         rule_name="availability",
         reason="Διαθέσιμος/η",
+    )
+
+
+def filter_by_capacity(
+    candidate: CandidateDiagnostician,
+    exam: ExamContext,
+) -> FilterResult:
+    """
+    Priority 2: Capacity check.
+    Eliminates a candidate if they have reached or exceeded their daily quota.
+    """
+    if candidate.daily_quota > 0 and candidate.current_day_count >= candidate.daily_quota:
+        return FilterResult(
+            passed=False,
+            rule_name="capacity",
+            reason="Έχει συμπληρώσει το ημερήσιο όριο",
+        )
+    if candidate.daily_quota == 0 and candidate.current_day_count > 0:
+        return FilterResult(
+            passed=False,
+            rule_name="capacity",
+            reason="Έχει συμπληρώσει το ημερήσιο όριο",
+        )
+    return FilterResult(
+        passed=True,
+        rule_name="capacity",
+        reason=f"Υπόλοιπο χωρητικότητας: {max(0, candidate.daily_quota - candidate.current_day_count)}/{candidate.daily_quota}",
     )
 
 
@@ -230,6 +257,8 @@ def apply_hard_filters(
 
     Active filters (per current business rules):
       1. Availability
+      2. Capacity (daily quota limit)
+      3. Modality capability (CT/MRI)
       4. Skills (only eliminates if proficiency == 0 AND data exists)
 
     Returns:
@@ -240,8 +269,9 @@ def apply_hard_filters(
     """
     active_filters = [
         filter_by_availability,
+        filter_by_capacity,       # Check capacity limit first to prioritize quota reason
         filter_by_modality,       # Keep modality as a basic sanity filter
-        filter_by_skills_hard,    # New: skills hard filter (priority 4)
+        filter_by_skills_hard,    # Skills hard filter
         # filter_by_comment_exclusion — DISABLED in this phase
         # filter_by_lab_preference   — Now WEIGHTED, not hard
     ]

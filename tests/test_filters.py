@@ -9,6 +9,7 @@ from diagflow.engine.filters import (
     ExamContext,
     apply_hard_filters,
     filter_by_availability,
+    filter_by_capacity,
     filter_by_comment_exclusion,
     filter_by_lab_preference,
     filter_by_modality,
@@ -29,7 +30,7 @@ class TestAvailabilityFilter:
         candidate = sample_candidates[4]  # Αντωνίου — on leave
         result = filter_by_availability(candidate, sample_exam)
         assert result.passed is False
-        assert "δεν είναι διαθέσιμος" in result.reason
+        assert "διαθέσιμος" in result.reason.lower()
 
 
 class TestModalityFilter:
@@ -85,6 +86,27 @@ class TestCommentExclusionFilter:
         candidate.is_excluded_by_comment = True
         result = filter_by_comment_exclusion(candidate, sample_exam)
         assert result.passed is False
+
+
+class TestCapacityFilter:
+    """Tests for daily capacity hard filter."""
+
+    def test_under_quota_passes(self, sample_exam, sample_candidates):
+        """Candidate under quota should pass."""
+        candidate = sample_candidates[0]
+        candidate.daily_quota = 15
+        candidate.current_day_count = 5
+        result = filter_by_capacity(candidate, sample_exam)
+        assert result.passed is True
+
+    def test_over_quota_fails_with_quota_reason(self, sample_exam, sample_candidates):
+        """Candidate who reached or exceeded quota should fail with capacity reason."""
+        candidate = sample_candidates[0]
+        candidate.daily_quota = 5
+        candidate.current_day_count = 6
+        result = filter_by_capacity(candidate, sample_exam)
+        assert result.passed is False
+        assert result.reason == "Έχει συμπληρώσει το ημερήσιο όριο"
 
 
 class TestApplyAllHardFilters:

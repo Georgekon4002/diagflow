@@ -2004,3 +2004,14 @@ tr.pammakristos-row:hover td.frozen-col-2 {
 .comment-btn.comment-btn-alert:hover {
     background-color: #b51c18 !important;
 }
+
+/* FAB Dropdown Item Over-Quota Styling */
+.fab-diag-item.over-quota {
+    background-color: rgba(239, 68, 68, 0.15) !important;
+    color: #ef4444 !important;
+    border-bottom: 1px solid rgba(239, 68, 68, 0.3) !important;
+    font-weight: 600;
+}
+.fab-diag-item.over-quota:hover {
+    background-color: rgba(239, 68, 68, 0.25) !important;
+}

@@ -23,6 +23,12 @@ let availability = [];
 let doctorsPage = 0;
 const doctorsPageSize = 50;
 let totalDoctors = 0;
+let docSearchQuery = '';
+
+let diagsPage = 0;
+const diagsPageSize = 20;
+let totalDiags = 0;
+let diagSearchQuery = '';
 
 let EXAM_CODE_MAP = {};
 
@@ -65,7 +71,6 @@ async function loadAll() {
         loadDoctors(),
         loadSkills(),
         loadAvailability(),
-        loadWeeklySchedules(),
         loadOncall(),
     ]);
 }
@@ -166,19 +171,13 @@ function adminLogout() {
 //  Load Functions
 // ══════════════════════════════════════════════
 
-let weeklySchedules = [];
-
 async function loadDiagnosticians() {
     const data = await apiCall('/admin/diagnosticians');
     diagnosticians = data || getMockDiagnosticians();
     renderDiagnosticians();
     populateDiagnosticianSelects();
-}
-
-async function loadWeeklySchedules() {
-    const data = await apiCall('/admin/weekly-schedules');
-    weeklySchedules = data || [];
-    renderTodayOffSchedules();
+    renderAvailability();
+    renderWeeklyScheduleGrid();
 }
 
 async function loadPartnerships() {
@@ -194,7 +193,7 @@ async function loadDoctors(page = 0) {
     
     let data;
     try {
-        data = await apiCall(`/admin/doctors?skip=${skip}&limit=${limit}`);
+        data = await apiCall(`/admin/doctors?q=${encodeURIComponent(docSearchQuery)}&skip=${skip}&limit=${limit}`);
     } catch {
         data = null;
     }
@@ -203,7 +202,11 @@ async function loadDoctors(page = 0) {
         doctors = data.items;
         totalDoctors = data.total;
     } else {
-        const mock = getMockDoctors();
+        let mock = getMockDoctors();
+        if (docSearchQuery) {
+            const lowerQ = docSearchQuery.toLowerCase();
+            mock = mock.filter(d => d.name.toLowerCase().includes(lowerQ) || String(d.id).includes(lowerQ));
+        }
         doctors = mock.slice(skip, skip + limit);
         totalDoctors = mock.length;
     }
@@ -220,9 +223,14 @@ function changeDoctorPage(dir) {
 function updateDoctorPagination() {
     const info = document.getElementById('doc-pagination-info');
     if (!info) return;
-    const start = doctorsPage * doctorsPageSize + 1;
-    const end = Math.min((doctorsPage + 1) * doctorsPageSize, totalDoctors);
-    info.textContent = `Εμφάνιση ${totalDoctors === 0 ? 0 : start}-${end} από ${totalDoctors}`;
+    if (totalDoctors === 0) {
+        info.textContent = 'Σελίδα 0 (0 από 0)';
+    } else {
+        const pageNum = doctorsPage + 1;
+        const start = doctorsPage * doctorsPageSize + 1;
+        const end = Math.min((doctorsPage + 1) * doctorsPageSize, totalDoctors);
+        info.textContent = `Σελίδα ${pageNum} (${start}-${end} από ${totalDoctors})`;
+    }
     
     document.getElementById('btn-doc-prev').disabled = doctorsPage === 0;
     document.getElementById('btn-doc-next').disabled = (doctorsPage + 1) * doctorsPageSize >= totalDoctors;
@@ -272,18 +280,39 @@ function populateDiagnosticianSelects() {
 //  Render Functions
 // ══════════════════════════════════════════════
 
+function filterDiags(q) {
+    diagSearchQuery = q;
+    diagsPage = 0;
+    renderDiagnosticians();
+}
+
+function filterDoctors(q) {
+    docSearchQuery = q;
+    loadDoctors(0);
+}
+
 function renderDiagnosticians() {
     const tbody = document.getElementById('diag-tbody');
     
+    let filteredDiags = diagnosticians;
+    if (diagSearchQuery) {
+        const lowerQ = diagSearchQuery.toLowerCase();
+        filteredDiags = filteredDiags.filter(d => d.name.toLowerCase().includes(lowerQ));
+    }
+    
     // Sort diagnosticians: Active first, then inactive. Sort alphabetically within those groups.
-    const sortedDiags = [...diagnosticians].sort((a, b) => {
+    const sortedDiags = [...filteredDiags].sort((a, b) => {
         if (a.active !== b.active) {
             return a.active ? -1 : 1;
         }
         return a.name.localeCompare(b.name, 'el');
     });
 
-    tbody.innerHTML = sortedDiags.map(d => `
+    totalDiags = sortedDiags.length;
+    const start = diagsPage * diagsPageSize;
+    const paginated = sortedDiags.slice(start, start + diagsPageSize);
+
+    tbody.innerHTML = paginated.map(d => `
         <tr>
             <td style="font-weight:600;">${d.name}</td>
             <td>
@@ -293,12 +322,6 @@ function renderDiagnosticians() {
             </td>
             <td><input type="checkbox" style="accent-color:var(--accent-primary);" ${d.can_ct ? 'checked' : ''} onchange="toggleDiagCT(${d.id}, this.checked)"></td>
             <td><input type="checkbox" style="accent-color:var(--accent-primary);" ${d.can_mri ? 'checked' : ''} onchange="toggleDiagMRI(${d.id}, this.checked)"></td>
-            <td>
-                <div style="display:flex;align-items:center;gap:6px;">
-                    <input type="number" id="quota-${d.id}" class="form-input" style="width:60px;padding:4px;" value="${d.daily_quota}" min="1">
-                    <button class="btn btn-secondary btn-sm" onclick="updateQuota(${d.id})">💾</button>
-                </div>
-            </td>
             <td>
                 <select class="form-input filter-select" style="width:120px;padding:4px;font-size:12px;" onchange="updatePreferredLab(${d.id}, this.value)">
                     <option value="" ${!d.preferred_lab_id ? 'selected' : ''}>Κανένα</option>
@@ -316,6 +339,33 @@ function renderDiagnosticians() {
             </td>
         </tr>
     `).join('');
+    
+    updateDiagPagination();
+}
+
+function changeDiagPage(dir) {
+    const newPage = diagsPage + dir;
+    if (newPage < 0 || newPage * diagsPageSize >= totalDiags) return;
+    diagsPage = newPage;
+    renderDiagnosticians();
+}
+
+function updateDiagPagination() {
+    const info = document.getElementById('diag-pagination-info');
+    if (!info) return;
+    if (totalDiags === 0) {
+        info.textContent = 'Σελίδα 0 (0 από 0)';
+    } else {
+        const pageNum = diagsPage + 1;
+        const start = diagsPage * diagsPageSize + 1;
+        const end = Math.min((diagsPage + 1) * diagsPageSize, totalDiags);
+        info.textContent = `Σελίδα ${pageNum} (${start}-${end} από ${totalDiags})`;
+    }
+    
+    const prevBtn = document.getElementById('btn-diag-prev');
+    const nextBtn = document.getElementById('btn-diag-next');
+    if (prevBtn) prevBtn.disabled = diagsPage === 0;
+    if (nextBtn) nextBtn.disabled = (diagsPage + 1) * diagsPageSize >= totalDiags;
 }
 
 async function toggleDiagCT(id, newCanCT) {
@@ -336,49 +386,102 @@ async function toggleDiagMRI(id, newCanMRI) {
 
 function renderAvailability() {
     const tbody = document.getElementById('avail-tbody');
-    
+    if (!tbody) return;
+
     // Filter only today and future dates
     const todayStr = new Date().toISOString().split('T')[0];
     const filteredAvailability = availability.filter(a => a.date >= todayStr);
 
-    if (!filteredAvailability.length) {
-        tbody.innerHTML = '<tr><td colspan="4" style="color:var(--text-tertiary);text-align:center;padding:20px;">Καμία καταγεγραμμένη άδεια</td></tr>';
-        return;
-    }
     const statusLabel = { available: 'Διαθέσιμος/η', on_leave: 'Άδεια', half_day: 'Μισή Μέρα' };
     const statusClass = { available: 'active', on_leave: 'on-leave', half_day: 'inactive' };
-    tbody.innerHTML = filteredAvailability.map(a => `
+
+    const rows = [];
+
+    // 1. Add diagnosticians on leave
+    filteredAvailability.forEach(a => {
+        rows.push({
+            diagnostician_id: a.diagnostician_id,
+            diagnostician_name: a.diagnostician_name,
+            date: a.date,
+            statusBadge: `<span class="status-badge ${statusClass[a.status] || 'on-leave'}">${statusLabel[a.status] || 'Άδεια'}</span>`,
+            notes: a.notes || '—'
+        });
+    });
+
+    // 2. Add diagnosticians who are not diagnosing today according to their daily quota
+    const todayWeekday = new Date().getDay(); // 0 is Sunday, 1 is Monday...
+    const pyWeekday = todayWeekday === 0 ? 6 : todayWeekday - 1; // Python weekday: 0 is Monday, 6 is Sunday
+    
+    const quotaKeys = ['quota_monday', 'quota_tuesday', 'quota_wednesday', 'quota_thursday', 'quota_friday', 'quota_saturday', 'quota_sunday'];
+    const todayQuotaKey = quotaKeys[pyWeekday];
+
+    const offToday = diagnosticians.filter(d => d.active && d[todayQuotaKey] === 0);
+
+    offToday.forEach(d => {
+        // Skip if this diagnostician already has an explicit leave entry recorded for today
+        const hasLeaveToday = rows.some(r => r.diagnostician_id === d.id && r.date === todayStr);
+        if (!hasLeaveToday) {
+            rows.push({
+                diagnostician_id: d.id,
+                diagnostician_name: d.name,
+                date: todayStr,
+                statusBadge: `<span class="status-badge inactive">Όχι σήμερα</span>`,
+                notes: 'Σταθερό ρεπό'
+            });
+        }
+    });
+
+    if (!rows.length) {
+        tbody.innerHTML = '<tr><td colspan="4" style="color:var(--text-tertiary);text-align:center;padding:20px;">Δεν υπάρχουν εγγραφές</td></tr>';
+        return;
+    }
+
+    // Sort rows by date ascending
+    rows.sort((a, b) => a.date.localeCompare(b.date));
+
+    tbody.innerHTML = rows.map(r => `
         <tr>
-            <td style="font-weight:500;">${a.diagnostician_name}</td>
-            <td class="date-cell">${formatDate(a.date)}</td>
-            <td><span class="status-badge ${statusClass[a.status] || 'inactive'}">${statusLabel[a.status] || a.status}</span></td>
-            <td style="color:var(--text-tertiary);">${a.notes || '—'}</td>
+            <td style="font-weight:500;">${r.diagnostician_name}</td>
+            <td class="date-cell">${formatDate(r.date)}</td>
+            <td>${r.statusBadge}</td>
+            <td style="color:var(--text-tertiary);">${r.notes}</td>
         </tr>
     `).join('');
 }
 
 function renderTodayOffSchedules() {
-    const tbody = document.getElementById('today-off-tbody');
-    const todayWeekday = new Date().getDay(); // 0 is Sunday, 1 is Monday... wait JS getDay() is Sunday=0, Monday=1
-    // Python weekday: Monday=0, Sunday=6
-    // We map JS getDay() to Python weekday
-    const pyWeekday = todayWeekday === 0 ? 6 : todayWeekday - 1;
+    renderAvailability();
+}
 
-    const offToday = weeklySchedules.filter(s => s.day_of_week === pyWeekday && s.is_off);
-    
-    if (!offToday.length) {
-        tbody.innerHTML = '<tr><td colspan="2" style="color:var(--text-tertiary);text-align:center;padding:20px;">Κανένα σταθερό ρεπό για σήμερα</td></tr>';
+function renderWeeklyScheduleGrid() {
+    const tbody = document.getElementById('weekly-schedule-tbody');
+    if (!tbody) return;
+
+    const activeDiags = diagnosticians.filter(d => d.active).sort((a, b) => a.name.localeCompare(b.name, 'el'));
+
+    if (!activeDiags.length) {
+        tbody.innerHTML = '<tr><td colspan="8" style="color:var(--text-tertiary);text-align:center;padding:20px;">Δεν υπάρχουν ενεργοί διαγνώστες</td></tr>';
         return;
     }
-    
-    tbody.innerHTML = offToday.map(s => {
-        const diag = diagnosticians.find(d => d.id === s.diagnostician_id);
-        return `
-            <tr>
-                <td style="font-weight:500;">${diag ? diag.name : 'Άγνωστος'}</td>
-                <td><span class="status-badge on-leave">Ρεπό</span></td>
-            </tr>
-        `;
+
+    const quotaKeys = ['quota_monday', 'quota_tuesday', 'quota_wednesday', 'quota_thursday', 'quota_friday', 'quota_saturday', 'quota_sunday'];
+
+    tbody.innerHTML = activeDiags.map(d => {
+        let cells = `<td style="font-weight:500;">${d.name}</td>`;
+        for (let day = 0; day < 7; day++) {
+            const quotaVal = d[quotaKeys[day]] || 0;
+            cells += `
+                <td style="text-align:center;">
+                    <input type="number" 
+                           class="form-input"
+                           style="width:50px;padding:4px;text-align:center;${quotaVal === 0 ? 'background-color:#ffe4e6;color:#e11d48;font-weight:bold;' : ''}" 
+                           value="${quotaVal}"
+                           min="0"
+                           onchange="updateWeeklyQuota(${d.id}, '${quotaKeys[day]}', this.value)">
+                </td>
+            `;
+        }
+        return `<tr>${cells}</tr>`;
     }).join('');
 }
 
@@ -576,15 +679,16 @@ async function addDiagnostician() {
     if (!name) { showToast('Εισάγετε ονοματεπώνυμο', 'warning'); return; }
 
     try {
-        const result = await apiCall('/admin/diagnosticians', 'POST', { name, active, can_ct, can_mri, daily_quota: quota });
+        const result = await apiCall('/admin/diagnosticians', 'POST', { name, active, can_ct, can_mri, quota_monday: quota, quota_tuesday: quota, quota_wednesday: quota, quota_thursday: quota, quota_friday: quota, quota_saturday: quota, quota_sunday: quota });
         if (result) diagnosticians.push(result);
-        else diagnosticians.push({ id: Date.now(), name, active, can_ct, can_mri, daily_quota: quota });
+        else diagnosticians.push({ id: Date.now(), name, active, can_ct, can_mri, quota_monday: quota, quota_tuesday: quota, quota_wednesday: quota, quota_thursday: quota, quota_friday: quota, quota_saturday: quota, quota_sunday: quota });
     } catch {
-        diagnosticians.push({ id: Date.now(), name, active, can_ct, can_mri, daily_quota: quota });
+        diagnosticians.push({ id: Date.now(), name, active, can_ct, can_mri, quota_monday: quota, quota_tuesday: quota, quota_wednesday: quota, quota_thursday: quota, quota_friday: quota, quota_saturday: quota, quota_sunday: quota });
     }
 
     renderDiagnosticians();
     populateDiagnosticianSelects();
+    renderWeeklyScheduleGrid();
     document.getElementById('new-diag-name').value = '';
     showToast(`✅ Ο/Η ${name} προστέθηκε`, 'success');
 }
@@ -600,23 +704,11 @@ async function toggleDiagActive(id, newActive) {
     } catch { /* mock mode */ }
 
     renderDiagnosticians();
+    renderWeeklyScheduleGrid();
     showToast(`${newActive ? '✅ Ενεργοποίηση' : '⚠️ Απενεργοποίηση'}: ${d.name}`, newActive ? 'success' : 'warning');
 }
 
-async function updateQuota(id) {
-    const d = diagnosticians.find(x => x.id === id);
-    if (!d) return;
-    const input = document.getElementById(`quota-${id}`);
-    const newQuota = parseInt(input.value);
-    if (!newQuota || newQuota < 1) return;
-    d.daily_quota = newQuota;
 
-    try {
-        await apiCall(`/admin/diagnosticians/${id}`, 'PUT', d);
-    } catch { /* mock mode */ }
-
-    showToast(`✅ Χωρητικότητα ενημερώθηκε: ${d.name}`, 'success');
-}
 
 async function setAvailability() {
     const selEl = document.getElementById('avail-diag');
@@ -658,22 +750,23 @@ async function updatePreferredLab(id, val) {
     showToast(`✅ Προτίμηση εργαστηρίου ενημερώθηκε: ${d.name}`, 'success');
 }
 
-async function setWeeklySchedule() {
-    const selEl = document.getElementById('schedule-diag');
-    const diagId = parseInt(selEl.value);
-    const dayOfWeek = parseInt(document.getElementById('schedule-day').value);
-    const isOff = document.getElementById('schedule-is-off').checked;
+async function updateWeeklyQuota(diagId, quotaField, value) {
+    const newQuota = parseInt(value);
+    if (isNaN(newQuota) || newQuota < 0) return;
 
-    if (!diagId) { showToast('Επιλέξτε διαγνώστη', 'warning'); return; }
+    const d = diagnosticians.find(x => x.id === diagId);
+    if (!d) return;
 
-    const record = { diagnostician_id: diagId, day_of_week: dayOfWeek, is_off: isOff };
+    d[quotaField] = newQuota;
+
+    renderAvailability();
+    renderWeeklyScheduleGrid();
 
     try {
-        await apiCall('/admin/weekly-schedules', 'POST', record);
-        showToast('✅ Το εβδομαδιαίο πρόγραμμα ενημερώθηκε', 'success');
-        await loadWeeklySchedules();
+        await apiCall(`/admin/diagnosticians/${diagId}`, 'PUT', d);
+        showToast('✅ Το όριο αποθηκεύτηκε', 'success');
     } catch {
-        showToast('Σφάλμα κατά την ενημέρωση του προγράμματος', 'error');
+        showToast('Σφάλμα κατά την αποθήκευση του ορίου', 'error');
     }
 }
 

@@ -34,5 +34,9 @@ Desktop.ini
 *.log
 logs/
 
-##Scratch
+## Scratch
 scratch*
+
+## Office temporary files
+~$*
+~$*.xlsx

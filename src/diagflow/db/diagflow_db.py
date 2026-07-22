@@ -39,7 +39,7 @@ def _row_to_dict(row: sqlite3.Row) -> dict:
 def get_all_diagnosticians() -> list[dict]:
     with _conn() as con:
         rows = con.execute(
-            "SELECT id, name, active, can_ct, can_mri, daily_quota, preferred_lab_id FROM diagnosticians ORDER BY name"
+            "SELECT id, name, active, can_ct, can_mri, quota_monday, quota_tuesday, quota_wednesday, quota_thursday, quota_friday, quota_saturday, quota_sunday, preferred_lab_id FROM diagnosticians ORDER BY name"
         ).fetchall()
     return [_row_to_dict(r) for r in rows]
 
@@ -47,36 +47,40 @@ def get_all_diagnosticians() -> list[dict]:
 def get_diagnostician(diag_id: int) -> dict | None:
     with _conn() as con:
         row = con.execute(
-            "SELECT id, name, active, can_ct, can_mri, daily_quota, preferred_lab_id FROM diagnosticians WHERE id = ?",
+            "SELECT id, name, active, can_ct, can_mri, quota_monday, quota_tuesday, quota_wednesday, quota_thursday, quota_friday, quota_saturday, quota_sunday, preferred_lab_id FROM diagnosticians WHERE id = ?",
             (diag_id,),
         ).fetchone()
     return _row_to_dict(row) if row else None
 
 
 def create_diagnostician(name: str, active: bool = True, can_ct: bool = True,
-                         can_mri: bool = True, daily_quota: int = 15, preferred_lab_id: int | None = None) -> dict:
+                         can_mri: bool = True, quota_monday: int = 15, quota_tuesday: int = 15,
+                         quota_wednesday: int = 15, quota_thursday: int = 15, quota_friday: int = 15,
+                         quota_saturday: int = 0, quota_sunday: int = 0, preferred_lab_id: int | None = None) -> dict:
     with _conn() as con:
         cur = con.execute(
-            "INSERT INTO diagnosticians (name, active, can_ct, can_mri, daily_quota, preferred_lab_id) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (name, int(active), int(can_ct), int(can_mri), daily_quota, preferred_lab_id),
+            "INSERT INTO diagnosticians (name, active, can_ct, can_mri, quota_monday, quota_tuesday, quota_wednesday, quota_thursday, quota_friday, quota_saturday, quota_sunday, preferred_lab_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (name, int(active), int(can_ct), int(can_mri), quota_monday, quota_tuesday, quota_wednesday, quota_thursday, quota_friday, quota_saturday, quota_sunday, preferred_lab_id),
         )
         row = con.execute(
-            "SELECT id, name, active, can_ct, can_mri, daily_quota, preferred_lab_id FROM diagnosticians WHERE id = ?",
+            "SELECT id, name, active, can_ct, can_mri, quota_monday, quota_tuesday, quota_wednesday, quota_thursday, quota_friday, quota_saturday, quota_sunday, preferred_lab_id FROM diagnosticians WHERE id = ?",
             (cur.lastrowid,),
         ).fetchone()
     return _row_to_dict(row)
 
 
 def update_diagnostician(diag_id: int, name: str, active: bool,
-                         can_ct: bool, can_mri: bool, daily_quota: int, preferred_lab_id: int | None = None) -> dict | None:
+                         can_ct: bool, can_mri: bool, quota_monday: int, quota_tuesday: int,
+                         quota_wednesday: int, quota_thursday: int, quota_friday: int,
+                         quota_saturday: int, quota_sunday: int, preferred_lab_id: int | None = None) -> dict | None:
     with _conn() as con:
         con.execute(
-            "UPDATE diagnosticians SET name=?, active=?, can_ct=?, can_mri=?, daily_quota=?, preferred_lab_id=? WHERE id=?",
-            (name, int(active), int(can_ct), int(can_mri), daily_quota, preferred_lab_id, diag_id),
+            "UPDATE diagnosticians SET name=?, active=?, can_ct=?, can_mri=?, quota_monday=?, quota_tuesday=?, quota_wednesday=?, quota_thursday=?, quota_friday=?, quota_saturday=?, quota_sunday=?, preferred_lab_id=? WHERE id=?",
+            (name, int(active), int(can_ct), int(can_mri), quota_monday, quota_tuesday, quota_wednesday, quota_thursday, quota_friday, quota_saturday, quota_sunday, preferred_lab_id, diag_id),
         )
         row = con.execute(
-            "SELECT id, name, active, can_ct, can_mri, daily_quota, preferred_lab_id FROM diagnosticians WHERE id = ?",
+            "SELECT id, name, active, can_ct, can_mri, quota_monday, quota_tuesday, quota_wednesday, quota_thursday, quota_friday, quota_saturday, quota_sunday, preferred_lab_id FROM diagnosticians WHERE id = ?",
             (diag_id,),
         ).fetchone()
     return _row_to_dict(row) if row else None
@@ -298,39 +302,7 @@ def get_oncall_diagnostician(date: str) -> dict | None:
     return _row_to_dict(row) if row else None
 
 
-# ── Weekly Schedules ────────────────────────────────────────────────────────────
 
-def get_all_weekly_schedules() -> list[dict]:
-    with _conn() as con:
-        rows = con.execute(
-            "SELECT diagnostician_id, day_of_week, is_off FROM weekly_schedules"
-        ).fetchall()
-    return [_row_to_dict(r) for r in rows]
-
-
-def get_weekly_schedule_for_diagnostician(diag_id: int) -> list[dict]:
-    with _conn() as con:
-        rows = con.execute(
-            "SELECT day_of_week, is_off FROM weekly_schedules WHERE diagnostician_id = ?",
-            (diag_id,),
-        ).fetchall()
-    return [_row_to_dict(r) for r in rows]
-
-
-def upsert_weekly_schedule(diagnostician_id: int, day_of_week: int, is_off: bool) -> dict:
-    with _conn() as con:
-        con.execute(
-            "INSERT INTO weekly_schedules (diagnostician_id, day_of_week, is_off) "
-            "VALUES (?, ?, ?) "
-            "ON CONFLICT(diagnostician_id, day_of_week) DO UPDATE SET is_off=excluded.is_off",
-            (diagnostician_id, day_of_week, int(is_off)),
-        )
-        row = con.execute(
-            "SELECT diagnostician_id, day_of_week, is_off FROM weekly_schedules "
-            "WHERE diagnostician_id = ? AND day_of_week = ?",
-            (diagnostician_id, day_of_week),
-        ).fetchone()
-    return _row_to_dict(row)
 
 
 # ── Doctors ───────────────────────────────────────────────────────────────────
@@ -373,3 +345,39 @@ def delete_doctor(doctor_id: str) -> bool:
     with _conn() as con:
         cur = con.execute("DELETE FROM doctors WHERE id = ?", (doctor_id,))
     return cur.rowcount > 0
+
+
+# ── Local Assignments ─────────────────────────────────────────────────────────
+
+def upsert_local_assignment(exammoreid: int, diagnostician_id: int, diagnostician_name: str, assigned_at: str) -> dict:
+    with _conn() as con:
+        con.execute(
+            "INSERT INTO local_assignments (exammoreid, diagnostician_id, diagnostician_name, assigned_at) VALUES (?, ?, ?, ?) "
+            "ON CONFLICT(exammoreid) DO UPDATE SET diagnostician_id=excluded.diagnostician_id, diagnostician_name=excluded.diagnostician_name, assigned_at=excluded.assigned_at",
+            (exammoreid, diagnostician_id, diagnostician_name, assigned_at),
+        )
+        con.execute(
+            "INSERT OR REPLACE INTO assignment_log (exammoreid, diagnostician_id, assigned_at) VALUES (?, ?, ?)",
+            (exammoreid, diagnostician_id, assigned_at),
+        )
+        row = con.execute(
+            "SELECT exammoreid, diagnostician_id, diagnostician_name, assigned_at FROM local_assignments WHERE exammoreid = ?", (exammoreid,)
+        ).fetchone()
+    return _row_to_dict(row)
+
+def get_all_local_assignments() -> dict[int, dict]:
+    with _conn() as con:
+        rows = con.execute("SELECT exammoreid, diagnostician_id, diagnostician_name, assigned_at FROM local_assignments").fetchall()
+    return {r["exammoreid"]: _row_to_dict(r) for r in rows}
+
+def get_daily_assignment_counts() -> dict[int, int]:
+    with _conn() as con:
+        rows = con.execute(
+            "SELECT diagnostician_id, COUNT(*) as cnt FROM assignment_log WHERE substr(assigned_at, 1, 10) = date('now', 'localtime') GROUP BY diagnostician_id"
+        ).fetchall()
+    return {r["diagnostician_id"]: r["cnt"] for r in rows}
+
+def delete_local_assignment(exammoreid: int) -> bool:
+    with _conn() as con:
+        cur = con.execute("DELETE FROM local_assignments WHERE exammoreid = ?", (exammoreid,))
+        return cur.rowcount > 0

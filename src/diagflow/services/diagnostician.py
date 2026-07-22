@@ -57,15 +57,8 @@ class DiagnosticianService:
             p["preferred_diagnostician_id"]: p for p in partnerships if p.get("is_active", 1) == 1
         }
 
-        # Load weekly schedules
-        all_schedules = cfg_db.get_all_weekly_schedules()
-        schedule_map = {}
-        for s in all_schedules:
-            diag_id = s["diagnostician_id"]
-            if diag_id not in schedule_map:
-                schedule_map[diag_id] = set()
-            if s["is_off"]:
-                schedule_map[diag_id].add(s["day_of_week"])
+        # Load current daily counts from assignment log
+        daily_counts = cfg_db.get_daily_assignment_counts()
 
         candidates = []
 
@@ -86,37 +79,24 @@ class DiagnosticianService:
                     break
 
             if skill_match:
-                skill_proficiency = 1.0 if skill_match["is_preferred"] else 0.5
+                skill_proficiency = 2 if skill_match.get("is_preferred") else 1
             else:
-                skill_proficiency = 0.0
+                skill_proficiency = 0
 
             # Modality capability
             can_ct = bool(diag["can_ct"])
             can_mri = bool(diag["can_mri"])
+            preferred_lab_id = diag.get("preferred_lab_id")
 
-            # Base Availability & Quota
+            # Check if diagnostician is absent
             is_available = diag_id not in absent_ids
-            daily_quota = int(diag["daily_quota"])
-            accepts_lab = True
 
-            # Check weekly schedules
-            today_date = date.today()
-            weekday = today_date.weekday() # 0 = Monday, 6 = Sunday
+            # Find quota based on weekday
+            weekday_str = date.today().strftime("%A").lower()
+            quota_key = f"quota_{weekday_str}"
+            daily_quota = diag.get(quota_key, 0)
             
-            if diag_id in schedule_map and weekday in schedule_map[diag_id]:
-                is_available = False
-
-            # Check lab preference
-            # Note: Lab preference gives a score boost, it does NOT exclude other labs.
-            # However, accepts_lab is currently used for hard/soft filtering.
-            # We set accepts_lab=False ONLY if there is a preferred_lab_id AND it doesn't match the current lab_id.
-            # Actually, the user says: "These diagnosticians don't accept ONLY from these labs. They simply have a preference towards these labs".
-            # This means accepts_lab should ALWAYS be True! 
-            # The scoring boost will be handled separately in scoring.py.
-            accepts_lab = True
-            preferred_lab_id = str(diag.get("preferred_lab_id") or "")
-
-            # Partnership
+            # Check for partnership match
             pship = partnership_map.get(diag_id)
             is_partner = pship is not None
             is_exclusive = bool(pship.get("exclusive", 0)) if pship else False
@@ -132,13 +112,13 @@ class DiagnosticianService:
                 can_mri=can_mri,
                 is_available=is_available,
                 daily_quota=daily_quota,
-                current_day_count=0,          # TODO: track live from assignment_log
+                current_day_count=daily_counts.get(diag_id, 0),
                 current_subcategory_count=0,  # TODO: track per body-part
                 subcategory_soft_cap=None,
                 skill_proficiency=skill_proficiency,
                 has_skill_match=skill_match is not None,
                 has_skill_data=len(skills) > 0,
-                accepts_lab=accepts_lab,
+                accepts_lab=True,
                 is_partnership_match=is_partner,
                 is_partnership_exclusive=is_exclusive,
                 has_patient_history=has_history,
@@ -160,15 +140,25 @@ class DiagnosticianService:
     async def get_all_diagnosticians(self) -> list[dict]:
         """Get all active diagnosticians for the UI dropdown/list."""
         diags = cfg_db.get_all_diagnosticians()
+        counts = cfg_db.get_daily_assignment_counts()
+        today = str(date.today())
+        absent_ids = cfg_db.get_absent_diagnostician_ids(today)
+
         return [
             {
                 "id": d["id"],
                 "name": d["name"],
                 "can_ct": bool(d["can_ct"]),
                 "can_mri": bool(d["can_mri"]),
-                "daily_quota": d["daily_quota"],
-                "current_day_count": 0,
-                "available": bool(d["active"]),
+                "quota_monday": d["quota_monday"],
+                "quota_tuesday": d["quota_tuesday"],
+                "quota_wednesday": d["quota_wednesday"],
+                "quota_thursday": d["quota_thursday"],
+                "quota_friday": d["quota_friday"],
+                "quota_saturday": d["quota_saturday"],
+                "quota_sunday": d["quota_sunday"],
+                "current_day_count": counts.get(d["id"], 0),
+                "available": bool(d["active"]) and (d["id"] not in absent_ids),
             }
             for d in diags
             if d["active"]
