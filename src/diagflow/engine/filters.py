@@ -37,6 +37,7 @@ class ExamContext:
     modality: str = ""  # "CT" or "MRI"
     body_part: str = ""  # e.g., "abdomen", "neuro", "chest", "msk"
     exam_code: str = ""  # Added for skill matching
+    exam_name: str = ""  # Human readable name of the exam
     lab_id: str = ""
     lab_name: str = ""
     issuing_doctor_id: str = ""
@@ -62,8 +63,6 @@ class CandidateDiagnostician:
     is_available: bool = True
     daily_quota: int = 15
     current_day_count: int = 0
-    current_subcategory_count: int = 0  # Same body-part count for today
-    subcategory_soft_cap: Optional[int] = None
 
     # Skills for the exam's body part/modality
     skill_proficiency: float = 0.0
@@ -180,11 +179,12 @@ def filter_by_skills_hard(
     If no skill data exists, the candidate passes (they get a neutral 0.3
     in the weighted scoring phase, not an elimination).
     """
+    exam_type = exam.exam_name if exam.exam_name else (f"{exam.body_part} ({exam.modality})" if exam.body_part else exam.modality)
     if candidate.has_skill_data and candidate.skill_proficiency == 0.0:
         return FilterResult(
             passed=False,
             rule_name="skills",
-            reason="Δεν αξιολογεί τη συγκεκριμένη εξέταση",
+            reason=f"Δεν μπορεί να διαγνώσει '{exam_type}'",
         )
     return FilterResult(
         passed=True,

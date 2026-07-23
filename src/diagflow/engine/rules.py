@@ -72,7 +72,7 @@ RULES: list[Rule] = [
         name="skills",
         display_name="Εξειδίκευση (Φίλτρο)",
         rule_type=RuleType.HARD_FILTER,
-        priority=4,
+        priority=3,
         description=(
             "Hard filter on skills: if a diagnostician has a recorded proficiency "
             "of 0 for the exam's body-part/modality, they are eliminated. "
@@ -81,23 +81,22 @@ RULES: list[Rule] = [
     ),
     # ── Weighted Preferences (produce a score) ──
     Rule(
-        name="capacity",
-        display_name="Χωρητικότητα",
+        name="patient_history",
+        display_name="Ιστορικό Ασθενή",
         rule_type=RuleType.WEIGHTED_PREFERENCE,
-        priority=2,
-        default_weight=0.30,
+        priority=4,
+        default_weight=0.20,
         description=(
-            "Score based on remaining daily quota. "
-            "Higher remaining capacity = higher score. "
-            "Diagnosticians at or over their hard quota get score 0."
+            "Continuity of care — same diagnostician for same patient's "
+            "past similar exams. Gives a bonus for consistency."
         ),
     ),
     Rule(
         name="partnership",
         display_name="Συνεργασία Ιατρού",
         rule_type=RuleType.WEIGHTED_PREFERENCE,
-        priority=3,
-        default_weight=0.25,
+        priority=5,
+        default_weight=0.35,
         description=(
             "Whether the issuing doctor has a preferred diagnostician. "
             "If matched, gives a significant scoring bonus."
@@ -107,22 +106,23 @@ RULES: list[Rule] = [
         name="lab_preference",
         display_name="Προτίμηση Εργαστηρίου",
         rule_type=RuleType.WEIGHTED_PREFERENCE,
-        priority=5,
-        default_weight=0.10,
+        priority=6,
+        default_weight=0.15,
         description=(
             "Weighted score for whether a diagnostician accepts the exam's lab. "
             "Not accepting = score penalty, but not a hard elimination."
         ),
     ),
     Rule(
-        name="patient_history",
-        display_name="Ιστορικό Ασθενή",
+        name="capacity",
+        display_name="Χωρητικότητα",
         rule_type=RuleType.WEIGHTED_PREFERENCE,
-        priority=6,
-        default_weight=0.15,
+        priority=7,
+        default_weight=0.10,
         description=(
-            "Continuity of care — same diagnostician for same patient's "
-            "past similar exams. Gives a bonus for consistency."
+            "Score based on remaining daily quota. "
+            "Higher remaining capacity = higher score. "
+            "Diagnosticians at or over their hard quota get score 0."
         ),
     ),
     # ── DISABLED: Comment Exclusion ──

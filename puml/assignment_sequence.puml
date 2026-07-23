@@ -9,87 +9,120 @@ skinparam sequenceMessageAlign center
 actor "Secretariat\nOperator" as operator
 participant "Review\nDashboard" as ui #E8F5E9
 participant "FastAPI\nBackend" as api #E3F2FD
+participant "Assignment\nService" as assign #B3E5FC
+participant "Diagnostician\nService" as diag_svc #B3E5FC
 participant "Rule\nEngine" as engine #BBDEFB
-participant "Comment\nParser (LLM)" as llm #FFF3E0
-database "Slis DB" as slisdb #FFE0B2
-database "Config\nTables" as configdb #B2EBF2
+database "mock_slis.db" as mockdb #FFE0B2
+database "diagflow.db" as configdb #B2EBF2
+
+== Startup: Slis Pull + Auto-Assignments ==
+
+api -> assign : pull_from_slis()
+assign -> mockdb : SELECT pending exams\n(last 3 days, no diagnostician)
+mockdb --> assign : Raw exam rows
+assign -> configdb : Get exclusive partnerships
+assign -> configdb : Get Παμμακάριστος on-call
+assign -> assign : Auto-assign:\n1. Exclusive partners\n2. Παμμακάριστος 22705 → ΜΠΕΡΕΤΗΣ\n3. Παμμακάριστος general → on-call
+assign -> configdb : upsert_local_assignment\n(auto-assigned)
+assign --> api : Remaining pending exams
 
 == Fetch Pending Exams ==
 
 operator -> ui : Open dashboard
 ui -> api : GET /api/exams/pending
-api -> slisdb : Query unassigned exams
-slisdb --> api : List of pending exams
-api --> ui : Pending exams with details
-ui --> operator : Display exam list
+api -> assign : get_pending_exams()
+assign -> mockdb : Query unassigned exams
+assign -> configdb : Check local_assignments\n(exclude already assigned)
+assign --> api : Filtered pending list
+api --> ui : Pending exams
+ui --> operator : Display exam table
 
 == Generate Suggestion ==
 
-operator -> ui : Click "Get Suggestion"\nfor exam #12345
+operator -> ui : Click row → Suggest
 ui -> api : POST /api/assignments/suggest\n{ exam_id: "12345" }
 
-api -> slisdb : Fetch exam details\n(patient, doctor, lab, body_part, comments)
-slisdb --> api : Exam data
+api -> diag_svc : get_candidates_for_exam()
+diag_svc -> configdb : Batch load:\n• All diagnosticians\n• All skills (grouped)\n• Absent IDs for today\n• Partnerships for doctor\n• Daily assignment counts
+configdb --> diag_svc : Enriched candidate list
+diag_svc --> api : List<CandidateDiagnostician>
 
-api -> engine : run_pipeline(exam_data)
+note over api : Apply session suggestion\ncounts as virtual workload\nfor load-balancing
 
-group Hard Filters
-    engine -> llm : Parse comments:\n"Επείγον, ΟΧΙ ΝΑΤΣΙΚΑ"
-    llm --> engine : { exclude: ["Νάτσικα"],\nassign: null }
+api -> engine : pipeline.run(exam, candidates)
 
-    engine -> configdb : Get availability for today
-    configdb --> engine : Available diagnostician list
-
-    engine -> configdb : Get lab preferences
-    configdb --> engine : Lab-filtered list
-
-    engine -> engine : Apply modality filter (CT/MRI)
+group Stage 0: Exclusive Partnership Check
+    engine -> engine : Any exclusive partner?
+    note right : If yes → skip all stages,\nreturn direct assignment
 end
 
-note over engine : 5 candidates remain\nafter hard filters
-
-group Weighted Scoring
-    engine -> configdb : Get capacity & today's counts
-    configdb --> engine : Quota data
-
-    engine -> configdb : Get skills for body_part
-    configdb --> engine : Skill matches
-
-    engine -> configdb : Get partnerships\nfor issuing doctor
-    configdb --> engine : Partnership data
-
-    engine -> slisdb : Get patient's past assignments
-    slisdb --> engine : History data
-
-    engine -> engine : Calculate composite scores\n+ subcategory penalties
+group Stage 1: Hard Filters
+    engine -> engine : filter_by_availability()
+    engine -> engine : filter_by_capacity()
+    engine -> engine : filter_by_modality()
+    engine -> engine : filter_by_skills_hard()
+    note right
+        Eliminated candidates are
+        NOT hidden — they appear in
+        alternatives with red indicator
+        and elimination reason
+    end note
 end
 
-engine -> engine : OR-Tools CP-SAT\noptimize assignment
+note over engine : N candidates remain\nafter hard filters
 
-engine --> api : Suggestion:\n{ diagnostician: "Παπαδόπουλος",\nscore: 0.87,\nreasons: [...],\nalternatives: [...] }
+group Stage 2: Weighted Scoring
+    engine -> engine : score_skills_weighted()
+    engine -> engine : score_patient_history()
+    engine -> engine : score_partnership()
+    engine -> engine : score_lab_preference()
+    engine -> engine : score_capacity()
+    engine -> engine : Composite score per candidate\n(clamped to 0.0–1.0)
+end
 
-api -> configdb : Log suggestion\nto assignment_log
-api --> ui : Suggestion with\nscore breakdown
+group Stage 3: Near-Tie Load Balancing
+    engine -> engine : Find top score
+    engine -> engine : Group candidates within\nscore_tie_tolerance (5%)
+    engine -> engine : Near-tie group:\nsort by workload → quota → random
+end
 
-ui --> operator : Show suggestion:\n"Παπαδόπουλος (87%)\n✓ Partnership match\n✓ Capacity: 8/15\n✓ Abdominal specialist"
+group Stage 4: Solver
+    engine -> engine : solve_single_assignment()\nGreedy: pick rank #1
+end
+
+engine --> api : AssignmentSuggestion:\n{ diagnostician, score,\nbreakdown, alternatives }
+
+note over api : Cache suggestion\nIncrement session counter
+
+api --> ui : SuggestionResponse
+ui --> operator : Show suggestion:\n"ΠΑΠΑΔΟΠΟΥΛΟΣ (87%)\n✓ Συνεργασία Ιατρού\n✓ Χωρητικότητα: 8/15\n✓ Εξειδίκευση"
 
 == Operator Decision ==
 
 alt Confirm suggestion
     operator -> ui : Click "Confirm"
-    ui -> api : POST /api/assignments/confirm\n{ exam_id: "12345",\ndiagnostician_id: "papadopoulos" }
-    api -> slisdb : Write assignment to Slis
-    api -> configdb : Update log:\nwas_overridden = false
-    api --> ui : Assignment confirmed
-    ui --> operator : ✅ Assigned to Παπαδόπουλος
+    ui -> api : POST /api/assignments/confirm\n{ exam_id, diagnostician_id }
+    api -> configdb : upsert_local_assignment()
+    api --> ui : AssignmentConfirmation
+    ui --> operator : ✅ Ανατέθηκε
 
 else Override suggestion
-    operator -> ui : Click "Override"\nSelect "Κωνσταντίνου"
-    ui -> api : POST /api/assignments/override\n{ exam_id: "12345",\ndiagnostician_id: "konstantinou",\nreason: "Patient preference" }
-    api -> slisdb : Write override to Slis
-    api -> configdb : Update log:\nwas_overridden = true\noverride_reason = "Patient preference"
-    api --> ui : Override recorded
-    ui --> operator : ⚠️ Overridden → Κωνσταντίνου
+    operator -> ui : Select different diagnostician
+    ui -> api : POST /api/assignments/override\n{ exam_id, override_id, reason }
+    api -> configdb : upsert_local_assignment()
+    api --> ui : AssignmentConfirmation\n(was_overridden=true)
+    ui --> operator : ⚠️ Αντικαταστάθηκε
 end
+
+== Push to Slis ==
+
+operator -> ui : Click "Αποστολή στο Slis"
+ui -> api : POST /api/slis/push-all
+api -> assign : push_all_to_slis()
+assign -> mockdb : UPDATE slis_exams\nSET slis_synced_at, diagnostis
+assign -> configdb : DELETE from local_assignments
+assign --> api : { succeeded, failed, queries }
+api --> ui : Push result
+ui --> operator : ✅ Pushed N exams to Slis
 
 @enduml

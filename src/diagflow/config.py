@@ -43,13 +43,19 @@ class Settings(BaseSettings):
 
     # ── Rule Engine Weights ──
     # These control the relative importance of each scoring factor.
-    # Rule hierarchy: availability(hard) → capacity → partnership → skills(hard+bonus) → lab → history
+    # Rule hierarchy: availability(hard) → capacity(hard) → skills(hard) → history → partnership → lab → capacity(weight)
     # Sum ≈ 1.0 for interpretability; scores are clamped to [0, 1] internally.
-    weight_capacity: float = Field(default=0.30, ge=0.0, le=1.0)
-    weight_partnership: float = Field(default=0.25, ge=0.0, le=1.0)
-    weight_skills: float = Field(default=0.15, ge=0.0, le=1.0)  # Weighted bonus (hard filter handled in filters.py)
-    weight_lab: float = Field(default=0.10, ge=0.0, le=1.0)  # Lab preference — now weighted, not hard filter
-    weight_patient_history: float = Field(default=0.15, ge=0.0, le=1.0)
+    weight_partnership: float = Field(default=0.35, ge=0.0, le=1.0)
+    weight_patient_history: float = Field(default=0.20, ge=0.0, le=1.0)
+    weight_skills: float = Field(default=0.20, ge=0.0, le=1.0)  # Weighted bonus (hard filter handled in filters.py)
+    weight_lab: float = Field(default=0.15, ge=0.0, le=1.0)  # Lab preference — now weighted, not hard filter
+    weight_capacity: float = Field(default=0.10, ge=0.0, le=1.0)
+
+    # ── Load Balancing ──
+    # Scores within this threshold of the top score are treated as equivalent ("near-ties").
+    # These near-tied candidates are ranked by workload (fewest exams today first) instead of score.
+    # Default: 0.05 = 5 percentage points. Set to 0.0 to disable (strict score ordering).
+    score_tie_tolerance: float = Field(default=0.05, ge=0.0, le=1.0)
 
     # ── Application ──
     app_host: str = Field(default="0.0.0.0")

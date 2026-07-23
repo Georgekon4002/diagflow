@@ -1,0 +1,190 @@
+@startuml
+
+title DiagFlow — Entity-Relationship Diagram
+skinparam backgroundColor #FEFEFE
+skinparam defaultFontName Inter
+skinparam shadowing false
+skinparam linetype ortho
+
+hide circle
+
+' ─────────────────────────────────────────────
+'  diagflow.db — Config & State
+' ─────────────────────────────────────────────
+
+package "diagflow.db" as db1 #E3F2FD {
+
+    entity "diagnosticians" as diag {
+        * id : INTEGER <<PK, autoincrement>>
+        --
+        name : TEXT <<NOT NULL>>
+        active : INTEGER <<NOT NULL, default 1>>
+        can_ct : INTEGER <<default 1>>
+        can_mri : INTEGER <<default 1>>
+        quota_monday : INTEGER <<default 15>>
+        quota_tuesday : INTEGER <<default 15>>
+        quota_wednesday : INTEGER <<default 15>>
+        quota_thursday : INTEGER <<default 15>>
+        quota_friday : INTEGER <<default 15>>
+        quota_saturday : INTEGER <<default 0>>
+        quota_sunday : INTEGER <<default 0>>
+        preferred_lab_id : INTEGER <<nullable>>
+    }
+
+    entity "diagnostician_skills" as skills {
+        * id : INTEGER <<PK, autoincrement>>
+        --
+        diagnostician_id : INTEGER <<FK, NOT NULL>>
+        exam_code : TEXT <<NOT NULL>>
+        is_preferred : INTEGER <<default 0>>
+        ..
+        <<UNIQUE(diagnostician_id, exam_code)>>
+    }
+
+    entity "partnerships" as partners {
+        * id : INTEGER <<PK, autoincrement>>
+        --
+        issuing_doctor_id : TEXT <<NOT NULL>>
+        issuing_doctor_name : TEXT <<NOT NULL>>
+        preferred_diagnostician_id : INTEGER <<FK, NOT NULL>>
+        priority : INTEGER <<default 1>>
+        exclusive : INTEGER <<default 0>>
+        is_active : INTEGER <<default 1>>
+    }
+
+    entity "availability" as avail {
+        * id : INTEGER <<PK, autoincrement>>
+        --
+        diagnostician_id : INTEGER <<FK, NOT NULL>>
+        date : TEXT <<NOT NULL>> (ISO-8601)
+        status : TEXT <<NOT NULL, default 'available'>>
+        is_pamakristos_oncall : INTEGER <<default 0>>
+        notes : TEXT
+        ..
+        <<UNIQUE(diagnostician_id, date)>>
+    }
+
+    entity "doctors" as docs {
+        * id : TEXT <<PK>>
+        --
+        name : TEXT <<NOT NULL>>
+        specialty : TEXT <<default ''>>
+    }
+
+    entity "local_assignments" as local {
+        * exammoreid : INTEGER <<PK>>
+        --
+        diagnostician_id : INTEGER <<NOT NULL>>
+        diagnostician_name : TEXT
+        assigned_at : TEXT <<NOT NULL>> (ISO-8601)
+    }
+
+    entity "assignment_log" as log {
+        * exammoreid : INTEGER <<PK>>
+        --
+        diagnostician_id : INTEGER <<NOT NULL>>
+        assigned_at : TEXT <<NOT NULL>> (ISO-8601)
+    }
+
+    entity "pamakristos_schedule" as pam {
+        * weekday : INTEGER <<PK>> (0=Mon..6=Sun)
+        --
+        diagnostician_id : INTEGER <<FK, NOT NULL>>
+    }
+}
+
+' ─────────────────────────────────────────────
+'  mock_slis.db — Slis Mirror
+' ─────────────────────────────────────────────
+
+package "mock_slis.db" as db2 #FFF3E0 {
+
+    entity "exam_categories" as cats {
+        * examnumcode : INTEGER <<PK>>
+        --
+        name : TEXT <<NOT NULL>>
+        category : TEXT <<NOT NULL>> (CT|MRI|MRA)
+    }
+
+    entity "slis_exams" as exams {
+        * exammoreid : INTEGER <<PK>>
+        --
+        extracode : INTEGER
+        visitid : INTEGER
+        demogid : INTEGER
+        fname : TEXT
+        lname : TEXT
+        examid : INTEGER
+        examnumcode : INTEGER <<FK>>
+        examname : TEXT
+        visitdate : TEXT (ISO-8601)
+        labcodeid : INTEGER
+        laboratoryname : TEXT
+        wardid : INTEGER
+        wcode : TEXT
+        wname : TEXT
+        diagnostis : INTEGER <<nullable>>
+        personelid : INTEGER
+        code : TEXT
+        name : TEXT
+        notes : TEXT
+        category : TEXT
+        slis_synced_at : TEXT <<nullable>>
+        ..
+        oldexam : INTEGER
+        oldvisit : INTEGER
+        oldorder : TEXT
+        oldpers : INTEGER
+        olddiagnostis : TEXT
+        aa : INTEGER
+    }
+
+    entity "diagnosticians\n(Slis personnel)" as slis_diag {
+        * PERSONELID : INTEGER <<PK>>
+        --
+        DOCNAME : TEXT
+    }
+
+    entity "doctors\n(Slis doctors)" as slis_docs {
+        * CODE : INTEGER <<PK>>
+        --
+        DOCNAME : TEXT
+    }
+}
+
+' ─────────────────────────────────────────────
+'  Relationships — diagflow.db
+' ─────────────────────────────────────────────
+diag ||--o{ skills : "1:N"
+diag ||--o{ avail : "1:N"
+diag ||--o{ partners : "1:N\n(preferred_diagnostician_id)"
+diag ||--o{ pam : "1:N"
+diag ||--o{ local : "1:N\n(diagnostician_id)"
+diag ||--o{ log : "1:N\n(diagnostician_id)"
+
+partners }o--|| docs : "N:1\n(issuing_doctor_id)"
+
+' ─────────────────────────────────────────────
+'  Relationships — mock_slis.db
+' ─────────────────────────────────────────────
+exams }o--|| cats : "N:1\n(examnumcode)"
+
+' ─────────────────────────────────────────────
+'  Cross-database references
+' ─────────────────────────────────────────────
+local ..> exams : "references\nexammoreid"
+log ..> exams : "references\nexammoreid"
+
+note bottom of db2
+    In **production**, mock_slis.db is replaced
+    by the real Slis MSSQL database via pyodbc.
+    Only the connection string changes.
+end note
+
+note bottom of db1
+    All tables use raw **sqlite3** (no ORM).
+    diagflow_db.py provides a CRUD layer
+    with context-managed connections.
+end note
+
+@enduml

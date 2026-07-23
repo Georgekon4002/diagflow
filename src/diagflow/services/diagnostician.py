@@ -86,9 +86,9 @@ class DiagnosticianService:
                     break
 
             if skill_match:
-                skill_proficiency = 2 if skill_match.get("is_preferred") else 1
+                skill_proficiency = 1.0 if skill_match.get("is_preferred") else 0.5
             else:
-                skill_proficiency = 0
+                skill_proficiency = 0.0
 
             # Modality capability
             can_ct = bool(diag["can_ct"])
@@ -118,8 +118,6 @@ class DiagnosticianService:
                 is_available=is_available,
                 daily_quota=daily_quota,
                 current_day_count=daily_counts.get(diag_id, 0),
-                current_subcategory_count=0,  # TODO: track per body-part
-                subcategory_soft_cap=None,
                 skill_proficiency=skill_proficiency,
                 has_skill_match=skill_match is not None,
                 has_skill_data=len(skills) > 0,

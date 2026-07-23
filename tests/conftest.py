@@ -45,8 +45,6 @@ def sample_candidates() -> list[CandidateDiagnostician]:
             is_partnership_match=False,
             has_patient_history=True,
             patient_history_count=3,
-            current_subcategory_count=3,
-            subcategory_soft_cap=5,
         ),
         CandidateDiagnostician(
             id=2,

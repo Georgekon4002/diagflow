@@ -1,0 +1,246 @@
+@startuml
+
+title DiagFlow — Class Diagram: API Layer
+skinparam backgroundColor #FEFEFE
+skinparam defaultFontName Inter
+skinparam shadowing false
+skinparam classAttributeIconSize 0
+
+' ─── FastAPI Application ───
+
+package "diagflow.main" as main_pkg #E3F2FD {
+    class "FastAPI App" as app {
+        + title: str = "DiagFlow"
+        + version: str
+        --
+        + lifespan(app): AsyncContextManager
+        + health_check(): HealthResponse
+        --
+        Mounts:
+        • /api/* → APIRouter
+        • / → StaticFiles (frontend/)
+    }
+}
+
+' ─── API Routes ───
+
+package "diagflow.api" as api_pkg #BBDEFB {
+
+    class "APIRouter (routes.py)" as router {
+        __ Exams __
+        + GET  /exams/pending
+        + GET  /exams/assigned
+        __ Assignment Engine __
+        + POST /assignments/suggest
+        + POST /assignments/confirm
+        + POST /assignments/override
+        + POST /assignments/bulk-confirm
+        + POST /assignments/bulk-override
+        __ Slis Sync __
+        + POST /slis/pull
+        + POST /slis/push-all
+        + POST /slis/push-selected
+        __ Diagnosticians __
+        + GET  /diagnosticians
+        __ Παμμακάριστος __
+        + GET  /pamakristos/oncall
+        + GET  /pamakristos/schedule
+        + POST /pamakristos/oncall
+        __ Admin (auth required) __
+        + POST /admin/auth/login
+        + CRUD /admin/diagnosticians
+        + CRUD /admin/partnerships
+        + CRUD /admin/doctors
+        + CRUD /admin/availability
+        + CRUD /admin/skills
+        + CRUD /admin/oncall
+        + CRUD /admin/pamakristos/weekly-schedule
+        + POST /admin/sync-diagnosticians
+        + POST /admin/sync-doctors
+        + GET  /admin/exam-categories
+        --
+        - _suggestion_cache: dict
+        - _session_suggestion_counts: dict[int, int]
+        - _admin_sessions: set[str]
+        - _require_admin(token): str
+    }
+
+    ' ─── Request Schemas ───
+
+    class "SuggestAssignmentRequest" as req_suggest {
+        + exam_id: str
+    }
+
+    class "ConfirmAssignmentRequest" as req_confirm {
+        + exam_id: str
+        + diagnostician_id: int
+    }
+
+    class "OverrideAssignmentRequest" as req_override {
+        + exam_id: str
+        + original_diagnostician_id: int
+        + override_diagnostician_id: int
+        + reason: str
+    }
+
+    class "BulkConfirmRequest" as req_bulk_confirm {
+        + exam_ids: list[str]
+    }
+
+    class "BulkOverrideRequest" as req_bulk_override {
+        + exam_ids: list[str]
+        + override_diagnostician_id: int
+        + reason: str
+    }
+
+    class "SetOncallRequest" as req_oncall {
+        + date: str
+        + diagnostician_id: int
+    }
+
+    ' ─── Response Schemas ───
+
+    class "SuggestionResponse" as resp_suggest {
+        + exam_id: str
+        + patient_id: str
+        + exam_summary: str
+        + suggested_diagnostician_id: int
+        + suggested_diagnostician_name: str
+        + confidence_score: float
+        + score_breakdown: list[ScoreComponentResponse]
+        + alternatives: list[AlternativeCandidate]
+        + rules_fired: list[str]
+        + solver_status: str
+        + pipeline_timestamp: str
+    }
+
+    class "ScoreComponentResponse" as resp_score {
+        + rule: str
+        + display_name: str
+        + raw_score: float
+        + weight: float
+        + weighted_score: float
+        + explanation: str
+    }
+
+    class "AlternativeCandidate" as resp_alt {
+        + id: int
+        + name: str
+        + score: float
+        + eliminated: bool
+        + elimination_reason: str | None
+    }
+
+    class "AssignmentConfirmation" as resp_confirm {
+        + exam_id: str
+        + diagnostician_id: int
+        + was_overridden: bool
+        + status: str
+        + timestamp: str
+    }
+
+    class "DiagnosticianResponse" as resp_diag {
+        + id: int
+        + name: str
+        + can_ct: bool
+        + can_mri: bool
+        + quota_monday..sunday: int
+        + current_day_count: int
+        + available: bool
+    }
+
+    ' ─── Dependencies ───
+
+    class "dependencies.py" as deps {
+        + get_assignment_service(): AssignmentService
+        + get_diagnostician_service(): DiagnosticianService
+        + get_pamakristos_scheduler(): PamakristosScheduler
+    }
+}
+
+' ─── Services ───
+
+package "diagflow.services" as svc_pkg #B3E5FC {
+    class "AssignmentService" as assign_svc {
+        - pipeline: AssignmentPipeline
+        --
+        + suggest_assignment(exam, candidates): AssignmentSuggestion
+        + confirm_assignment(exam_id, diag_id, suggestion): dict
+        + override_assignment(exam_id, orig_id, override_id, reason): dict
+        + get_pending_exams(): list[dict]
+        + get_assigned_exams(): list[dict]
+        + get_exam_categories(): list[dict]
+    }
+
+    class "DiagnosticianService" as diag_svc {
+        + get_candidates_for_exam(...): list[CandidateDiagnostician]
+        + get_all_diagnosticians(): list[dict]
+    }
+
+    class "PamakristosScheduler" as pam_svc {
+        + get_oncall_diagnostician(date): dict | None
+        + set_oncall_diagnostician(date, diag_id): dict
+        + set_manual_override_from_admin(data): void
+        + get_weekly_schedule(start): list[dict]
+    }
+
+    class "slis_sync" as sync_svc {
+        + {static} pull_from_slis(): dict
+        + {static} push_exam_to_slis(id, diag_id, name): dict
+        + {static} push_all_to_slis(): dict
+        + {static} push_selected_to_slis(ids): dict
+        + {static} sync_diagnosticians(): dict
+        + {static} sync_doctors(): dict
+        + {static} delete_expired(con): int
+    }
+}
+
+' ─── Settings ───
+
+package "diagflow.config" as config_pkg #F3E5F5 {
+    class "Settings" as settings {
+        + slis_db_connection_string: str
+        + config_db_connection_string: str
+        + use_mock_slis_db: bool
+        + mock_slis_db_path: str
+        + weight_partnership: float = 0.35
+        + weight_patient_history: float = 0.20
+        + weight_skills: float = 0.20
+        + weight_lab: float = 0.15
+        + weight_capacity: float = 0.10
+        + score_tie_tolerance: float = 0.05
+        + app_host: str
+        + app_port: int
+        + app_env: str
+        + log_level: str
+    }
+}
+
+' ─── Relationships ───
+
+app --> router : includes
+router --> deps : uses
+deps --> assign_svc : provides
+deps --> diag_svc : provides
+deps --> pam_svc : provides
+
+router ..> req_suggest : request body
+router ..> req_confirm : request body
+router ..> req_override : request body
+router ..> req_bulk_confirm : request body
+router ..> req_bulk_override : request body
+router ..> req_oncall : request body
+
+router ..> resp_suggest : response
+router ..> resp_confirm : response
+router ..> resp_diag : response
+
+resp_suggest *-- resp_score : contains
+resp_suggest *-- resp_alt : contains
+
+assign_svc --> sync_svc : push to Slis
+router --> sync_svc : pull/push endpoints
+assign_svc ..> settings : reads weights
+diag_svc ..> settings : reads config
+
+@enduml

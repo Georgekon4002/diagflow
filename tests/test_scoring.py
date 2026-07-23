@@ -6,7 +6,6 @@ Tests that the weighted scoring logic produces correct scores.
 
 from diagflow.engine.scoring import (
     compute_candidate_score,
-    penalty_subcategory_load,
     score_all_candidates,
     score_capacity,
     score_partnership,
@@ -87,23 +86,6 @@ class TestPatientHistoryScoring:
         """Candidate without patient history should score 0."""
         candidate = sample_candidates[1]  # Κωνσταντίνου: no history
         result = score_patient_history(candidate, sample_exam)
-        assert result.raw_score == 0.0
-
-
-class TestSubcategoryPenalty:
-    """Tests for the subcategory load penalty."""
-
-    def test_high_subcategory_load_penalizes(self, sample_exam, sample_candidates):
-        """Candidate with high same-category count should get a penalty."""
-        candidate = sample_candidates[0]  # Νάτσικα: 3/5 abdomen
-        result = penalty_subcategory_load(candidate, sample_exam)
-        assert result.raw_score == pytest.approx(0.6, abs=0.01)
-        assert result.weighted_score < 0  # It's a penalty
-
-    def test_no_subcategory_load_no_penalty(self, sample_exam, sample_candidates):
-        """Candidate with no same-category exams today should have no penalty."""
-        candidate = sample_candidates[1]  # Κωνσταντίνου: 0 abdomen
-        result = penalty_subcategory_load(candidate, sample_exam)
         assert result.raw_score == 0.0
 
 

@@ -8,71 +8,91 @@ skinparam shadowing false
 
 ' ─── External Systems ───
 package "External Systems" as ext #E8EAF6 {
-    database "Slis DB\n(MSSQL)" as slisdb {
-        collections "Exams / Requests"
-        collections "Patients"
+    database "Slis DB\n(MSSQL — production)" as slisdb {
+        collections "exammore (exams)"
+        collections "Personnel (diagnosticians)"
         collections "Doctors"
-        collections "Assignments"
     }
 
-    component "LLM API\n(Comment Parser)" as llm #FFF3E0
+    database "mock_slis.db\n(SQLite — development)" as mockdb {
+        collections "slis_exams"
+        collections "exam_categories"
+        collections "diagnosticians"
+        collections "doctors"
+    }
 }
 
 ' ─── DiagFlow Core ───
-package "DiagFlow Service" as core #E3F2FD {
+package "DiagFlow FastAPI Server" as core #E3F2FD {
     component "FastAPI\nApplication" as api
-
-    package "Rule Engine" as engine #BBDEFB {
-        component "Hard Filters" as filters
-        component "Weighted Scoring" as scoring
-        component "OR-Tools\nCP-SAT Solver" as solver
-    }
+    component "APScheduler\n(daily 3 AM sync)" as cron #F3E5F5
 
     package "Services" as services #B3E5FC {
         component "Assignment\nService" as assign_svc
         component "Diagnostician\nService" as diag_svc
-        component "Comment\nParser" as comment_svc
-        component "Παμακάριστος\nScheduler" as pam_svc
+        component "Παμμακάριστος\nScheduler" as pam_svc
+        component "Slis Sync\nService" as sync_svc
+    }
+
+    package "Rule Engine" as engine #BBDEFB {
+        component "Hard Filters" as filters
+        component "Weighted\nScoring" as scoring
+        component "Near-Tie\nLoad Balancer" as balancer
+        component "OR-Tools\nCP-SAT Solver" as solver
     }
 
     package "Data Layer" as data #B2EBF2 {
-        component "Slis Engine\n(read-only)" as slis_engine
-        component "Config Engine\n(read-write)" as config_engine
+        component "diagflow_db.py\n(raw sqlite3)" as cfg_layer
+        component "engines.py\n(SQLAlchemy — prod)" as sa_engines
     }
 
-    database "Config Tables" as configdb {
+    database "diagflow.db\n(Config & State)" as configdb {
+        collections "diagnosticians"
         collections "diagnostician_skills"
-        collections "diagnostician_capacity"
-        collections "diagnostician_availability"
         collections "partnerships"
+        collections "availability"
+        collections "doctors"
+        collections "local_assignments"
         collections "assignment_log"
+        collections "pamakristos_schedule"
     }
 }
 
 ' ─── Frontend ───
-package "Secretariat" as front #E8F5E9 {
-    component "Review\nDashboard" as dashboard
+package "Frontend (Static HTML/JS)" as front #E8F5E9 {
+    component "Secretariat\nDashboard\n(index.html)" as dashboard
+    component "Admin\nPanel\n(admin.html)" as admin
     actor "Operator" as operator
 }
 
 ' ─── Connections ───
-slisdb --> slis_engine : "read exams,\npatients, doctors"
-slis_engine --> services
-config_engine --> configdb : "read/write\nconfig & logs"
-config_engine --> services
+slisdb <..> sa_engines : "pyodbc\n(production)"
+mockdb <--> sync_svc : "SQLite read/write\n(development)"
+
+cfg_layer --> configdb : "sqlite3\nCRUD"
+sa_engines ..> services : "(future)"
+
+sync_svc --> cfg_layer : "sync diagnosticians\n& doctors"
+cron --> sync_svc : "trigger daily\nsync_diagnosticians()\nsync_doctors()"
 
 services --> engine : "run pipeline"
-comment_svc --> llm : "parse comments"
-filters --> scoring : "candidates"
-scoring --> solver : "scored list"
+assign_svc --> cfg_layer : "upsert_local_assignment\nget_daily_counts"
+diag_svc --> cfg_layer : "get candidates\nskills, partnerships"
+pam_svc --> cfg_layer : "get/set on-call"
+
+filters --> scoring : "passed\ncandidates"
+scoring --> balancer : "scored list"
+balancer --> solver : "tie-broken list"
 
 api --> services : "orchestrate"
-api --> dashboard : "serve UI +\nREST API"
+api --> dashboard : "serve /\n+ REST /api/*"
+api --> admin : "serve\n/admin.html"
 dashboard --> operator : "show suggestions\n+ reasons"
 operator --> dashboard : "confirm /\noverride"
-dashboard --> api : "POST decision"
+dashboard --> api : "POST decisions"
+admin --> api : "admin CRUD"
 
-assign_svc --> slisdb : "write-back\nfinal assignment"
-assign_svc --> configdb : "log decision\n+ audit trail"
+assign_svc --> sync_svc : "push to Slis"
+assign_svc --> cfg_layer : "log decision"
 
 @enduml

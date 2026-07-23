@@ -116,15 +116,17 @@ def score_skills_weighted(candidate: CandidateDiagnostician, exam: ExamContext) 
     Candidates with no skill data (who passed the hard filter) get a neutral 0.3.
     This is separate from the hard skills filter — it rewards expertise.
     """
+    exam_type = exam.exam_name if exam.exam_name else (f"{exam.body_part} ({exam.modality})" if exam.body_part else exam.modality)
+    
     if candidate.has_skill_match and candidate.has_skill_data:
         raw = candidate.skill_proficiency # Which is 1.0 if preferred, 0.5 if neutral
         if raw >= 1.0:
-            explanation = f"Προτιμά εξετάσεις '{exam.body_part}' ({exam.modality})"
+            explanation = f"Προτιμά να διαγνώσει '{exam_type}'"
         else:
-            explanation = f"Αποδεκτή εξέταση '{exam.body_part}' ({exam.modality}) (Ουδέτερο)"
+            explanation = f"Μπορεί να διαγνώσει '{exam_type}' (Ουδέτερο)"
     else:
         raw = 0.3  # Neutral — no data doesn't mean they can't do it
-        explanation = f"Δεν υπάρχουν δεδομένα εξειδίκευσης για '{exam.body_part}' (ουδέτερο)"
+        explanation = f"Δεν υπάρχουν δεδομένα εξειδίκευσης για '{exam_type}' (ουδέτερο)"
 
     return ScoreComponent(
         rule_name="skills",
@@ -212,11 +214,11 @@ def compute_candidate_score(
       f. Patient history
     """
     components = [
-        score_capacity(candidate),
-        score_partnership(candidate, exam),
         score_skills_weighted(candidate, exam),
-        score_lab_preference(candidate, exam),
         score_patient_history(candidate, exam),
+        score_partnership(candidate, exam),
+        score_lab_preference(candidate, exam),
+        score_capacity(candidate),
     ]
 
     total = sum(c.weighted_score for c in components)
@@ -239,10 +241,52 @@ def score_all_candidates(
     """
     Score all candidates and return sorted by total_score (highest first).
 
-    Also assigns rank numbers (1 = best).
+    Load-balancing / near-tie handling:
+      Candidates whose score is within `settings.score_tie_tolerance` of the top score
+      are placed in a "near-tie group". Within this group, ranking is determined by
+      workload (fewest exams today first), then quota size, then random jitter.
+      Candidates clearly outside the tolerance are ranked strictly by score as normal.
+
+    This prevents the same diagnostician from receiving all proposals when multiple
+    equally-good candidates exist (e.g., 28% vs 27% should rotate, not always pick 28%).
     """
-    scores = [compute_candidate_score(c, exam) for c in candidates]
-    scores.sort(key=lambda s: s.total_score, reverse=True)
+    import math
+    import random
+
+    scored_pairs = [(c, compute_candidate_score(c, exam)) for c in candidates]
+
+    # First pass: find the top raw score to determine the near-tie boundary
+    if not scored_pairs:
+        return []
+
+    top_score = max(pair[1].total_score for pair in scored_pairs)
+    tolerance = settings.score_tie_tolerance
+
+    def sort_key(pair: tuple[CandidateDiagnostician, "CandidateScore"]) -> tuple:
+        candidate, score = pair
+        is_near_tie = (top_score - score.total_score) <= tolerance
+
+        if is_near_tie:
+            # Within the near-tie group: sort by workload, then random
+            # Negate current_day_count so fewer exams = higher sort priority (reverse=True)
+            return (
+                1,                            # Group 0 = near-tie (sorts higher with reverse=True)
+                -candidate.current_day_count, # Fewest exams today first
+                candidate.daily_quota,        # Larger quota = more capacity
+                random.random(),              # Random jitter for final tie-break
+            )
+        else:
+            # Outside the tolerance: rank strictly by score
+            return (
+                0,                            # Group 1 = strict (sorts lower)
+                score.total_score,            # Higher score wins
+                -candidate.current_day_count,
+                candidate.daily_quota,
+            )
+
+    scored_pairs.sort(key=sort_key, reverse=True)
+
+    scores = [pair[1] for pair in scored_pairs]
 
     for i, score in enumerate(scores):
         score.rank = i + 1

@@ -1,146 +1,137 @@
 @startuml
 
-title DiagFlow — Data Model (Entity-Relationship)
+title DiagFlow — Data Model Overview
 skinparam backgroundColor #FEFEFE
 skinparam defaultFontName Inter
 skinparam shadowing false
 skinparam linetype ortho
 
-' ─── DiagFlow Config Tables ───
-package "DiagFlow Tables" as diagflow_tables #E3F2FD {
+' ─── DiagFlow Config Database (diagflow.db) ───
+package "diagflow.db — Config & State" as diagflow_db #E3F2FD {
 
     entity "diagnosticians" as diag {
-        * **id** : int <<PK>>
+        * **id** : INTEGER <<PK>>
         --
-        * name : nvarchar(200)
-        * active : bit
-        can_ct : bit
-        can_mri : bit
-        created_at : datetime
-        updated_at : datetime
+        * name : TEXT
+        * active : INTEGER (0/1)
+        can_ct : INTEGER (0/1)
+        can_mri : INTEGER (0/1)
+        quota_monday..sunday : INTEGER
+        preferred_lab_id : INTEGER
     }
 
     entity "diagnostician_skills" as skills {
-        * **id** : int <<PK>>
+        * **id** : INTEGER <<PK>>
         --
-        * diagnostician_id : int <<FK>>
-        * body_part : nvarchar(100)
-        * modality : nvarchar(10)
-        proficiency_level : float
-        notes : nvarchar(500)
-    }
-
-    entity "diagnostician_capacity" as capacity {
-        * **id** : int <<PK>>
+        * diagnostician_id : INTEGER <<FK>>
+        * exam_code : TEXT
+        is_preferred : INTEGER (0/1)
         --
-        * diagnostician_id : int <<FK>>
-        * daily_hard_quota : int
-        --
-        ""Optional sub-caps:""
-        abdomen_soft_cap : int
-        neuro_soft_cap : int
-        msk_soft_cap : int
-        chest_soft_cap : int
-    }
-
-    entity "diagnostician_lab_preference" as lab_pref {
-        * **id** : int <<PK>>
-        --
-        * diagnostician_id : int <<FK>>
-        * lab_id : nvarchar(50)
-        * lab_name : nvarchar(200)
-        accepted : bit
-    }
-
-    entity "diagnostician_availability" as avail {
-        * **id** : int <<PK>>
-        --
-        * diagnostician_id : int <<FK>>
-        * date : date
-        * status : nvarchar(50)
-        is_pamakristos_oncall : bit
-        notes : nvarchar(500)
+        UNIQUE(diagnostician_id, exam_code)
     }
 
     entity "partnerships" as partners {
-        * **id** : int <<PK>>
+        * **id** : INTEGER <<PK>>
         --
-        * issuing_doctor_id : nvarchar(50)
-        * issuing_doctor_name : nvarchar(200)
-        * preferred_diagnostician_id : int <<FK>>
-        priority : int
-        notes : nvarchar(500)
+        * issuing_doctor_id : TEXT
+        * issuing_doctor_name : TEXT
+        * preferred_diagnostician_id : INTEGER <<FK>>
+        priority : INTEGER
+        exclusive : INTEGER (0/1)
+        is_active : INTEGER (0/1)
     }
 
-    entity "assignment_log" as log {
-        * **id** : int <<PK>>
+    entity "availability" as avail {
+        * **id** : INTEGER <<PK>>
         --
-        * exam_id : nvarchar(50)
-        * patient_id : nvarchar(50)
-        * suggested_diagnostician_id : int <<FK>>
-        * final_diagnostician_id : int <<FK>>
-        * was_overridden : bit
-        * decision_timestamp : datetime
+        * diagnostician_id : INTEGER <<FK>>
+        * date : TEXT (ISO-8601)
+        * status : TEXT
+        is_pamakristos_oncall : INTEGER (0/1)
+        notes : TEXT
         --
-        exam_modality : nvarchar(10)
-        exam_body_part : nvarchar(100)
-        issuing_doctor_id : nvarchar(50)
-        lab_id : nvarchar(50)
+        UNIQUE(diagnostician_id, date)
+    }
+
+    entity "doctors" as docs {
+        * **id** : TEXT <<PK>>
         --
-        rules_fired : nvarchar(max)
-        score_breakdown : nvarchar(max)
-        alternative_candidates : nvarchar(max)
-        override_reason : nvarchar(500)
-        comment_raw : nvarchar(max)
-        comment_parsed : nvarchar(max)
+        * name : TEXT
+        specialty : TEXT
+    }
+
+    entity "local_assignments" as local_assign {
+        * **exammoreid** : INTEGER <<PK>>
+        --
+        * diagnostician_id : INTEGER
+        * diagnostician_name : TEXT
+        * assigned_at : TEXT (ISO-8601)
+    }
+
+    entity "assignment_log" as assign_log {
+        * **exammoreid** : INTEGER <<PK>>
+        --
+        * diagnostician_id : INTEGER
+        * assigned_at : TEXT (ISO-8601)
+    }
+
+    entity "pamakristos_schedule" as pam_sched {
+        * **weekday** : INTEGER <<PK>> (0–6)
+        --
+        * diagnostician_id : INTEGER <<FK>>
     }
 }
 
-' ─── Slis Tables (read-only, simplified) ───
-package "Slis Tables (Read-Only)" as slis_tables #FFF3E0 {
+' ─── Mock Slis Database (mock_slis.db) ───
+package "mock_slis.db — Exam Data" as slis_db #FFF3E0 {
 
     entity "slis_exams" as slis_exam {
-        * **exam_id** : nvarchar <<PK>>
+        * **exammoreid** : INTEGER <<PK>>
         --
-        patient_id : nvarchar
-        modality : nvarchar
-        body_part : nvarchar
-        lab_id : nvarchar
-        issuing_doctor_id : nvarchar
-        request_date : datetime
-        status : nvarchar
-        comments : nvarchar(max)
+        extracode : INTEGER
+        visitid : INTEGER
+        demogid : INTEGER
+        fname : TEXT
+        lname : TEXT
+        examnumcode : INTEGER <<FK>>
+        examname : TEXT
+        visitdate : TEXT
+        labcodeid : INTEGER
+        laboratoryname : TEXT
+        wcode : TEXT
+        wname : TEXT
+        diagnostis : INTEGER
+        code : TEXT
+        notes : TEXT
+        category : TEXT
+        slis_synced_at : TEXT
+        --
+        oldvisit : INTEGER
+        oldorder : TEXT
+        olddiagnostis : TEXT
+        oldpers : INTEGER
     }
 
-    entity "slis_patients" as slis_patient {
-        * **patient_id** : nvarchar <<PK>>
+    entity "exam_categories" as exam_cats {
+        * **examnumcode** : INTEGER <<PK>>
         --
-        name : nvarchar
-        date_of_birth : date
-    }
-
-    entity "slis_assignments" as slis_assign {
-        * **assignment_id** : nvarchar <<PK>>
-        --
-        exam_id : nvarchar
-        diagnostician_id : nvarchar
-        assigned_date : datetime
-        assigned_by : nvarchar
+        * name : TEXT
+        * category : TEXT (CT/MRI/MRA)
     }
 }
 
 ' ─── Relationships ───
 diag ||--o{ skills : "has skills"
-diag ||--o| capacity : "has capacity"
-diag ||--o{ lab_pref : "lab preferences"
-diag ||--o{ avail : "availability"
 diag ||--o{ partners : "preferred by"
-diag ||--o{ log : "suggested for"
+diag ||--o{ avail : "availability\ncalendar"
+diag ||--o{ pam_sched : "on-call\nrotation"
 
-slis_exam }o--|| slis_patient : "belongs to"
-slis_exam ||--o{ slis_assign : "assigned via"
+partners }o--|| docs : "references\ndoctor"
 
-log ..> slis_exam : "references exam"
-log ..> slis_patient : "references patient"
+slis_exam }o--|| exam_cats : "exam type\nlookup"
+
+local_assign ..> slis_exam : "references\nexammoreid"
+local_assign ..> diag : "references\ndiagnostician"
+assign_log ..> diag : "tracks\nassignments"
 
 @enduml

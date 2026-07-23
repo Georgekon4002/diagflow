@@ -60,6 +60,12 @@ router = APIRouter()
 # ── In-memory suggestion cache (for confirm/override flow) ──
 _suggestion_cache: dict = {}
 
+# ── Session suggestion counter — tracks how many times each diagnostician has been
+#    suggested since the last data reset. Used as a virtual workload offset so the
+#    load-balancing tie-breaker works across sequential API calls in the same session.
+#    Keys: diagnostician_id (int), Values: count (int)
+_session_suggestion_counts: dict[int, int] = {}
+
 # ── Admin session store ──
 _admin_sessions: set[str] = set()
 
@@ -144,6 +150,7 @@ async def suggest_assignment(
         modality=exam_data["modality"],
         body_part=exam_data["body_part"],
         exam_code=str(exam_data.get("examnumcode", "")),
+        exam_name=exam_data.get("examname", ""),
         lab_id=exam_data["lab_id"],
         lab_name=exam_data["lab_name"],
         issuing_doctor_id=exam_data["issuing_doctor_id"],
@@ -163,6 +170,11 @@ async def suggest_assignment(
         exam_code=exam.exam_code,
     )
 
+    # Apply session-level virtual workload so back-to-back suggestions spread across
+    # near-tied candidates instead of always picking the same person.
+    for c in candidates:
+        c.current_day_count += _session_suggestion_counts.get(c.id, 0)
+
     suggestion = await assign_svc.suggest_assignment(exam, candidates)
 
     if not suggestion:
@@ -170,6 +182,11 @@ async def suggest_assignment(
             status_code=422,
             detail="No eligible diagnosticians found after applying all rules. Manual assignment required.",
         )
+
+    # Increment the session counter for the suggested diagnostician
+    if suggestion.suggested_diagnostician_id:
+        diag_id = suggestion.suggested_diagnostician_id
+        _session_suggestion_counts[diag_id] = _session_suggestion_counts.get(diag_id, 0) + 1
 
     _suggestion_cache[exam.exam_id] = suggestion
 
@@ -698,6 +715,9 @@ async def slis_pull():
     'Ανανέωση' button on the frontend.
     """
     from diagflow.services.slis_sync import pull_from_slis
+    # Reset the session suggestion counter so load-balancing starts fresh
+    # with the new batch of exams.
+    _session_suggestion_counts.clear()
     result = pull_from_slis()
     return {
         "status": "ok",

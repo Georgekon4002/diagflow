@@ -7,109 +7,146 @@ skinparam shadowing false
 
 start
 
-:Receive pending exam request;
+:Receive pending exam\n(ExamContext);
 
-partition "**Stage 1: Hard Filters**" #E8EAF6 {
-    :Fetch all active diagnosticians;
-
-    :Parse comments/remarks via LLM;
-    note right
-        Priority 1: Comments
-        "ΟΧΙ ΝΑΤΣΙΚΑ" → exclude Νάτσικα
-        "ΝΑ ΤΟ ΠΑΡΕΙ Ο ΠΑΠΑΔΟΠΟΥΛΟΣ" → direct assign
-    end note
-
-    if (Direct assignment from comment?) then (yes)
-        :Assign directly to specified diagnostician;
-        :Log decision with reason: "direct_assignment_comment";
+partition "**Stage 0: Exclusive Partnership Check**" #F3E5F5 {
+    if (Issuing doctor has\nexclusive partnership?) then (yes)
+        :Assign directly to\nexclusive partner;
+        :Return AssignmentSuggestion\nwith confidence=1.0;
         stop
     else (no)
-        :Remove excluded diagnosticians;
     endif
+}
 
-    :Filter by **availability**;
-    note right: Priority 2: On leave? Day off?
-
-    :Filter by **lab preference**;
+partition "**Stage 1: Hard Filters**" #E8EAF6 {
+    :Fetch all active diagnosticians\n(from diagflow.db);
     note right
-        Priority 5: Does the diagnostician
-        accept work from this lab?
+        DiagnosticianService loads:
+        • Availability (absent IDs)
+        • Skills (batch query)
+        • Partnerships (for doctor)
+        • Daily counts (assignment_log)
+        • Per-weekday quotas
     end note
 
-    :Filter by **modality** (CT/MRI);
-    note right: Can they diagnose this type?
+    :Apply **filter_by_availability()**;
+    note right
+        On leave today?
+        Day off (weekday quota = 0)?
+    end note
 
-    if (Candidates remaining?) then (no)
-        :Flag for manual assignment;
-        :Log "no_candidates_after_filters";
+    :Apply **filter_by_capacity()**;
+    note right
+        current_day_count ≥ daily_quota?
+        (weekday-specific quotas)
+    end note
+
+    :Apply **filter_by_modality()**;
+    note right
+        can_ct / can_mri flag
+        matches exam modality?
+    end note
+
+    :Apply **filter_by_skills_hard()**;
+    note right
+        Only eliminates if skill record
+        exists AND proficiency == 0.
+        No data = passes (neutral score later).
+    end note
+
+    :Collect all FilterResults\n(even for eliminated candidates);
+    note right
+        Eliminated candidates are kept
+        in the alternatives list with
+        red indicator + reason for the UI.
+    end note
+
+    if (Any candidates passed?) then (no)
+        :Return None\n(manual assignment required);
         stop
     else (yes)
     endif
 }
 
 partition "**Stage 2: Weighted Scoring**" #E3F2FD {
-    :Calculate **capacity score**;
+    :Compute **score_skills_weighted()**\nweight=0.20;
     note right
-        Priority 3
-        Score = remaining_quota / max_quota
-        Higher remaining → higher score
+        Preferred exam code → 1.0
+        Neutral match → 0.5
+        No data → 0.3
     end note
 
-    :Calculate **skills match score**;
+    :Compute **score_patient_history()**\nweight=0.20;
     note right
-        Priority 4
-        Body-part match strength
-        Exact match = 1.0, partial = 0.5
+        Same diagnostician for same
+        patient's past similar exams.
+        Score = min(1.0, count × 0.3)
     end note
 
-    :Calculate **partnership score**;
+    :Compute **score_partnership()**\nweight=0.35;
     note right
-        Priority 6
-        Issuing doctor prefers this diagnostician?
-        Match = configurable bonus
+        Exclusive → 1.0
+        Normal match → 1.0
+        No match → 0.0
     end note
 
-    :Calculate **patient history score**;
+    :Compute **score_lab_preference()**\nweight=0.15;
     note right
-        Priority 7
-        Same diagnostician for same patient's
-        past similar exams? Continuity bonus.
+        Preferred lab matches → 1.0
+        Different preference → 0.1
+        No preference → 0.5
     end note
 
-    :Apply **subcategory load penalty**;
+    :Compute **score_capacity()**\nweight=0.10;
     note right
-        Soft load-balancing
-        Penalty grows with same-day count
-        of same body-part category
+        remaining / daily_quota
+        At quota → 0.0
+        Fully available → 1.0
     end note
 
-    :Compute composite weighted score
-    for each candidate;
+    :Sum weighted scores\nClamp to [0.0, 1.0];
 }
 
-partition "**Stage 3: Optimization**" #E8F5E9 {
-    :Feed scored candidates to
-    **OR-Tools CP-SAT solver**;
+partition "**Stage 3: Near-Tie Load Balancing**" #E8F5E9 {
+    :Find top_score among all candidates;
+
+    :Identify near-tie group:\n|top_score − candidate_score| ≤ tolerance (5%);
     note right
-        Batch optimization when
-        multiple exams pending.
-        Maximizes total score across
-        all assignments.
+        Prevents the same diagnostician
+        from receiving all proposals when
+        equally-good candidates exist.
     end note
 
-    :Select highest-scoring assignment;
+    if (Multiple near-tied candidates?) then (yes)
+        :Sort near-tie group by:\n1. Fewest exams today\n2. Largest daily quota\n3. Random jitter;
+    else (no)
+        :Keep strict score ordering;
+    endif
+
+    :Candidates outside tolerance:\nsorted strictly by score;
+}
+
+partition "**Stage 4: Solver**" #FFF8E1 {
+    if (Single exam?) then (yes)
+        :Greedy: pick rank #1\ncandidateafter tie-breaking;
+    else (batch)
+        :OR-Tools CP-SAT:\nMaximise total score\nacross all exams\nrespecting quota constraints;
+    endif
 }
 
 partition "**Output**" #FFF3E0 {
-    :Generate **suggestion** with:
-    - Proposed diagnostician
-    - Score breakdown
-    - Rules that fired
-    - Alternative candidates;
+    :Build **AssignmentSuggestion**:
+    • suggested diagnostician
+    • confidence score
+    • score breakdown (per factor)
+    • alternatives (scored + eliminated)
+    • rules that fired
+    • solver status
+    • pipeline timestamp;
 
-    :Write to **assignment_log**;
+    :Cache suggestion for\nconfirm/override flow;
 
-    :Send to **Review Dashboard**;
+    :Send to Review Dashboard;
 }
 
 stop
