@@ -321,8 +321,7 @@ function applyFilters() {
 
 function isPammakristos(exam) {
     const wname = (exam.wname || exam.issuing_doctor_name || '').toUpperCase();
-    const lab = (exam.lab_name || exam.laboratoryname || '').toUpperCase();
-    return wname.includes('ΠΑΜΜΑΚΑΡΙΣΤΟΣ') || lab.includes('ΠΑΜΜΑΚΑΡΙΣΤΟΣ');
+    return wname.includes('ΠΑΜΜΑΚΑΡΙΣΤΟΣ');
 }
 
 function sortExams(exams) {
@@ -984,6 +983,27 @@ function closeModal() {
     if (btnOverride) { btnOverride.disabled = false; btnOverride.innerHTML = 'Αλλαγή'; }
 }
 
+/**
+ * Invalidate cached suggestions on all currently visible pending exams,
+ * then trigger background re-scoring so they reflect the latest daily counts
+ * (which just changed because a new assignment was confirmed/overridden).
+ *
+ * Only exams that already had a suggestion are invalidated — exams that were
+ * still waiting for their first suggestion are left alone (they'll get fresh
+ * results from their in-flight request).
+ */
+function invalidatePendingSuggestions() {
+    // Reset suggestion cache and fetching flag on every pending exam
+    pendingExams.forEach(exam => {
+        if (exam.suggestion) {
+            exam.suggestion = null;
+            exam._fetchingSuggestion = false;
+        }
+    });
+    // Trigger re-scoring for whatever is currently visible on the page
+    applyFilters();
+}
+
 function selectAlternative(id, name, isEliminated) {
     const select = document.getElementById('override-select');
     select.value = id.toString();
@@ -1043,7 +1063,8 @@ async function confirmAssignment() {
     renderPendingTable();
     renderAssignedTable();
     updateTabCounts();
-    await loadDiagnosticians();
+    // Invalidate all visible suggestion caches so they re-score with updated capacities
+    invalidatePendingSuggestions();
 
     showToast(`✅ Ανατέθηκε στον/στην ${currentSuggestion.suggested_diagnostician_name}`, 'success');
     closeModal();
@@ -1106,7 +1127,8 @@ async function overrideAssignment() {
     renderPendingTable();
     renderAssignedTable();
     updateTabCounts();
-    await loadDiagnosticians();
+    // Invalidate all visible suggestion caches so they re-score with updated capacities
+    invalidatePendingSuggestions();
 
     showToast(
         `⚠️ Αλλαγή → ${overrideName} (αντί ${currentSuggestion.suggested_diagnostician_name})`,
@@ -1678,10 +1700,12 @@ function toggleSelectExam(examId) {
         document.getElementById(`row-${examId}`).classList.remove('selected-row');
     }
     
-    // Update select all checkbox state
+    // Update select all checkbox state based on current page items
     const selectAllCb = document.getElementById('selectAllCheckbox');
     const checkboxes = document.querySelectorAll('.row-checkbox');
-    selectAllCb.checked = checkboxes.length > 0 && selectedExams.size === checkboxes.length;
+    if (selectAllCb) {
+        selectAllCb.checked = checkboxes.length > 0 && Array.from(checkboxes).every(cb => selectedExams.has(cb.value));
+    }
     
     updateBulkActionsUI();
 }
@@ -1712,18 +1736,30 @@ function updateBulkActionsUI() {
         activeSize = selectedExams.size;
         if (btnAssignProposed) btnAssignProposed.style.display = 'inline-block';
         if (btnUpdateSlis) btnUpdateSlis.style.display = 'none';
+        const selectAllCb = document.getElementById('selectAllCheckbox');
+        const checkboxes = document.querySelectorAll('.row-checkbox');
+        if (selectAllCb) {
+            selectAllCb.checked = checkboxes.length > 0 && Array.from(checkboxes).every(cb => selectedExams.has(cb.value));
+        }
     } else if (currentTab === 'assigned') {
         activeSize = selectedAssignedExams.size;
         if (btnAssignProposed) btnAssignProposed.style.display = 'none';
         if (btnUpdateSlis) btnUpdateSlis.style.display = 'inline-block';
+        const selectAllAssignedCb = document.getElementById('selectAllAssignedCheckbox');
+        const assignedCbs = document.querySelectorAll('.assigned-row-checkbox');
+        if (selectAllAssignedCb) {
+            selectAllAssignedCb.checked = assignedCbs.length > 0 && Array.from(assignedCbs).every(cb => selectedAssignedExams.has(cb.value));
+        }
     }
     
     if (activeSize > 0) {
         countEl.textContent = `${activeSize} επιλεγμένα`;
         fab.style.display = 'flex';
+        document.body.classList.add('has-fab');
         populateFabDropdown();
     } else {
         fab.style.display = 'none';
+        document.body.classList.remove('has-fab');
         closeFabDropdown();
     }
 }
@@ -1893,9 +1929,11 @@ function updatePendingPagination(total) {
         const end = Math.min((currentPendingPage + 1) * examsPageSize, total);
         info.textContent = `Σελίδα ${pageNum} (${start}-${end} από ${total})`;
     }
-    
-    document.getElementById('btn-pending-prev').disabled = currentPendingPage === 0;
-    document.getElementById('btn-pending-next').disabled = (currentPendingPage + 1) * examsPageSize >= total;
+
+    const prevBtn = document.getElementById('btn-pending-prev');
+    const nextBtn = document.getElementById('btn-pending-next');
+    if (prevBtn) prevBtn.disabled = currentPendingPage === 0;
+    if (nextBtn) nextBtn.disabled = (currentPendingPage + 1) * examsPageSize >= total;
 }
 
 function updateAssignedPagination(total) {
@@ -1909,9 +1947,11 @@ function updateAssignedPagination(total) {
         const end = Math.min((currentAssignedPage + 1) * examsPageSize, total);
         info.textContent = `Σελίδα ${pageNum} (${start}-${end} από ${total})`;
     }
-    
-    document.getElementById('btn-assigned-prev').disabled = currentAssignedPage === 0;
-    document.getElementById('btn-assigned-next').disabled = (currentAssignedPage + 1) * examsPageSize >= total;
+
+    const prevBtn = document.getElementById('btn-assigned-prev');
+    const nextBtn = document.getElementById('btn-assigned-next');
+    if (prevBtn) prevBtn.disabled = currentAssignedPage === 0;
+    if (nextBtn) nextBtn.disabled = (currentAssignedPage + 1) * examsPageSize >= total;
 }
 
 
@@ -2107,7 +2147,7 @@ function toggleSelectAssignedExam(examId) {
     const selectAllCb = document.getElementById('selectAllAssignedCheckbox');
     const allCbs = document.querySelectorAll('.assigned-row-checkbox');
     if (selectAllCb) {
-        selectAllCb.checked = allCbs.length > 0 && selectedAssignedExams.size === allCbs.length;
+        selectAllCb.checked = allCbs.length > 0 && Array.from(allCbs).every(cb => selectedAssignedExams.has(cb.value));
     }
     updateAssignedBulkUI();
 }

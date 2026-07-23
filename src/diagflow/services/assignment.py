@@ -230,13 +230,31 @@ class AssignmentService:
 
 
 def _get_pending_exams_from_db() -> list[dict]:
-    """Fetch pending exams from the SQLite mock DB (past 3 days, no diagnostician)."""
+    """Fetch pending exams from the SQLite mock DB (past 3 days, no diagnostician).
+
+    Auto-assignments applied directly to local_assignments (bypassing filters):
+    1. Exclusive partnerships: Exams issued by doctors with an active exclusive
+       partnership are automatically assigned to that preferred diagnostician.
+    2. Παμμακάριστος 22705: Exams with code 22705 (ΜΑΓΝΗΤΙΚΗ ΦΑΣΜΑΤΟΣΚΟΠΙΑ) from
+       Παμμακάριστος are automatically assigned to ΜΠΕΡΕΤΗΣ ΓΕΩΡΓΙΟΣ (ID 59).
+    3. Παμμακάριστος general: Other Παμμακάριστος exams are automatically assigned
+       to today's on-call diagnostician.
+
+    All auto-assigned exams appear directly in the assigned tab. Slis is NOT
+    updated automatically; the secretariat must push manually as usual.
+    """
     try:
         from datetime import date, timedelta
         import diagflow.db.diagflow_db as cfg_db
         local_assignments = cfg_db.get_all_local_assignments()
         cutoff_date = (date.today() - timedelta(days=3)).isoformat()
-        
+        today = date.today().isoformat()
+
+        # Fetch today's Παμμακάριστος on-call diagnostician once
+        pam_oncall = cfg_db.get_oncall_diagnostician(today)
+        # Fetch active exclusive partnerships once
+        exclusive_map = cfg_db.get_exclusive_partnerships()
+
         con = _get_mock_db()
         cur = con.execute(
             """
@@ -248,15 +266,76 @@ def _get_pending_exams_from_db() -> list[dict]:
             (cutoff_date,)
         )
         rows = []
+        now_iso = datetime.now().isoformat()
         for r in cur.fetchall():
-            if int(r["exammoreid"]) not in local_assignments:
-                rows.append(_row_to_exam_dict(r))
+            exam_id = int(r["exammoreid"])
+            if exam_id in local_assignments:
+                continue  # already handled (assigned locally)
+
+            doc_id = str(r["wcode"]) if r["wcode"] else ""
+
+            # Check 1: Exclusive partner auto-assignment (bypasses all filters)
+            if doc_id and doc_id in exclusive_map:
+                ex_part = exclusive_map[doc_id]
+                cfg_db.upsert_local_assignment(
+                    exam_id,
+                    ex_part["preferred_diagnostician_id"],
+                    ex_part["preferred_diagnostician_name"],
+                    now_iso,
+                )
+                logger.info(
+                    "exclusive_partner_auto_assigned",
+                    exam_id=exam_id,
+                    doctor=doc_id,
+                    diagnostician=ex_part["preferred_diagnostician_name"],
+                )
+                continue
+
+            # Check 2: Παμμακάριστος auto-assignment
+            is_pam = "ΠΑΜΜΑΚΑΡΙΣΤΟΣ" in (r["wname"] or "").upper()
+            if is_pam:
+                exam_code_str = str(r["examnumcode"]).strip() if r["examnumcode"] else ""
+                # Special case: 22705 (ΜΑΓΝΗΤΙΚΗ ΦΑΣΜΑΤΟΣΚΟΠΙΑ) -> Always assigned to ΜΠΕΡΕΤΗΣ (ID 59)
+                if "22705" in exam_code_str:
+                    beretis = cfg_db.get_diagnostician(59)
+                    beretis_name = beretis["name"] if beretis else "ΜΠΕΡΕΤΗΣ ΓΕΩΡΓΙΟΣ"
+                    cfg_db.upsert_local_assignment(
+                        exam_id,
+                        59,
+                        beretis_name,
+                        now_iso,
+                    )
+                    logger.info(
+                        "pam_22705_auto_assigned_to_beretis",
+                        exam_id=exam_id,
+                        exam_code=exam_code_str,
+                    )
+                    continue
+
+                if pam_oncall:
+                    cfg_db.upsert_local_assignment(
+                        exam_id,
+                        pam_oncall["diagnostician_id"],
+                        pam_oncall["diagnostician_name"],
+                        now_iso,
+                    )
+                    logger.info(
+                        "pam_exam_auto_assigned",
+                        exam_id=exam_id,
+                        oncall=pam_oncall["diagnostician_name"],
+                    )
+                    continue
+
+            # Normal pending exam
+            rows.append(_row_to_exam_dict(r))
+
         con.close()
         logger.info("pending_exams_loaded_from_db", count=len(rows))
         return rows
     except Exception as e:
         logger.error("mock_db_read_failed", error=str(e))
         return []
+
 
 
 def _get_assigned_exams_from_db() -> list[dict]:

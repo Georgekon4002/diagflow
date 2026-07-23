@@ -149,7 +149,7 @@ async def suggest_assignment(
         issuing_doctor_id=exam_data["issuing_doctor_id"],
         issuing_doctor_name=exam_data["issuing_doctor_name"],
         comments=exam_data.get("comments", ""),
-        is_pamakristos="PAM" in exam_data.get("lab_id", "").upper(),
+        is_pamakristos="ΠΑΜΜΑΚΑΡΙΣΤΟΣ" in exam_data.get("issuing_doctor_name", "").upper(),
     )
 
     candidates = await diag_svc.get_candidates_for_exam(
@@ -335,10 +335,18 @@ async def get_pamakristos_oncall(
 
 
 @router.get("/pamakristos/schedule")
-async def get_pamakristos_weekly_schedule(
-    scheduler: PamakristosScheduler = Depends(get_pamakristos_scheduler),
-):
-    return await scheduler.get_weekly_schedule()
+async def get_pamakristos_weekly_schedule():
+    weekly = cfg_db.get_pamakristos_weekly_schedule_db()
+    day_names = {0: "Δευτέρα", 1: "Τρίτη", 2: "Τετάρτη", 3: "Πέμπτη", 4: "Παρασκευή", 5: "Σάββατο", 6: "Κυριακή"}
+    return [
+        {
+            "weekday": item["weekday"],
+            "day_name": day_names.get(item["weekday"], ""),
+            "diagnostician_id": item["diagnostician_id"],
+            "diagnostician_name": item["diagnostician_name"],
+        }
+        for item in weekly
+    ]
 
 
 @router.post("/pamakristos/oncall")
@@ -348,6 +356,35 @@ async def set_pamakristos_oncall(
 ):
     target_date = date.fromisoformat(request.date)
     return await scheduler.set_oncall_diagnostician(target_date, request.diagnostician_id)
+
+
+class WeeklyScheduleItem(BaseModel):
+    weekday: int
+    diagnostician_id: int
+
+
+@router.get("/admin/pamakristos/weekly-schedule")
+async def admin_get_weekly_schedule(_: str = Depends(_require_admin)):
+    weekly = cfg_db.get_pamakristos_weekly_schedule_db()
+    day_names = {0: "Δευτέρα", 1: "Τρίτη", 2: "Τετάρτη", 3: "Πέμπτη", 4: "Παρασκευή", 5: "Σάββατο", 6: "Κυριακή"}
+    return [
+        {
+            "weekday": item["weekday"],
+            "day_name": day_names.get(item["weekday"], ""),
+            "diagnostician_id": item["diagnostician_id"],
+            "diagnostician_name": item["diagnostician_name"],
+        }
+        for item in weekly
+    ]
+
+
+@router.post("/admin/pamakristos/weekly-schedule")
+async def admin_update_weekly_schedule(
+    items: list[WeeklyScheduleItem],
+    _: str = Depends(_require_admin),
+):
+    cfg_db.update_pamakristos_weekly_schedule_db([item.model_dump() for item in items])
+    return {"status": "ok", "updated": len(items)}
 
 
 # ─────────────────────────────────────────────────────
@@ -690,4 +727,20 @@ async def slis_push_selected(req: PushSelectedRequest):
     """
     from diagflow.services.slis_sync import push_selected_to_slis
     result = push_selected_to_slis(req.exammoreid_list)
+    return result
+
+
+@router.post("/admin/sync-diagnosticians")
+async def admin_sync_diagnosticians(_: str = Depends(_require_admin)):
+    """Manual trigger to pull diagnosticians from Slis DB into diagflow.db."""
+    from diagflow.services.slis_sync import sync_diagnosticians
+    result = sync_diagnosticians()
+    return result
+
+
+@router.post("/admin/sync-doctors")
+async def admin_sync_doctors(_: str = Depends(_require_admin)):
+    """Manual trigger to pull doctors from Slis DB into diagflow.db."""
+    from diagflow.services.slis_sync import sync_doctors
+    result = sync_doctors()
     return result

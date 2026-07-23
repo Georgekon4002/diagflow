@@ -36,11 +36,11 @@ class PamakristosScheduler:
         # Hardcoded weekly schedule fallback
         weekday = target.weekday()
         schedule = {
-            0: {"id": 59, "name": "Μπερέτης"},
-            1: {"id": 61, "name": "Ανθίμου"},
-            2: {"id": 97, "name": "Τριανταφύλλου"},
-            3: {"id": 189, "name": "Λιόντος"},
-            4: {"id": 14, "name": "Νάτσικα"}
+            0: {"id": 59, "name": "ΜΠΕΡΕΤΗΣ ΓΕΩΡΓΙΟΣ"},
+            1: {"id": 61, "name": "ΑΝΘΙΜΟΥ ΣΠΥΡΙΔΩΝ"},
+            2: {"id": 316, "name": "ΤΡΙΑΝΤΑΦΥΛΛΟΥ ΜΑΡΙΑ"},
+            3: {"id": 189, "name": "ΛΙΟΝΤΟΣ ΠΟΛΥΧΡΟΝΗΣ"},
+            4: {"id": 14, "name": "ΝΑΤΣΙΚΑ ΜΑΡΓΑΡΙΤΑ"},
         }
 
         if weekday in schedule:

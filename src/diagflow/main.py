@@ -32,13 +32,26 @@ async def lifespan(app: FastAPI):
     # ── Pull from Slis on startup ──
     # Expires old synced rows and verifies the DB schema is current.
     # In production this would trigger the real Slis stored-procedure pull.
-    from diagflow.services.slis_sync import pull_from_slis
+    from diagflow.services.slis_sync import pull_from_slis, sync_diagnosticians, sync_doctors
     result = pull_from_slis()
     logger.info(
         "startup_slis_pull",
         expired=result.get("expired", 0),
         total_pending=result.get("total_pending", 0),
     )
+
+    # ── Start APScheduler for daily background sync ──
+    from apscheduler.schedulers.asyncio import AsyncIOScheduler
+    scheduler = AsyncIOScheduler()
+    
+    def daily_sync():
+        logger.info("running_daily_background_sync")
+        sync_diagnosticians()
+        sync_doctors()
+
+    scheduler.add_job(daily_sync, 'cron', hour=3, minute=0)
+    scheduler.start()
+    logger.info("apscheduler_started")
 
     # TODO: Initialize database engines when real MSSQL DB access is available
     # from diagflow.db.engines import init_engines
@@ -47,6 +60,8 @@ async def lifespan(app: FastAPI):
     yield
 
     # Cleanup
+    scheduler.shutdown()
+    
     # TODO: Dispose database engines
     # from diagflow.db.engines import dispose_engines
     # dispose_engines()
@@ -86,3 +101,4 @@ async def health_check():
         "version": __version__,
         "environment": settings.app_env,
     }
+

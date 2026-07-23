@@ -72,6 +72,7 @@ async function loadAll() {
         loadSkills(),
         loadAvailability(),
         loadOncall(),
+        loadPamakristosWeeklySchedule(),
     ]);
 }
 
@@ -171,6 +172,28 @@ function adminLogout() {
 //  Load Functions
 // ══════════════════════════════════════════════
 
+async function syncDiagnosticians() {
+    showToast('Συγχρονισμός διαγνωστών...', 'info');
+    const res = await apiCall('/admin/sync-diagnosticians', 'POST');
+    if (res && res.synced !== undefined) {
+        showToast(`Συγχρονίστηκαν ${res.synced} διαγνώστες από το Slis.`, 'success');
+        await loadDiagnosticians();
+    } else {
+        showToast('Σφάλμα κατά τον συγχρονισμό.', 'error');
+    }
+}
+
+async function syncDoctors() {
+    showToast('Συγχρονισμός ιατρών...', 'info');
+    const res = await apiCall('/admin/sync-doctors', 'POST');
+    if (res && res.synced !== undefined) {
+        showToast(`Συγχρονίστηκαν ${res.synced} ιατροί από το Slis.`, 'success');
+        await loadDoctors(0);
+    } else {
+        showToast('Σφάλμα κατά τον συγχρονισμό.', 'error');
+    }
+}
+
 async function loadDiagnosticians() {
     const data = await apiCall('/admin/diagnosticians');
     diagnosticians = data || getMockDiagnosticians();
@@ -251,10 +274,86 @@ async function loadAvailability() {
 async function loadOncall() {
     const data = await apiCall('/admin/oncall');
     const oncall = data || { diagnostician_name: 'Παπαδόπουλος Γ.', date: new Date().toISOString().split('T')[0] };
-    document.getElementById('oncall-current').innerHTML = `
-        <strong style="color:var(--text-primary);font-size:var(--font-size-md);">${oncall.diagnostician_name}</strong>
-        <span style="margin-left:8px;color:var(--text-tertiary);">(${formatDate(oncall.date)})</span>
-    `;
+    const el = document.getElementById('oncall-current');
+    if (el) {
+        el.innerHTML = `
+            <strong style="color:var(--text-primary);font-size:var(--font-size-md);">${oncall.diagnostician_name}</strong>
+            <span style="margin-left:8px;color:var(--text-tertiary);">(${formatDate(oncall.date)})</span>
+        `;
+    }
+}
+
+let weeklyScheduleData = [];
+
+async function loadPamakristosWeeklySchedule() {
+    try {
+        const data = await apiCall('/admin/pamakristos/weekly-schedule');
+        weeklyScheduleData = data || [];
+        renderPamakristosWeeklySchedule();
+    } catch (err) {
+        console.warn("Could not load Pamakristos weekly schedule", err);
+    }
+}
+
+function renderPamakristosWeeklySchedule() {
+    const tbody = document.getElementById('pamakristos-weekly-tbody');
+    if (!tbody) return;
+
+    const days = [
+        { weekday: 0, day_name: "Δευτέρα" },
+        { weekday: 1, day_name: "Τρίτη" },
+        { weekday: 2, day_name: "Τετάρτη" },
+        { weekday: 3, day_name: "Πέμπτη" },
+        { weekday: 4, day_name: "Παρασκευή" },
+        { weekday: 5, day_name: "Σάββατο" },
+        { weekday: 6, day_name: "Κυριακή" },
+    ];
+
+    tbody.innerHTML = days.map(d => {
+        const match = weeklyScheduleData.find(w => w.weekday === d.weekday);
+        const selectedId = match ? match.diagnostician_id : "";
+
+        let options = '<option value="">— Επιλέξτε —</option>';
+        diagnosticians.forEach(diag => {
+            if (!diag.active) return;
+            const sel = String(diag.id) === String(selectedId) ? 'selected' : '';
+            options += `<option value="${diag.id}" ${sel}>${diag.name}</option>`;
+        });
+
+        return `
+            <tr>
+                <td style="font-weight:600; padding:12px;">${d.day_name}</td>
+                <td style="padding:8px 12px;">
+                    <select class="form-input filter-select pamakristos-schedule-select" data-weekday="${d.weekday}" style="width:100%; max-width:400px;">
+                        ${options}
+                    </select>
+                </td>
+            </tr>
+        `;
+    }).join('');
+}
+
+async function savePamakristosWeeklySchedule() {
+    const selects = document.querySelectorAll('.pamakristos-schedule-select');
+    const items = [];
+    selects.forEach(sel => {
+        const weekday = parseInt(sel.getAttribute('data-weekday'));
+        const val = sel.value;
+        if (val) {
+            items.push({
+                weekday: weekday,
+                diagnostician_id: parseInt(val)
+            });
+        }
+    });
+
+    try {
+        await apiCall('/admin/pamakristos/weekly-schedule', 'POST', items);
+        showToast('✅ Το εβδομαδιαίο πρόγραμμα Παμμακάριστου αποθηκεύτηκε επιτυχώς!', 'success');
+        await loadPamakristosWeeklySchedule();
+    } catch (err) {
+        showToast(`Σφάλμα: ${err.message}`, 'error');
+    }
 }
 
 function populateDiagnosticianSelects() {
@@ -388,9 +487,9 @@ function renderAvailability() {
     const tbody = document.getElementById('avail-tbody');
     if (!tbody) return;
 
-    // Filter only today and future dates
+    // Filter only today and future dates, excluding entries marked as 'available'
     const todayStr = new Date().toISOString().split('T')[0];
-    const filteredAvailability = availability.filter(a => a.date >= todayStr);
+    const filteredAvailability = availability.filter(a => a.date >= todayStr && a.status !== 'available');
 
     const statusLabel = { available: 'Διαθέσιμος/η', on_leave: 'Άδεια', half_day: 'Μισή Μέρα' };
     const statusClass = { available: 'active', on_leave: 'on-leave', half_day: 'inactive' };
@@ -426,7 +525,7 @@ function renderAvailability() {
                 diagnostician_name: d.name,
                 date: todayStr,
                 statusBadge: `<span class="status-badge inactive">Όχι σήμερα</span>`,
-                notes: 'Σταθερό ρεπό'
+                notes: ''
             });
         }
     });

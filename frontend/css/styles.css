@@ -584,6 +584,17 @@ input[type="date"].filter-select::-webkit-calendar-picker-indicator {
     max-height: calc(100vh - 280px);
 }
 
+.bottom-pagination-wrapper {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    margin-top: 16px;
+    margin-bottom: 16px;
+    gap: 8px;
+    width: 100%;
+}
+
 
 /* ── Table ── */
 .exams-table {
@@ -1514,6 +1525,27 @@ input[type="date"].filter-select::-webkit-calendar-picker-indicator {
     font-weight: 600;
 }
 
+.admin-nav-subitem {
+    margin-left: 28px;
+    padding: 8px var(--space-md);
+    font-size: 13px;
+    position: relative;
+}
+
+.admin-nav-subitem::before {
+    content: '';
+    position: absolute;
+    left: -8px;
+    top: 50%;
+    width: 12px;
+    height: 1px;
+    background: var(--border-color);
+}
+
+.admin-nav-subitem .admin-nav-icon {
+    font-size: 14px;
+}
+
 .admin-nav-icon {
     font-size: 16px;
     width: 20px;
@@ -1881,23 +1913,23 @@ input[type="date"].filter-select::-webkit-calendar-picker-indicator {
 /* ── Floating Action Bar ── */
 .floating-action-bar {
     position: fixed;
-    bottom: 24px;
+    top: 108px;
     left: 50%;
     transform: translateX(-50%);
     background: var(--bg-secondary);
     border: 1px solid var(--border-color);
     border-radius: 12px;
     padding: 12px 24px;
-    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(255, 255, 255, 0.05);
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(255, 255, 255, 0.05);
     z-index: 1000;
     display: flex;
     align-items: center;
     gap: 24px;
-    animation: slideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+    animation: slideDown 0.3s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
-@keyframes slideUp {
-    from { transform: translate(-50%, 100%); opacity: 0; }
+@keyframes slideDown {
+    from { transform: translate(-50%, -100%); opacity: 0; }
     to { transform: translate(-50%, 0); opacity: 1; }
 }
 

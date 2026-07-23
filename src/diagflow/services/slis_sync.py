@@ -334,3 +334,95 @@ def push_selected_to_slis(exammoreid_list: list[int]) -> dict:
         "failed": failed,
         "queries": queries,
     }
+
+
+# ─────────────────────────────────────────────────────────────────
+#  Sync Diagnosticians and Doctors
+# ─────────────────────────────────────────────────────────────────
+
+def sync_diagnosticians() -> dict:
+    """
+    Pull diagnosticians from Slis DB and insert new ones into local diagflow.db.
+    """
+    import diagflow.db.diagflow_db as cfg_db
+    
+    if not settings.use_mock_slis_db:
+        logger.warning("sync_diagnosticians: real Slis DB not configured — skipping pull")
+        return {"synced": 0}
+
+    try:
+        con = _get_db()
+        rows = con.execute("SELECT PERSONELID, DOCNAME FROM diagnosticians").fetchall()
+        con.close()
+        
+        synced_count = 0
+        local_con = sqlite3.connect(cfg_db._DB_PATH)
+        local_con.execute("PRAGMA foreign_keys = ON")
+        
+        for row in rows:
+            diag_id = row['PERSONELID']
+            diag_name = row['DOCNAME']
+            
+            # Insert only new entries, defaulting them to inactive (active=0)
+            cur = local_con.execute("""
+                INSERT INTO diagnosticians (id, name, active) 
+                VALUES (?, ?, 0) 
+                ON CONFLICT(id) DO NOTHING
+            """, (diag_id, diag_name))
+            if cur.rowcount > 0:
+                synced_count += 1
+            
+        local_con.commit()
+        local_con.close()
+        
+        logger.info("sync_diagnosticians_complete", new_count=synced_count)
+        return {"synced": synced_count}
+        
+    except Exception as exc:
+        logger.error("sync_diagnosticians_error", error=str(exc))
+        return {"error": str(exc)}
+
+
+
+def sync_doctors() -> dict:
+    """
+    Pull doctors from Slis DB and insert new ones into local diagflow.db.
+    """
+    import diagflow.db.diagflow_db as cfg_db
+    
+    if not settings.use_mock_slis_db:
+        logger.warning("sync_doctors: real Slis DB not configured — skipping pull")
+        return {"synced": 0}
+
+    try:
+        con = _get_db()
+        rows = con.execute("SELECT CODE, DOCNAME FROM doctors").fetchall()
+        con.close()
+        
+        synced_count = 0
+        local_con = sqlite3.connect(cfg_db._DB_PATH)
+        local_con.execute("PRAGMA foreign_keys = ON")
+        
+        for row in rows:
+            doc_id = str(row['CODE'])  # Diagflow uses TEXT for doctor id
+            doc_name = row['DOCNAME']
+            
+            # Insert only new entries
+            cur = local_con.execute("""
+                INSERT INTO doctors (id, name) 
+                VALUES (?, ?) 
+                ON CONFLICT(id) DO NOTHING
+            """, (doc_id, doc_name))
+            if cur.rowcount > 0:
+                synced_count += 1
+            
+        local_con.commit()
+        local_con.close()
+        
+        logger.info("sync_doctors_complete", new_count=synced_count)
+        return {"synced": synced_count}
+        
+    except Exception as exc:
+        logger.error("sync_doctors_error", error=str(exc))
+        return {"error": str(exc)}
+

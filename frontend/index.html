@@ -87,7 +87,7 @@
                     <button class="btn btn-secondary" onclick="toggleFabDropdown(event)">
                         Ανάθεση σε... <span style="font-size: 10px;">▼</span>
                     </button>
-                    <div id="fab-dropdown-menu" class="fab-dropdown-menu" style="display: none; position: absolute; bottom: 100%; right: 0; background: var(--bg-tertiary); border: 1px solid var(--border-color); border-radius: 8px; padding: 8px; margin-bottom: 4px; box-shadow: 0 -4px 12px rgba(0,0,0,0.2); z-index: 100; min-width: 200px;">
+                    <div id="fab-dropdown-menu" class="fab-dropdown-menu" style="display: none; position: absolute; top: 100%; right: 0; background: var(--bg-tertiary); border: 1px solid var(--border-color); border-radius: 8px; padding: 8px; margin-top: 4px; box-shadow: 0 4px 12px rgba(0,0,0,0.2); z-index: 100; min-width: 200px;">
                         <input type="text" id="fab-diag-search" placeholder="Αναζήτηση..." class="search-input" style="width: 100%; margin-bottom: 8px; padding: 6px;" onclick="event.stopPropagation()" oninput="filterFabDiagnosticians()">
                         <div id="fab-diag-list" style="max-height: 200px; overflow-y: auto;">
                             <!-- Populated dynamically -->
@@ -257,14 +257,6 @@
                             <!-- Populated by JavaScript -->
                         </tbody>
                     </table>
-                    <!-- Pagination Controls -->
-                    <div style="display:flex; flex-direction:column; align-items:center; justify-content:center; margin-top:16px; margin-bottom:12px; gap:8px; width:100%;">
-                        <span id="pending-pagination-info" style="font-size:var(--font-size-sm); color:var(--text-tertiary); text-align:center;"></span>
-                        <div style="display:flex; gap:8px; align-items:center;">
-                            <button class="btn btn-secondary btn-sm" id="btn-pending-prev" onclick="changePendingPage(-1)">Προηγούμενο</button>
-                            <button class="btn btn-secondary btn-sm" id="btn-pending-next" onclick="changePendingPage(1)">Επόμενο</button>
-                        </div>
-                    </div>
                     <div class="empty-state" id="empty-state-pending" style="display: none;">
                         <svg width="64" height="64" viewBox="0 0 64 64" fill="none">
                             <circle cx="32" cy="32" r="30" stroke="var(--border-color)" stroke-width="2"
@@ -273,6 +265,14 @@
                                 stroke-linecap="round" stroke-linejoin="round" />
                         </svg>
                         <p>Δεν υπάρχουν εκκρεμείς εξετάσεις</p>
+                    </div>
+                </div>
+                <!-- Pagination Controls (Outside table container with permanent bottom margin for FAB) -->
+                <div class="bottom-pagination-wrapper">
+                    <span id="pending-pagination-info" style="font-size:var(--font-size-sm); color:var(--text-tertiary); text-align:center;"></span>
+                    <div style="display:flex; gap:8px; align-items:center;">
+                        <button class="btn btn-secondary btn-sm" id="btn-pending-prev" onclick="changePendingPage(-1)">Προηγούμενο</button>
+                        <button class="btn btn-secondary btn-sm" id="btn-pending-next" onclick="changePendingPage(1)">Επόμενο</button>
                     </div>
                 </div>
             </div>
@@ -312,15 +312,6 @@
                             <!-- Populated by JavaScript -->
                         </tbody>
                     </table>
-                    <!-- Pagination Controls -->
-                    <div style="display:flex; flex-direction:column; align-items:center; justify-content:center; margin-top:16px; margin-bottom:12px; gap:8px; width:100%; position:relative;">
-
-                        <span id="assigned-pagination-info" style="font-size:var(--font-size-sm); color:var(--text-tertiary); text-align:center;"></span>
-                        <div style="display:flex; gap:8px; align-items:center;">
-                            <button class="btn btn-secondary btn-sm" id="btn-assigned-prev" onclick="changeAssignedPage(-1)">Προηγούμενο</button>
-                            <button class="btn btn-secondary btn-sm" id="btn-assigned-next" onclick="changeAssignedPage(1)">Επόμενο</button>
-                        </div>
-                    </div>
                     <div class="empty-state" id="empty-state-assigned" style="display: none;">
                         <svg width="64" height="64" viewBox="0 0 64 64" fill="none">
                             <circle cx="32" cy="32" r="30" stroke="var(--border-color)" stroke-width="2"
@@ -329,6 +320,14 @@
                                 stroke-linecap="round" stroke-linejoin="round" />
                         </svg>
                         <p>Δεν υπάρχουν ανατεθειμένες εξετάσεις</p>
+                    </div>
+                </div>
+                <!-- Pagination Controls (Outside table container with permanent bottom margin for FAB) -->
+                <div class="bottom-pagination-wrapper">
+                    <span id="assigned-pagination-info" style="font-size:var(--font-size-sm); color:var(--text-tertiary); text-align:center;"></span>
+                    <div style="display:flex; gap:8px; align-items:center;">
+                        <button class="btn btn-secondary btn-sm" id="btn-assigned-prev" onclick="changeAssignedPage(-1)">Προηγούμενο</button>
+                        <button class="btn btn-secondary btn-sm" id="btn-assigned-next" onclick="changeAssignedPage(1)">Επόμενο</button>
                     </div>
                 </div>
             </div>

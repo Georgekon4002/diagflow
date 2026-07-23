@@ -60,7 +60,14 @@ class DiagnosticianService:
         # Load current daily counts from assignment log
         daily_counts = cfg_db.get_daily_assignment_counts()
 
+        # Batch-load ALL skills in one query (avoids N+1 — one query total instead of one per diagnostician)
+        all_skills_by_diag = cfg_db.get_all_skills_grouped()
+
         candidates = []
+
+        # Pre-compute weekday key once (same for all iterations)
+        weekday_str = date.today().strftime("%A").lower()
+        quota_key = f"quota_{weekday_str}"
 
         for diag in all_diags:
             if not diag["active"]:
@@ -68,8 +75,8 @@ class DiagnosticianService:
 
             diag_id = int(diag["id"])
 
-            # Skills: load from DB
-            skills = cfg_db.get_skills_for_diagnostician(diag_id)
+            # Skills: fetched from the pre-loaded batch map (no extra DB hit)
+            skills = all_skills_by_diag.get(diag_id, [])
 
             # Determine skill match for this exam code
             skill_match = None
@@ -91,11 +98,9 @@ class DiagnosticianService:
             # Check if diagnostician is absent
             is_available = diag_id not in absent_ids
 
-            # Find quota based on weekday
-            weekday_str = date.today().strftime("%A").lower()
-            quota_key = f"quota_{weekday_str}"
+            # Daily quota for today's weekday
             daily_quota = diag.get(quota_key, 0)
-            
+
             # Check for partnership match
             pship = partnership_map.get(diag_id)
             is_partner = pship is not None
@@ -126,7 +131,7 @@ class DiagnosticianService:
             )
             # Monkey-patch preferred_lab_id onto the candidate object to be used by scoring.py
             setattr(candidate, "preferred_lab_id", preferred_lab_id)
-            
+
             candidates.append(candidate)
 
         logger.info(

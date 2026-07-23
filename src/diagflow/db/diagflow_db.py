@@ -153,6 +153,25 @@ def get_skills_for_diagnostician(diag_id: int) -> list[dict]:
     return [{"exam_code": r["exam_code"], "is_preferred": bool(r["is_preferred"])} for r in rows]
 
 
+def get_all_skills_grouped() -> dict[int, list[dict]]:
+    """Load ALL diagnostician skills in a single query, grouped by diagnostician_id.
+    
+    Used by get_candidates_for_exam to avoid N+1 queries (one per diagnostician).
+    Returns: {diagnostician_id: [{exam_code, is_preferred}, ...]}
+    """
+    with _conn() as con:
+        rows = con.execute(
+            "SELECT diagnostician_id, exam_code, is_preferred FROM diagnostician_skills"
+        ).fetchall()
+    result: dict[int, list[dict]] = {}
+    for r in rows:
+        result.setdefault(r["diagnostician_id"], []).append({
+            "exam_code": r["exam_code"],
+            "is_preferred": bool(r["is_preferred"])
+        })
+    return result
+
+
 # ── Partnerships ──────────────────────────────────────────────────────────────
 
 def get_all_partnerships() -> list[dict]:
@@ -289,17 +308,111 @@ def get_absent_diagnostician_ids(date: str) -> set[int]:
     return {r["diagnostician_id"] for r in rows}
 
 
-def get_oncall_diagnostician(date: str) -> dict | None:
-    """Return the diagnostician on Παμμακάριστος on-call for the given date."""
+def get_exclusive_partnerships() -> dict[str, dict]:
+    """Returns dict mapping issuing_doctor_id (str) -> partnership dict for active exclusive partnerships."""
+    with _conn() as con:
+        rows = con.execute(
+            "SELECT p.issuing_doctor_id, p.issuing_doctor_name, "
+            "p.preferred_diagnostician_id, d.name AS preferred_diagnostician_name "
+            "FROM partnerships p "
+            "JOIN diagnosticians d ON d.id = p.preferred_diagnostician_id "
+            "WHERE p.is_active = 1 AND p.exclusive = 1"
+        ).fetchall()
+    return {str(r["issuing_doctor_id"]): _row_to_dict(r) for r in rows}
+
+
+# ── Παμμακάριστος Weekly Schedule ──────────────────────────────────────────────
+
+def init_pamakristos_schedule():
+    """Ensure pamakristos_schedule table exists and is seeded with defaults."""
+    with _conn() as con:
+        con.execute(
+            """
+            CREATE TABLE IF NOT EXISTS pamakristos_schedule (
+                weekday INTEGER PRIMARY KEY,
+                diagnostician_id INTEGER NOT NULL,
+                FOREIGN KEY(diagnostician_id) REFERENCES diagnosticians(id)
+            )
+            """
+        )
+        count = con.execute("SELECT COUNT(*) FROM pamakristos_schedule").fetchone()[0]
+        if count == 0:
+            defaults = [
+                (0, 59),   # Δευτέρα: ΜΠΕΡΕΤΗΣ ΓΕΩΡΓΙΟΣ
+                (1, 61),   # Τρίτη: ΑΝΘΙΜΟΥ ΣΠΥΡΙΔΩΝ
+                (2, 316),  # Τετάρτη: ΤΡΙΑΝΤΑΦΥΛΛΟΥ ΜΑΡΙΑ
+                (3, 189),  # Πέμπτη: ΛΙΟΝΤΟΣ ΠΟΛΥΧΡΟΝΗΣ
+                (4, 14),   # Παρασκευή: ΝΑΤΣΙΚΑ ΜΑΡΓΑΡΙΤΑ
+            ]
+            con.executemany(
+                "INSERT INTO pamakristos_schedule (weekday, diagnostician_id) VALUES (?, ?)",
+                defaults
+            )
+
+
+def get_pamakristos_weekly_schedule_db() -> list[dict]:
+    """Fetch weekly schedule from DB (returns list for weekdays 0..6)."""
+    init_pamakristos_schedule()
+    with _conn() as con:
+        rows = con.execute(
+            """
+            SELECT ps.weekday, ps.diagnostician_id, d.name AS diagnostician_name
+            FROM pamakristos_schedule ps
+            JOIN diagnosticians d ON d.id = ps.diagnostician_id
+            ORDER BY ps.weekday
+            """
+        ).fetchall()
+    return [_row_to_dict(r) for r in rows]
+
+
+def update_pamakristos_weekly_schedule_db(schedule_items: list[dict]):
+    """Update or insert weekly schedule entries for specified weekdays."""
+    init_pamakristos_schedule()
+    with _conn() as con:
+        for item in schedule_items:
+            w = int(item["weekday"])
+            d_id = int(item["diagnostician_id"])
+            con.execute(
+                """
+                INSERT INTO pamakristos_schedule (weekday, diagnostician_id)
+                VALUES (?, ?)
+                ON CONFLICT(weekday) DO UPDATE SET diagnostician_id = excluded.diagnostician_id
+                """,
+                (w, d_id),
+            )
+
+
+def get_oncall_diagnostician(date_str: str) -> dict | None:
+    """Return the diagnostician on Παμμακάριστος on-call for the given date.
+    Checks availability table first; falls back to the persistent weekly schedule table.
+    """
     with _conn() as con:
         row = con.execute(
             "SELECT a.diagnostician_id, d.name AS diagnostician_name, a.date "
             "FROM availability a "
             "JOIN diagnosticians d ON d.id = a.diagnostician_id "
             "WHERE a.date = ? AND a.is_pamakristos_oncall = 1",
-            (date,),
+            (date_str,),
         ).fetchone()
-    return _row_to_dict(row) if row else None
+    if row:
+        return _row_to_dict(row)
+
+    try:
+        from datetime import date as dt_date
+        dt = dt_date.fromisoformat(date_str)
+        weekday = dt.weekday()
+        weekly = get_pamakristos_weekly_schedule_db()
+        match = next((item for item in weekly if item["weekday"] == weekday), None)
+        if match:
+            return {
+                "date": date_str,
+                "diagnostician_id": match["diagnostician_id"],
+                "diagnostician_name": match["diagnostician_name"],
+            }
+    except Exception:
+        pass
+    return None
+
 
 
 

@@ -40,25 +40,25 @@
                     <span class="admin-nav-icon">🏥</span>
                     Παμμακάριστος
                 </button>
+                <button class="admin-nav-item" id="nav-doctors" onclick="showSection('doctors')">
+                    <span class="admin-nav-icon">🩺</span>
+                    Ιατροί
+                </button>
                 <button class="admin-nav-item" id="nav-diagnosticians" onclick="showSection('diagnosticians')">
                     <span class="admin-nav-icon">👨‍⚕️</span>
                     Διαγνώστες
                 </button>
-                <button class="admin-nav-item" id="nav-availability" onclick="showSection('availability')">
+                <button class="admin-nav-item admin-nav-subitem" id="nav-availability" onclick="showSection('availability')">
                     <span class="admin-nav-icon">📅</span>
                     Διαθεσιμότητα
                 </button>
-                <button class="admin-nav-item" id="nav-skills" onclick="showSection('skills')">
+                <button class="admin-nav-item admin-nav-subitem" id="nav-skills" onclick="showSection('skills')">
                     <span class="admin-nav-icon">🎯</span>
-                    Ικανότητες Διαγνωστών
+                    Ικανότητες
                 </button>
-                <button class="admin-nav-item" id="nav-partnerships" onclick="showSection('partnerships')">
+                <button class="admin-nav-item admin-nav-subitem" id="nav-partnerships" onclick="showSection('partnerships')">
                     <span class="admin-nav-icon">🤝</span>
                     Συνεργασίες
-                </button>
-                <button class="admin-nav-item" id="nav-doctors" onclick="showSection('doctors')">
-                    <span class="admin-nav-icon">🩺</span>
-                    Ιατροί
                 </button>
             </nav>
 
@@ -107,13 +107,43 @@
                             <button class="btn btn-primary" onclick="setOncall()">Αποθήκευση</button>
                         </div>
                     </div>
+
+                    <!-- ─── Weekly Schedule Table ─── -->
+                    <div class="admin-card" style="margin-top: var(--space-xl);">
+                        <div class="admin-card-title">
+                            📅 Εβδομαδιαίο Πρόγραμμα Παμμακάριστου
+                        </div>
+                        <p style="color:var(--text-secondary);font-size:var(--font-size-sm);margin-bottom:var(--space-lg);">
+                            Ορίστε τον προκαθορισμένο υπεύθυνο διαγνώστη για κάθε ημέρα της εβδομάδας.
+                        </p>
+                        <table class="admin-table" id="weekly-schedule-table">
+                            <thead>
+                                <tr>
+                                    <th style="width: 200px;">Ημέρα</th>
+                                    <th>Υπεύθυνος Διαγνώστης</th>
+                                </tr>
+                            </thead>
+                            <tbody id="pamakristos-weekly-tbody">
+                                <!-- Populated dynamically by admin.js -->
+                            </tbody>
+                        </table>
+                        <div style="margin-top: var(--space-lg); display: flex; justify-content: flex-end;">
+                            <button class="btn btn-primary" onclick="savePamakristosWeeklySchedule()">Αποθήκευση Εβδομαδιαίου Προγράμματος</button>
+                        </div>
+                    </div>
                 </div>
                 <!-- ════════════ SECTION: Διαγνώστες ════════════ -->
                 <div id="section-diagnosticians" class="admin-section" style="display:none;">
                     <div class="admin-card">
                         <div class="admin-card-title" style="display: flex; justify-content: space-between; align-items: center;">
                             Λίστα Διαγνωστών
-                            <input type="text" id="diag-search" class="form-input" placeholder="Αναζήτηση..." style="width: 250px; font-weight: normal; font-size: var(--font-size-sm);" onkeyup="filterDiags(this.value)">
+                            <div style="display:flex; gap:12px; align-items:center;">
+                                <button class="btn btn-secondary btn-sm" onclick="syncDiagnosticians()" style="display:flex; align-items:center; gap:6px;">
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.3"/></svg>
+                                    Συγχρονισμός
+                                </button>
+                                <input type="text" id="diag-search" class="form-input" placeholder="Αναζήτηση..." style="width: 250px; font-weight: normal; font-size: var(--font-size-sm);" onkeyup="filterDiags(this.value)">
+                            </div>
                         </div>
                         <table class="admin-table" id="diag-table">
                             <thead>
@@ -311,7 +341,13 @@
                     <div class="admin-card">
                         <div class="admin-card-title" style="display: flex; justify-content: space-between; align-items: center;">
                             Λίστα Ιατρών
-                            <input type="text" id="doc-search" class="form-input" placeholder="Αναζήτηση..." style="width: 250px; font-weight: normal; font-size: var(--font-size-sm);" onkeyup="filterDoctors(this.value)">
+                            <div style="display:flex; gap:12px; align-items:center;">
+                                <button class="btn btn-secondary btn-sm" onclick="syncDoctors()" style="display:flex; align-items:center; gap:6px;">
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.3"/></svg>
+                                    Συγχρονισμός
+                                </button>
+                                <input type="text" id="doc-search" class="form-input" placeholder="Αναζήτηση..." style="width: 250px; font-weight: normal; font-size: var(--font-size-sm);" onkeyup="filterDoctors(this.value)">
+                            </div>
                         </div>
                         <table class="admin-table">
                             <thead>
