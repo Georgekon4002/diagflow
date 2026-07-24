@@ -45,6 +45,7 @@ class ExamContext:
     comments: str = ""  # Raw free-text from secretariat
     is_pamakristos: bool = False  # Is this from Παμακάριστος hospital?
     request_date: Optional[date] = None
+    oldpers: Optional[int] = None  # ID of the diagnostician who diagnosed past exam
 
 
 @dataclass
@@ -61,10 +62,10 @@ class CandidateDiagnostician:
 
     # Populated during filtering/scoring
     is_available: bool = True
-    daily_quota: int = 15
+    daily_quota: int = 0
     current_day_count: int = 0
-
-    # Skills for the exam's body part/modality
+    current_day_mri_count: int = 0
+    current_day_ct_count: int = 0
     skill_proficiency: float = 0.0
     has_skill_match: bool = False
     has_skill_data: bool = False  # True if any skill record exists for this modality/body-part
@@ -147,7 +148,7 @@ def filter_by_capacity(
     Priority 2: Capacity check.
     Eliminates a candidate if they have reached or exceeded their daily quota.
     """
-    if candidate.daily_quota > 0 and candidate.current_day_count >= candidate.daily_quota:
+    if candidate.daily_quota > 0 and candidate.daily_quota != 999 and candidate.current_day_count >= candidate.daily_quota:
         return FilterResult(
             passed=False,
             rule_name="capacity",
@@ -159,10 +160,34 @@ def filter_by_capacity(
             rule_name="capacity",
             reason="Έχει συμπληρώσει το ημερήσιο όριο",
         )
+        
+    # Special rule: WEB (222) only proposed for ΚΟΛΙΑΤΣΟΥ (1)
+    if candidate.id == 222 and str(exam.lab_id) != "1":
+        return FilterResult(
+            passed=False,
+            rule_name="special_rule",
+            reason="Προτείνεται μόνο για ΚΟΛΙΑΤΣΟΥ",
+        )
+
+    # Special rule: ΚΥΠΡΙΩΤΗΣ (89) max 2 MRIs and 20 CTs
+    if candidate.id == 89:
+        if exam.modality.upper() == "MRI" and candidate.current_day_mri_count >= 2:
+            return FilterResult(
+                passed=False,
+                rule_name="special_rule",
+                reason="Έχει συμπληρώσει το όριο (2 MRI/ημέρα)",
+            )
+        elif exam.modality.upper() == "CT" and candidate.current_day_ct_count >= 20:
+            return FilterResult(
+                passed=False,
+                rule_name="special_rule",
+                reason="Έχει συμπληρώσει το όριο (20 CT/ημέρα)",
+            )
+            
     return FilterResult(
         passed=True,
         rule_name="capacity",
-        reason=f"Υπόλοιπο χωρητικότητας: {max(0, candidate.daily_quota - candidate.current_day_count)}/{candidate.daily_quota}",
+        reason=f"Υπόλοιπο χωρητικότητας: {max(0, candidate.daily_quota - candidate.current_day_count)}/{candidate.daily_quota}" if candidate.daily_quota != 999 else "Χωρίς ημερήσιο όριο (999)",
     )
 
 
@@ -203,18 +228,20 @@ def filter_by_modality(
     This is separate from the skills hard filter.
     """
     modality = exam.modality.upper()
+    is_ct = modality == "CT"
+    is_mri = modality == "MRI"
 
-    if modality == "CT" and not candidate.can_ct:
+    if is_ct and not candidate.can_ct:
         return FilterResult(
             passed=False,
-            rule_name="modality_filter",
-            reason="Δεν αξιολογεί τη συγκεκριμένη εξέταση",
+            rule_name="modality",
+            reason="Δεν αξιολογεί CTs",
         )
-    if modality == "MRI" and not candidate.can_mri:
+    if is_mri and not candidate.can_mri:
         return FilterResult(
             passed=False,
-            rule_name="modality_filter",
-            reason="Δεν αξιολογεί τη συγκεκριμένη εξέταση",
+            rule_name="modality",
+            reason="Δεν αξιολογεί MRIs",
         )
     return FilterResult(
         passed=True,

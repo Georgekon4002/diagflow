@@ -111,6 +111,9 @@
                 Ανατεθειμένες
                 <span class="tab-count" id="tab-count-assigned">—</span>
             </button>
+            <button class="tab-btn" id="tab-dashboard" onclick="switchTab('dashboard')">
+                Dashboard
+            </button>
         </div>
 
         <!-- ─── Exam List ─── -->
@@ -333,6 +336,15 @@
             </div>
 
         </div>
+
+        <!-- ─── Dashboard List ─── -->
+        <div class="dashboard-section" id="dashboard-section" style="display: none; padding: 20px;">
+            <h2>Σημερινό Dashboard Ιατρών</h2>
+            <div id="dashboard-grid" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 16px; margin-top: 16px;">
+                <!-- Populated by JS -->
+            </div>
+        </div>
+
     </main>
 
     <!-- ─── Admin Login Modal ─── -->

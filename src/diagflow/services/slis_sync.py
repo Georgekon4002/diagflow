@@ -23,6 +23,7 @@ In production (USE_MOCK_SLIS_DB=false):
 """
 
 import sqlite3
+import sys
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
@@ -32,8 +33,11 @@ from diagflow.config import settings
 
 logger = structlog.get_logger(__name__)
 
-# ── Resolve mock DB path ───────────────────────────────────────────
-_PROJECT_ROOT = Path(__file__).parent.parent.parent.parent
+# ── Resolve project root and mock DB path ──────────────────────────
+if getattr(sys, "frozen", False):
+    _PROJECT_ROOT = Path(sys.executable).parent
+else:
+    _PROJECT_ROOT = Path(__file__).parent.parent.parent.parent
 _MOCK_DB_PATH = _PROJECT_ROOT / settings.mock_slis_db_path
 
 

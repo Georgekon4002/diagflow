@@ -7,12 +7,21 @@ just plain sqlite3 so it behaves identically to the mock_slis.db pattern
 already in use.
 """
 import sqlite3
+import sys
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Generator
 
-# Path relative to this file → db/diagflow.db
-_DB_PATH = Path(__file__).parent.parent.parent.parent / "db" / "diagflow.db"
+# Resolve db/ relative to the project root.
+# When running as a PyInstaller EXE, __file__ points inside a temp dir,
+# so we fall back to the directory containing the EXE.
+if getattr(sys, "frozen", False):
+    _PROJECT_ROOT = Path(sys.executable).parent
+else:
+    _PROJECT_ROOT = Path(__file__).parent.parent.parent.parent
+
+# Path → db/diagflow.db
+_DB_PATH = _PROJECT_ROOT / "db" / "diagflow.db"
 
 
 @contextmanager
@@ -462,7 +471,7 @@ def delete_doctor(doctor_id: str) -> bool:
 
 # ── Local Assignments ─────────────────────────────────────────────────────────
 
-def upsert_local_assignment(exammoreid: int, diagnostician_id: int, diagnostician_name: str, assigned_at: str) -> dict:
+def upsert_local_assignment(exammoreid: int, diagnostician_id: int, diagnostician_name: str, assigned_at: str, modality: str | None = None, extracode: str | None = None) -> dict:
     with _conn() as con:
         con.execute(
             "INSERT INTO local_assignments (exammoreid, diagnostician_id, diagnostician_name, assigned_at) VALUES (?, ?, ?, ?) "
@@ -470,8 +479,8 @@ def upsert_local_assignment(exammoreid: int, diagnostician_id: int, diagnosticia
             (exammoreid, diagnostician_id, diagnostician_name, assigned_at),
         )
         con.execute(
-            "INSERT OR REPLACE INTO assignment_log (exammoreid, diagnostician_id, assigned_at) VALUES (?, ?, ?)",
-            (exammoreid, diagnostician_id, assigned_at),
+            "INSERT OR REPLACE INTO assignment_log (exammoreid, diagnostician_id, assigned_at, modality, extracode) VALUES (?, ?, ?, ?, ?)",
+            (exammoreid, diagnostician_id, assigned_at, modality, extracode),
         )
         row = con.execute(
             "SELECT exammoreid, diagnostician_id, diagnostician_name, assigned_at FROM local_assignments WHERE exammoreid = ?", (exammoreid,)
@@ -483,14 +492,50 @@ def get_all_local_assignments() -> dict[int, dict]:
         rows = con.execute("SELECT exammoreid, diagnostician_id, diagnostician_name, assigned_at FROM local_assignments").fetchall()
     return {r["exammoreid"]: _row_to_dict(r) for r in rows}
 
-def get_daily_assignment_counts() -> dict[int, int]:
+def get_daily_assignment_counts() -> dict[int, dict]:
     with _conn() as con:
+        # We join with slis_exams to get the category (modality) for MRI/CT counts.
         rows = con.execute(
-            "SELECT diagnostician_id, COUNT(*) as cnt FROM assignment_log WHERE substr(assigned_at, 1, 10) = date('now', 'localtime') GROUP BY diagnostician_id"
+            """
+            SELECT diagnostician_id,
+                   COUNT(*) as total_cnt,
+                   SUM(CASE WHEN UPPER(modality) = 'MRI' THEN 1 ELSE 0 END) as mri_cnt,
+                   SUM(CASE WHEN UPPER(modality) = 'CT' THEN 1 ELSE 0 END) as ct_cnt
+            FROM assignment_log
+            WHERE substr(assigned_at, 1, 10) = date('now', 'localtime')
+            GROUP BY diagnostician_id
+            """
         ).fetchall()
-    return {r["diagnostician_id"]: r["cnt"] for r in rows}
+    return {r["diagnostician_id"]: {"total": r["total_cnt"], "mri": r["mri_cnt"] or 0, "ct": r["ct_cnt"] or 0} for r in rows}
 
 def delete_local_assignment(exammoreid: int) -> bool:
     with _conn() as con:
         cur = con.execute("DELETE FROM local_assignments WHERE exammoreid = ?", (exammoreid,))
         return cur.rowcount > 0
+
+def get_dashboard_data() -> list[dict]:
+    with _conn() as con:
+        rows = con.execute(
+            """
+            SELECT d.id as diagnostician_id, d.name as diagnostician_name,
+                   al.exammoreid, al.extracode, al.modality as category
+            FROM assignment_log al
+            JOIN diagnosticians d ON al.diagnostician_id = d.id
+            WHERE substr(al.assigned_at, 1, 10) = date('now', 'localtime')
+            ORDER BY d.name, al.extracode
+            """
+        ).fetchall()
+        
+    dashboard_map = {}
+    for r in rows:
+        d_id = r["diagnostician_id"]
+        if d_id not in dashboard_map:
+            dashboard_map[d_id] = {
+                "diagnostician_id": d_id,
+                "diagnostician_name": r["diagnostician_name"],
+                "assigned_orders": []
+            }
+        if r["extracode"]:
+            dashboard_map[d_id]["assigned_orders"].append(r["extracode"])
+            
+    return list(dashboard_map.values())

@@ -178,7 +178,7 @@ class AssignmentService:
             import diagflow.db.diagflow_db as cfg_db
             d_info = cfg_db.get_diagnostician(diagnostician_id)
             d_name = d_info["name"] if d_info else ""
-            cfg_db.upsert_local_assignment(int(exam_id), diagnostician_id, d_name, datetime.now().isoformat())
+            cfg_db.upsert_local_assignment(int(exam_id), diagnostician_id, d_name, datetime.now().isoformat(), modality=suggestion.modality if hasattr(suggestion, 'modality') else None, extracode=None)
         except Exception as e:
             logger.warning("local_assignment_update_failed", error=str(e))
 
@@ -222,7 +222,7 @@ class AssignmentService:
             import diagflow.db.diagflow_db as cfg_db
             d_info = cfg_db.get_diagnostician(override_diagnostician_id)
             d_name = d_info["name"] if d_info else ""
-            cfg_db.upsert_local_assignment(int(exam_id), override_diagnostician_id, d_name, datetime.now().isoformat())
+            cfg_db.upsert_local_assignment(int(exam_id), override_diagnostician_id, d_name, datetime.now().isoformat(), modality=suggestion.modality if suggestion and hasattr(suggestion, 'modality') else None, extracode=None)
         except Exception as e:
             logger.warning("local_assignment_update_failed", error=str(e))
 
@@ -282,6 +282,8 @@ def _get_pending_exams_from_db() -> list[dict]:
                     ex_part["preferred_diagnostician_id"],
                     ex_part["preferred_diagnostician_name"],
                     now_iso,
+                    modality=r["category"],
+                    extracode=str(r["extracode"]) if r["extracode"] else None
                 )
                 logger.info(
                     "exclusive_partner_auto_assigned",
@@ -304,6 +306,8 @@ def _get_pending_exams_from_db() -> list[dict]:
                         59,
                         beretis_name,
                         now_iso,
+                        modality=r["category"],
+                        extracode=str(r["extracode"]) if r["extracode"] else None
                     )
                     logger.info(
                         "pam_22705_auto_assigned_to_beretis",
@@ -318,12 +322,33 @@ def _get_pending_exams_from_db() -> list[dict]:
                         pam_oncall["diagnostician_id"],
                         pam_oncall["diagnostician_name"],
                         now_iso,
+                        modality=r["category"],
+                        extracode=str(r["extracode"]) if r["extracode"] else None
                     )
                     logger.info(
                         "pam_exam_auto_assigned",
                         exam_id=exam_id,
                         oncall=pam_oncall["diagnostician_name"],
                     )
+                    continue
+
+            # Check 3: Lab-specific specific exams auto-assignment
+            # 21850, 22700-22704 for ΑΝΩ ΠΑΤΗΣΙΑ (6) -> ΝΑΤΣΙΚΑ (14)
+            # 21850, 22700-22704 for ΙΛΙΟΝ (7) -> ΠΑΠΟΥΤΣΗ (41)
+            exam_code_str = str(r["examnumcode"]).strip() if r["examnumcode"] else ""
+            lab_id_val = r["labcodeid"]
+            if exam_code_str in ("21850", "22700", "22701", "22702", "22703", "22704"):
+                if lab_id_val == 6:  # ΑΝΩ ΠΑΤΗΣΙΑ
+                    natsika = cfg_db.get_diagnostician(14)
+                    natsika_name = natsika["name"] if natsika else "ΝΑΤΣΙΚΑ"
+                    cfg_db.upsert_local_assignment(exam_id, 14, natsika_name, now_iso, modality=r["category"], extracode=str(r["extracode"]) if r["extracode"] else None)
+                    logger.info("lab_specific_exam_auto_assigned", exam_id=exam_id, lab=6, diagnostician=14)
+                    continue
+                elif lab_id_val == 7:  # ΙΛΙΟΝ
+                    papoutsi = cfg_db.get_diagnostician(41)
+                    papoutsi_name = papoutsi["name"] if papoutsi else "ΠΑΠΟΥΤΣΗ ΔΗΜΗΤΡΑ"
+                    cfg_db.upsert_local_assignment(exam_id, 41, papoutsi_name, now_iso, modality=r["category"], extracode=str(r["extracode"]) if r["extracode"] else None)
+                    logger.info("lab_specific_exam_auto_assigned", exam_id=exam_id, lab=7, diagnostician=41)
                     continue
 
             # Normal pending exam

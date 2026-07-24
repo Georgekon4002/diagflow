@@ -162,15 +162,35 @@ function switchTab(tab) {
     document.getElementById('tab-pending').classList.toggle('active', tab === 'pending');
     document.getElementById('tab-assigned').classList.toggle('active', tab === 'assigned');
 
+    document.getElementById('tab-dashboard').classList.toggle('active', tab === 'dashboard');
+
     const pendingContent = document.getElementById('tab-content-pending');
     const assignedContent = document.getElementById('tab-content-assigned');
-    pendingContent.classList.toggle('active', tab === 'pending');
-    assignedContent.classList.toggle('active', tab === 'assigned');
-    pendingContent.style.display = tab === 'pending' ? 'block' : 'none';
-    assignedContent.style.display = tab === 'assigned' ? 'block' : 'none';
+    const dashboardContent = document.getElementById('dashboard-section');
+    
+    if(pendingContent) {
+        pendingContent.classList.toggle('active', tab === 'pending');
+        pendingContent.style.display = tab === 'pending' ? 'block' : 'none';
+    }
+    if(assignedContent) {
+        assignedContent.classList.toggle('active', tab === 'assigned');
+        assignedContent.style.display = tab === 'assigned' ? 'block' : 'none';
+    }
+    if(dashboardContent) {
+        dashboardContent.style.display = tab === 'dashboard' ? 'block' : 'none';
+    }
 
     const titleEl = document.getElementById('section-title-text');
     const countEl = document.getElementById('section-count');
+    const sectionHeader = document.querySelector('.section-header');
+
+    if (tab === 'dashboard') {
+        if(sectionHeader) sectionHeader.style.display = 'none';
+        loadDashboard();
+        return; // Dashboard doesn't need filters/counts
+    }
+    
+    if(sectionHeader) sectionHeader.style.display = 'flex';
 
     if (tab === 'pending') {
         titleEl.textContent = 'Εκκρεμείς Εξετάσεις';
@@ -1824,7 +1844,7 @@ function getEligibleFabDiagnosticians() {
         : assignedExams.filter(e => selectedAssignedExams.has(e.exam_id));
 
     if (selectedList.length === 0) {
-        return diagnosticians.filter(d => d.available);
+        return diagnosticians.map(d => ({ ...d, isEligible: d.available }));
     }
 
     const requiresCt = selectedList.some(e => {
@@ -1837,11 +1857,27 @@ function getEligibleFabDiagnosticians() {
         return mod.includes('MRI');
     });
 
-    return diagnosticians.filter(d => {
-        if (!d.available) return false;
-        if (requiresCt && !d.can_ct) return false;
-        if (requiresMri && !d.can_mri) return false;
-        return true;
+    return diagnosticians.map(d => {
+        let isEligible = true;
+        let rejectReason = '';
+        if (!d.available) {
+            isEligible = false;
+            rejectReason = 'Μη διαθέσιμος';
+        } else if (requiresCt && !d.can_ct) {
+            isEligible = false;
+            rejectReason = 'Δεν αξιολογεί CTs';
+        } else if (requiresMri && !d.can_mri) {
+            isEligible = false;
+            rejectReason = 'Δεν αξιολογεί MRIs';
+        }
+        
+        const quota = getTodayQuota(d);
+        if (quota > 0 && quota !== 999 && d.current_day_count >= quota) {
+            isEligible = false;
+            rejectReason = 'Όριο γεμάτο';
+        }
+
+        return { ...d, isEligible, rejectReason };
     });
 }
 
@@ -1852,27 +1888,39 @@ function populateFabDropdown() {
     const searchInput = document.getElementById('fab-diag-search');
     const search = normalizeGreek(searchInput ? searchInput.value : '');
 
-    const eligible = getEligibleFabDiagnosticians();
+    let eligible = getEligibleFabDiagnosticians();
+    
+    // Sort: Eligible first, then alphabetical
+    eligible.sort((a, b) => {
+        if (a.isEligible && !b.isEligible) return -1;
+        if (!a.isEligible && b.isEligible) return 1;
+        return a.name.localeCompare(b.name, 'el');
+    });
+
     const filtered = search
         ? eligible.filter(d => normalizeGreek(d.name).includes(search))
         : eligible;
 
     if (filtered.length === 0) {
-        list.innerHTML = `<div style="padding: 12px; text-align: center; color: var(--text-tertiary); font-size: 12px;">Δεν βρέθηκαν επιλέξιμοι ακτινοδιαγνώστες</div>`;
+        list.innerHTML = `<div style="padding: 12px; text-align: center; color: var(--text-tertiary); font-size: 12px;">Δεν βρέθηκαν ακτινοδιαγνώστες</div>`;
         return;
     }
 
     list.innerHTML = filtered.map(d => {
         const quota = getTodayQuota(d);
-        const isOverQuota = quota > 0 && d.current_day_count >= quota;
-        const itemClass = `fab-diag-item ${isOverQuota ? 'over-quota' : ''}`;
-        const style = isOverQuota
+        const quotaStr = quota === 999 ? '∞' : quota;
+        const isError = !d.isEligible;
+        const itemClass = `fab-diag-item ${isError ? 'over-quota' : ''}`;
+        const style = isError
             ? 'padding: 8px; cursor: pointer; border-radius: 4px; background: rgba(239, 68, 68, 0.15); color: #ef4444; border-bottom: 1px solid rgba(239, 68, 68, 0.3); font-weight: 600;'
             : 'padding: 8px; cursor: pointer; border-radius: 4px; border-bottom: 1px solid var(--border-color); color: var(--text-primary);';
 
+        const reasonHtml = d.rejectReason ? `<span style="display: block; font-size: 10px; opacity: 0.8; margin-top: 2px;">${d.rejectReason}</span>` : '';
+
         return `
             <div class="${itemClass}" onclick="bulkAssignToSpecific(${d.id}, '${escapeHtml(d.name)}')" style="${style}">
-                ${escapeHtmlFull(d.name)} <span style="opacity: ${isOverQuota ? '0.9' : '0.5'}; font-size: 11px; margin-left: 4px;">(${d.current_day_count}/${quota})</span>
+                ${escapeHtmlFull(d.name)} <span style="opacity: ${isError ? '0.9' : '0.5'}; font-size: 11px; margin-left: 4px;">(${d.current_day_count}/${quotaStr})</span>
+                ${reasonHtml}
             </div>
         `;
     }).join('');
@@ -2163,4 +2211,42 @@ function clearAssignedSelection() {
 
 function updateAssignedBulkUI() {
     updateBulkActionsUI();
+}
+
+async function loadDashboard() {
+    const grid = document.getElementById('dashboard-grid');
+    if (!grid) return;
+    
+    grid.innerHTML = '<div style="color: var(--text-secondary);">Φόρτωση...</div>';
+    try {
+        const data = await apiCall('/dashboard', 'GET');
+        if (!data || data.length === 0) {
+            grid.innerHTML = '<div style="color: var(--text-secondary);">Δεν υπάρχουν δεδομένα για σήμερα.</div>';
+            return;
+        }
+        
+        grid.innerHTML = data.map(d => {
+            const diagInfo = diagnosticians.find(x => x.id === d.diagnostician_id);
+            let quota = diagInfo ? getTodayQuota(diagInfo) : 0;
+            let quotaStr = quota === 999 ? '∞' : quota;
+            let count = d.assigned_orders.length;
+            
+            const isFull = quota > 0 && quota !== 999 && count >= quota;
+            const cardClass = isFull ? 'card error-card' : 'card';
+            const headerColor = isFull ? '#ef4444' : 'var(--text-primary)';
+            
+            const ordersList = d.assigned_orders.map(o => `<span style="display:inline-block; background:var(--bg-secondary); padding:2px 6px; border-radius:4px; font-size:11px; margin:2px;">${o}</span>`).join('');
+            
+            return `
+                <div class="${cardClass}" style="padding: 16px; border: 1px solid var(--border-color); border-radius: 8px;">
+                    <h3 style="margin-top: 0; color: ${headerColor}; font-size: 16px;">${escapeHtml(d.diagnostician_name)}</h3>
+                    <div style="font-size: 14px; margin-bottom: 8px;">Αναθέσεις: <strong>${count} / ${quotaStr}</strong></div>
+                    <div style="font-size: 12px; color: var(--text-secondary); margin-bottom: 4px;">Εντολές:</div>
+                    <div>${ordersList || '-'}</div>
+                </div>
+            `;
+        }).join('');
+    } catch (e) {
+        grid.innerHTML = `<div style="color: #ef4444;">Σφάλμα φόρτωσης: ${escapeHtml(e.message)}</div>`;
+    }
 }

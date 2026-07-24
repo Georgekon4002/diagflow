@@ -46,7 +46,6 @@ async def lifespan(app: FastAPI):
     
     def daily_sync():
         logger.info("running_daily_background_sync")
-        sync_diagnosticians()
         sync_doctors()
 
     scheduler.add_job(daily_sync, 'cron', hour=3, minute=0)
@@ -83,15 +82,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ── API routes ──
-app.include_router(api_router, prefix="/api")
-
-# ── Serve the frontend dashboard as static files ──
-frontend_dir = Path(__file__).resolve().parent.parent.parent / "frontend"
-if frontend_dir.exists():
-    app.mount("/", StaticFiles(directory=str(frontend_dir), html=True), name="frontend")
-
-
+# ── Health check (must be registered before the catch-all static mount) ──
 @app.get("/api/health")
 async def health_check():
     """Health check endpoint."""
@@ -101,4 +92,12 @@ async def health_check():
         "version": __version__,
         "environment": settings.app_env,
     }
+
+# ── API routes ──
+app.include_router(api_router, prefix="/api")
+
+# ── Serve the frontend dashboard as static files ──
+frontend_dir = Path(__file__).resolve().parent.parent.parent / "frontend"
+if frontend_dir.exists():
+    app.mount("/", StaticFiles(directory=str(frontend_dir), html=True), name="frontend")
 

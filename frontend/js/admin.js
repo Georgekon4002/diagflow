@@ -57,7 +57,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     };
     
     flatpickr("#oncall-date", fpConfig);
-    flatpickr("#avail-date", fpConfig);
+    flatpickr("#avail-date", {
+        ...fpConfig,
+        mode: "range",
+        defaultDate: [today, today]
+    });
 
     await loadAll();
     showSection('oncall');
@@ -200,7 +204,6 @@ async function loadDiagnosticians() {
     renderDiagnosticians();
     populateDiagnosticianSelects();
     renderAvailability();
-    renderWeeklyScheduleGrid();
 }
 
 async function loadPartnerships() {
@@ -552,37 +555,7 @@ function renderTodayOffSchedules() {
     renderAvailability();
 }
 
-function renderWeeklyScheduleGrid() {
-    const tbody = document.getElementById('weekly-schedule-tbody');
-    if (!tbody) return;
 
-    const activeDiags = diagnosticians.filter(d => d.active).sort((a, b) => a.name.localeCompare(b.name, 'el'));
-
-    if (!activeDiags.length) {
-        tbody.innerHTML = '<tr><td colspan="8" style="color:var(--text-tertiary);text-align:center;padding:20px;">Δεν υπάρχουν ενεργοί διαγνώστες</td></tr>';
-        return;
-    }
-
-    const quotaKeys = ['quota_monday', 'quota_tuesday', 'quota_wednesday', 'quota_thursday', 'quota_friday', 'quota_saturday', 'quota_sunday'];
-
-    tbody.innerHTML = activeDiags.map(d => {
-        let cells = `<td style="font-weight:500;">${d.name}</td>`;
-        for (let day = 0; day < 7; day++) {
-            const quotaVal = d[quotaKeys[day]] || 0;
-            cells += `
-                <td style="text-align:center;">
-                    <input type="number" 
-                           class="form-input"
-                           style="width:50px;padding:4px;text-align:center;${quotaVal === 0 ? 'background-color:#ffe4e6;color:#e11d48;font-weight:bold;' : ''}" 
-                           value="${quotaVal}"
-                           min="0"
-                           onchange="updateWeeklyQuota(${d.id}, '${quotaKeys[day]}', this.value)">
-                </td>
-            `;
-        }
-        return `<tr>${cells}</tr>`;
-    }).join('');
-}
 
 function renderSkills() {
     const tbody = document.getElementById('skills-tbody');
@@ -813,28 +786,49 @@ async function setAvailability() {
     const selEl = document.getElementById('avail-diag');
     const diagId = parseInt(selEl.value);
     const diagName = selEl.options[selEl.selectedIndex]?.dataset?.name || '';
-    const dateVal = document.getElementById('avail-date').value;
+    
+    // Retrieve dates directly from the flatpickr instance
+    const fpInstance = document.getElementById('avail-date')._flatpickr;
+    let datesToSave = [];
+    
+    if (fpInstance && fpInstance.selectedDates.length > 0) {
+        if (fpInstance.selectedDates.length === 2) {
+            let current = new Date(fpInstance.selectedDates[0]);
+            let end = new Date(fpInstance.selectedDates[1]);
+            while (current <= end) {
+                datesToSave.push(current.toISOString().split('T')[0]);
+                current.setDate(current.getDate() + 1);
+            }
+        } else {
+            datesToSave.push(fpInstance.selectedDates[0].toISOString().split('T')[0]);
+        }
+    } else {
+        const rawVal = document.getElementById('avail-date').value;
+        if (rawVal) datesToSave.push(rawVal);
+    }
+    
     const notes = document.getElementById('avail-notes').value.trim();
     // Status defaults to 'on_leave' since Κατάσταση was removed
     const status = 'on_leave';
 
-    if (!diagId || !dateVal) { showToast('Επιλέξτε διαγνώστη και ημερομηνία', 'warning'); return; }
+    if (!diagId || datesToSave.length === 0) { showToast('Επιλέξτε διαγνώστη και ημερομηνία', 'warning'); return; }
 
-    const record = { diagnostician_id: diagId, diagnostician_name: diagName, date: dateVal, status, notes };
-
-    try {
-        const result = await apiCall('/admin/availability', 'POST', record);
-        if (result) {
+    for (const dateVal of datesToSave) {
+        const record = { diagnostician_id: diagId, diagnostician_name: diagName, date: dateVal, status, notes };
+        try {
+            const result = await apiCall('/admin/availability', 'POST', record);
+            if (result) {
+                availability = availability.filter(a => !(a.diagnostician_id === diagId && a.date === dateVal));
+                availability.push(result);
+            }
+        } catch {
             availability = availability.filter(a => !(a.diagnostician_id === diagId && a.date === dateVal));
-            availability.push(result);
+            availability.push({ id: Date.now(), ...record });
         }
-    } catch {
-        availability = availability.filter(a => !(a.diagnostician_id === diagId && a.date === dateVal));
-        availability.push({ id: Date.now(), ...record });
     }
 
     renderAvailability();
-    showToast(`✅ Άδεια καταγράφηκε: ${diagName}`, 'success');
+    showToast(`✅ Άδεια καταγράφηκε: ${diagName} (${datesToSave.length} ημερών)`, 'success');
 }
 
 async function updatePreferredLab(id, val) {

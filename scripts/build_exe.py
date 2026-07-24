@@ -65,7 +65,6 @@ def build():
         "--hidden-import", "diagflow.services.assignment",
         "--hidden-import", "diagflow.services.diagnostician",
         "--hidden-import", "diagflow.services.pamakristos",
-        "--hidden-import", "diagflow.services.comment_parser",
         "--hidden-import", "diagflow.engine.pipeline",
         "--hidden-import", "diagflow.engine.filters",
         "--hidden-import", "diagflow.engine.scoring",

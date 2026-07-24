@@ -157,6 +157,7 @@ async def suggest_assignment(
         issuing_doctor_name=exam_data["issuing_doctor_name"],
         comments=exam_data.get("comments", ""),
         is_pamakristos="ΠΑΜΜΑΚΑΡΙΣΤΟΣ" in exam_data.get("issuing_doctor_name", "").upper(),
+        oldpers=exam_data.get("oldpers"),
     )
 
     candidates = await diag_svc.get_candidates_for_exam(
@@ -168,6 +169,7 @@ async def suggest_assignment(
         issuing_doctor_id=exam.issuing_doctor_id,
         patient_id=exam.patient_id,
         exam_code=exam.exam_code,
+        oldpers=exam.oldpers,
     )
 
     # Apply session-level virtual workload so back-to-back suggestions spread across
@@ -339,6 +341,10 @@ async def list_diagnosticians(
     """List all active diagnosticians."""
     return await svc.get_all_diagnosticians()
 
+@router.get("/dashboard")
+async def get_dashboard():
+    """Get today's assigned exams per diagnostician."""
+    return cfg_db.get_dashboard_data()
 
 # ─────────────────────────────────────────────────────
 #  Παμμακάριστος

@@ -148,7 +148,7 @@ def score_lab_preference(candidate: CandidateDiagnostician, exam: ExamContext) -
     """
     preferred_lab_id = getattr(candidate, "preferred_lab_id", "")
     
-    if preferred_lab_id and preferred_lab_id == str(exam.lab_id):
+    if preferred_lab_id and str(preferred_lab_id) == str(exam.lab_id):
         raw = 1.0
         explanation = f"Προτιμά τις εξετάσεις από '{exam.lab_name}'"
     elif preferred_lab_id:

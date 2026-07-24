@@ -33,6 +33,7 @@ class DiagnosticianService:
         patient_id: str,
         exam_code: str = "",
         lab_name: str = "",
+        oldpers: int | None = None,
     ) -> list[CandidateDiagnostician]:
         """
         Load all potentially eligible diagnosticians for an exam.
@@ -43,6 +44,7 @@ class DiagnosticianService:
         - Checks partnership (issuing doctor preference)
         - Derives can_ct / can_mri flags
         """
+        self._current_exam_oldpers = oldpers
         today = str(date.today())
 
         # Load all diagnosticians from DB
@@ -106,9 +108,18 @@ class DiagnosticianService:
             is_partner = pship is not None
             is_exclusive = bool(pship.get("exclusive", 0)) if pship else False
 
-            # Patient history — not yet tracked in DB; default to no history
+            # Patient history
             has_history = False
             history_count = 0
+            # If the exam context provides the old diagnostician ID (oldpers)
+            # we check if this candidate matches it.
+            if hasattr(self, "_current_exam_oldpers") and self._current_exam_oldpers == diag_id:
+                has_history = True
+                history_count = 1
+
+            counts_dict = daily_counts.get(diag_id, {"total": 0, "mri": 0, "ct": 0})
+            if isinstance(counts_dict, int):
+                counts_dict = {"total": counts_dict, "mri": 0, "ct": 0}
 
             candidate = CandidateDiagnostician(
                 id=diag_id,
@@ -117,7 +128,9 @@ class DiagnosticianService:
                 can_mri=can_mri,
                 is_available=is_available,
                 daily_quota=daily_quota,
-                current_day_count=daily_counts.get(diag_id, 0),
+                current_day_count=counts_dict.get("total", 0),
+                current_day_mri_count=counts_dict.get("mri", 0),
+                current_day_ct_count=counts_dict.get("ct", 0),
                 skill_proficiency=skill_proficiency,
                 has_skill_match=skill_match is not None,
                 has_skill_data=len(skills) > 0,

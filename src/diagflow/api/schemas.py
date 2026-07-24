@@ -137,7 +137,7 @@ class DiagnosticianResponse(BaseModel):
     quota_friday: int
     quota_saturday: int
     quota_sunday: int
-    current_day_count: int
+    current_day_count: int | dict
     available: bool
 
 
