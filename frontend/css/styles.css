@@ -2047,3 +2047,20 @@ tr.pammakristos-row:hover td.frozen-col-2 {
 .fab-diag-item.over-quota:hover {
     background-color: rgba(239, 68, 68, 0.25) !important;
 }
+
+.btn-success {
+    background: rgba(16, 185, 129, 0.15);
+    color: #10b981;
+    border: 1px solid rgba(16, 185, 129, 0.3);
+}
+.btn-danger {
+    background: rgba(239, 68, 68, 0.15);
+    color: #ef4444;
+    border: 1px solid rgba(239, 68, 68, 0.3);
+}
+.wrap-text {
+    white-space: normal !important;
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+    min-width: 200px;
+}

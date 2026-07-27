@@ -770,3 +770,98 @@ async def admin_sync_doctors(_: str = Depends(_require_admin)):
     from diagflow.services.slis_sync import sync_doctors
     result = sync_doctors()
     return result
+
+# ─────────────────────────────────────────────────────
+#  Admin Advanced Options
+# ─────────────────────────────────────────────────────
+
+from diagflow.api.schemas import (
+    ExamRoutingRuleCreate, ExamRoutingRuleUpdate, ExamRoutingRuleResponse,
+    ExclusiveLabRuleCreate, ExclusiveLabRuleUpdate, ExclusiveLabRuleResponse,
+    ModalityQuotaCreate, ModalityQuotaUpdate, ModalityQuotaResponse
+)
+
+@router.get('/admin/advanced/exam-routing-rules', response_model=list[ExamRoutingRuleResponse])
+async def get_exam_routing_rules(_=Depends(_require_admin)):
+    return cfg_db.get_all_exam_routing_rules()
+
+@router.post('/admin/advanced/exam-routing-rules', response_model=ExamRoutingRuleResponse)
+async def add_exam_routing_rule(req: ExamRoutingRuleCreate, _=Depends(_require_admin)):
+    return cfg_db.create_exam_routing_rule(
+        lab_id=req.lab_id,
+        issuing_doctor_id=req.issuing_doctor_id,
+        issuing_doctor_name=req.issuing_doctor_name,
+        is_pamakristos=req.is_pamakristos,
+        exam_codes=req.exam_codes,
+        diagnostician_id=req.diagnostician_id,
+        description=req.description,
+        is_active=req.is_active
+    )
+
+@router.put('/admin/advanced/exam-routing-rules/{rule_id}', response_model=ExamRoutingRuleResponse)
+async def edit_exam_routing_rule(rule_id: int, req: ExamRoutingRuleUpdate, _=Depends(_require_admin)):
+    result = cfg_db.update_exam_routing_rule(rule_id, req.model_dump(exclude_unset=True))
+    if not result:
+        raise HTTPException(status_code=404, detail='Rule not found')
+    return result
+
+@router.delete('/admin/advanced/exam-routing-rules/{rule_id}')
+async def remove_exam_routing_rule(rule_id: int, _=Depends(_require_admin)):
+    success = cfg_db.delete_exam_routing_rule(rule_id)
+    if not success:
+        raise HTTPException(status_code=404, detail='Rule not found')
+    return {'success': True}
+
+@router.get('/admin/advanced/exclusive-lab-rules', response_model=list[ExclusiveLabRuleResponse])
+async def get_exclusive_lab_rules(_=Depends(_require_admin)):
+    return cfg_db.get_all_exclusive_lab_rules()
+
+@router.post('/admin/advanced/exclusive-lab-rules', response_model=ExclusiveLabRuleResponse)
+async def add_exclusive_lab_rule(req: ExclusiveLabRuleCreate, _=Depends(_require_admin)):
+    return cfg_db.create_exclusive_lab_rule(
+        diagnostician_id=req.diagnostician_id,
+        lab_id=req.lab_id,
+        lab_name=req.lab_name or '',
+        is_active=req.is_active
+    )
+
+@router.put('/admin/advanced/exclusive-lab-rules/{rule_id}', response_model=ExclusiveLabRuleResponse)
+async def edit_exclusive_lab_rule(rule_id: int, req: ExclusiveLabRuleUpdate, _=Depends(_require_admin)):
+    result = cfg_db.update_exclusive_lab_rule(rule_id, req.model_dump(exclude_unset=True))
+    if not result:
+        raise HTTPException(status_code=404, detail='Rule not found')
+    return result
+
+@router.delete('/admin/advanced/exclusive-lab-rules/{rule_id}')
+async def remove_exclusive_lab_rule(rule_id: int, _=Depends(_require_admin)):
+    success = cfg_db.delete_exclusive_lab_rule(rule_id)
+    if not success:
+        raise HTTPException(status_code=404, detail='Rule not found')
+    return {'success': True}
+
+@router.get('/admin/advanced/modality-quotas', response_model=list[ModalityQuotaResponse])
+async def get_modality_quotas(_=Depends(_require_admin)):
+    return cfg_db.get_all_modality_quotas()
+
+@router.post('/admin/advanced/modality-quotas', response_model=ModalityQuotaResponse)
+async def add_modality_quota(req: ModalityQuotaCreate, _=Depends(_require_admin)):
+    return cfg_db.create_modality_quota(
+        diagnostician_id=req.diagnostician_id,
+        modality=req.modality,
+        max_count=req.max_count,
+        is_active=req.is_active
+    )
+
+@router.put('/admin/advanced/modality-quotas/{rule_id}', response_model=ModalityQuotaResponse)
+async def edit_modality_quota(rule_id: int, req: ModalityQuotaUpdate, _=Depends(_require_admin)):
+    result = cfg_db.update_modality_quota(rule_id, req.model_dump(exclude_unset=True))
+    if not result:
+        raise HTTPException(status_code=404, detail='Rule not found')
+    return result
+
+@router.delete('/admin/advanced/modality-quotas/{rule_id}')
+async def remove_modality_quota(rule_id: int, _=Depends(_require_admin)):
+    success = cfg_db.delete_modality_quota(rule_id)
+    if not success:
+        raise HTTPException(status_code=404, detail='Rule not found')
+    return {'success': True}

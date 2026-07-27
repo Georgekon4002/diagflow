@@ -48,7 +48,8 @@
                     <span class="admin-nav-icon">👨‍⚕️</span>
                     Διαγνώστες
                 </button>
-                <button class="admin-nav-item admin-nav-subitem" id="nav-availability" onclick="showSection('availability')">
+                <button class="admin-nav-item admin-nav-subitem" id="nav-availability"
+                    onclick="showSection('availability')">
                     <span class="admin-nav-icon">📅</span>
                     Διαθεσιμότητα
                 </button>
@@ -56,9 +57,15 @@
                     <span class="admin-nav-icon">🎯</span>
                     Ικανότητες
                 </button>
-                <button class="admin-nav-item admin-nav-subitem" id="nav-partnerships" onclick="showSection('partnerships')">
+                <button class="admin-nav-item admin-nav-subitem" id="nav-partnerships"
+                    onclick="showSection('partnerships')">
                     <span class="admin-nav-icon">🤝</span>
                     Συνεργασίες
+                </button>
+                <div style="height: 1px; background: var(--border-color); margin: 8px 16px;"></div>
+                <button class="admin-nav-item" id="nav-advanced" onclick="showSection('advanced')">
+                    <span class="admin-nav-icon">⚙️</span>
+                    Για Προχωρημένους
                 </button>
             </nav>
 
@@ -113,7 +120,8 @@
                         <div class="admin-card-title">
                             📅 Εβδομαδιαίο Πρόγραμμα Παμμακάριστου
                         </div>
-                        <p style="color:var(--text-secondary);font-size:var(--font-size-sm);margin-bottom:var(--space-lg);">
+                        <p
+                            style="color:var(--text-secondary);font-size:var(--font-size-sm);margin-bottom:var(--space-lg);">
                             Ορίστε τον προκαθορισμένο υπεύθυνο διαγνώστη για κάθε ημέρα της εβδομάδας.
                         </p>
                         <table class="admin-table" id="weekly-schedule-table">
@@ -128,21 +136,30 @@
                             </tbody>
                         </table>
                         <div style="margin-top: var(--space-lg); display: flex; justify-content: flex-end;">
-                            <button class="btn btn-primary" onclick="savePamakristosWeeklySchedule()">Αποθήκευση Εβδομαδιαίου Προγράμματος</button>
+                            <button class="btn btn-primary" onclick="savePamakristosWeeklySchedule()">Αποθήκευση
+                                Εβδομαδιαίου Προγράμματος</button>
                         </div>
                     </div>
                 </div>
                 <!-- ════════════ SECTION: Διαγνώστες ════════════ -->
                 <div id="section-diagnosticians" class="admin-section" style="display:none;">
                     <div class="admin-card">
-                        <div class="admin-card-title" style="display: flex; justify-content: space-between; align-items: center;">
+                        <div class="admin-card-title"
+                            style="display: flex; justify-content: space-between; align-items: center;">
                             Λίστα Διαγνωστών
                             <div style="display:flex; gap:12px; align-items:center;">
-                                <button class="btn btn-secondary btn-sm" onclick="syncDiagnosticians()" style="display:flex; align-items:center; gap:6px;">
-                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.3"/></svg>
+                                <button class="btn btn-secondary btn-sm" onclick="syncDiagnosticians()"
+                                    style="display:flex; align-items:center; gap:6px;">
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                        stroke-width="2">
+                                        <path
+                                            d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.3" />
+                                    </svg>
                                     Συγχρονισμός
                                 </button>
-                                <input type="text" id="diag-search" class="form-input" placeholder="Αναζήτηση..." style="width: 250px; font-weight: normal; font-size: var(--font-size-sm);" onkeyup="filterDiags(this.value)">
+                                <input type="text" id="diag-search" class="form-input" placeholder="Αναζήτηση..."
+                                    style="width: 250px; font-weight: normal; font-size: var(--font-size-sm);"
+                                    onkeyup="filterDiags(this.value)">
                             </div>
                         </div>
                         <table class="admin-table" id="diag-table">
@@ -158,7 +175,7 @@
                             </thead>
                             <tbody id="diag-tbody"></tbody>
                         </table>
-                        
+
                         <!-- Pagination Controls -->
                         <div
                             style="display:flex; flex-direction:column; align-items:center; justify-content:center; margin-top:16px; margin-bottom:12px; gap:8px; width:100%;">
@@ -320,14 +337,22 @@
                 <!-- ════════════ SECTION: Ιατροί ════════════ -->
                 <div id="section-doctors" class="admin-section" style="display:none;">
                     <div class="admin-card">
-                        <div class="admin-card-title" style="display: flex; justify-content: space-between; align-items: center;">
+                        <div class="admin-card-title"
+                            style="display: flex; justify-content: space-between; align-items: center;">
                             Λίστα Ιατρών
                             <div style="display:flex; gap:12px; align-items:center;">
-                                <button class="btn btn-secondary btn-sm" onclick="syncDoctors()" style="display:flex; align-items:center; gap:6px;">
-                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.3"/></svg>
+                                <button class="btn btn-secondary btn-sm" onclick="syncDoctors()"
+                                    style="display:flex; align-items:center; gap:6px;">
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                        stroke-width="2">
+                                        <path
+                                            d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.3" />
+                                    </svg>
                                     Συγχρονισμός
                                 </button>
-                                <input type="text" id="doc-search" class="form-input" placeholder="Αναζήτηση..." style="width: 250px; font-weight: normal; font-size: var(--font-size-sm);" onkeyup="filterDoctors(this.value)">
+                                <input type="text" id="doc-search" class="form-input" placeholder="Αναζήτηση..."
+                                    style="width: 250px; font-weight: normal; font-size: var(--font-size-sm);"
+                                    onkeyup="filterDoctors(this.value)">
                             </div>
                         </div>
                         <table class="admin-table">
@@ -352,6 +377,158 @@
                                     onclick="changeDoctorPage(1)">Επόμενο</button>
                             </div>
                         </div>
+                    </div>
+                </div>
+
+                <!-- ════════════ SECTION: Για Προχωρημένους ════════════ -->
+                <div id="section-advanced" class="admin-section" style="display:none;">
+
+                    <!-- EXAM ROUTING RULES -->
+                    <div class="admin-card">
+                        <div class="admin-card-title">Αυτόματη Ανάθεση Εξετάσεων</div>
+                        <p
+                            style="color:var(--text-secondary);font-size:var(--font-size-sm);margin-bottom:var(--space-lg);">
+                            Αυτόματη ανάθεση συγκεκριμένων εξετάσεων από επιλεγμένα εργαστήρια (ή γενικά) σε
+                            συγκεκριμένο διαγνώστη.
+                        </p>
+                        <div class="admin-form" style="display: flex; flex-wrap: wrap; gap: 16px; align-items: end;">
+                            <div class="form-group" style="margin:0; flex: 1; min-width: 150px;">
+                                <label class="form-label">Εργαστήριο</label>
+                                <select id="adv-route-lab" class="form-input filter-select">
+                                    <option value="">— Όλα —</option>
+                                    <option value="1">ΚΟΛΙΑΤΣΟΥ (1)</option>
+                                    <option value="6">ΑΝΩ ΠΑΤΗΣΙΑ (6)</option>
+                                    <option value="7">ΙΛΙΟΝ (7)</option>
+                                    <option value="8">ΣΕΠΟΛΙΑ (8)</option>
+                                </select>
+                            </div>
+                            <div class="form-group" style="margin:0; flex: 1; min-width: 150px;">
+                                <label class="form-label">Ιατρός (Παραπέμπων)</label>
+                                <div style="position:relative;">
+                                    <input type="text" id="adv-route-doc-search" class="form-input"
+                                        placeholder="Αναζήτηση..." oninput="debounceAdvDoctorSearch()"
+                                        style="width:100%;" autocomplete="off">
+                                    <input type="hidden" id="adv-route-doc">
+                                    <div id="adv-route-doc-results"
+                                        style="position:absolute; top:100%; left:0; right:0; background:var(--bg-secondary); border:1px solid var(--border-color); border-radius:4px; max-height:200px; overflow-y:auto; z-index:9999; display:none; box-shadow:var(--shadow-md);">
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="form-group"
+                                style="margin:0; display:flex; align-items:center; height:38px; gap:8px;">
+                                <input type="checkbox" id="adv-route-pam">
+                                <label class="form-label" style="margin:0; cursor:pointer;" for="adv-route-pam">Παμμακάριστος</label>
+                            </div>
+                            <div class="form-group" style="margin:0; flex: 1; min-width: 150px;">
+                                <label class="form-label">Κωδικοί Εξετάσεων (κόμμα)</label>
+                                <input type="text" id="adv-route-codes" class="form-input"
+                                    placeholder="π.χ. 21850,22700">
+                            </div>
+                            <div class="form-group" style="margin:0; flex: 1; min-width: 150px;">
+                                <label class="form-label">Διαγνώστης</label>
+                                <select id="adv-route-diag" class="form-input filter-select"></select>
+                            </div>
+                            <div class="form-group" style="margin:0; flex: 1; min-width: 150px;">
+                                <label class="form-label">Περιγραφή</label>
+                                <input type="text" id="adv-route-desc" class="form-input"
+                                    placeholder="Σύντομη περιγραφή">
+                            </div>
+                            <button class="btn btn-primary" onclick="addExamRoutingRule()">Προσθήκη</button>
+                        </div>
+                        <div style="overflow-x: auto; width: 100%;">
+                            <table class="admin-table" style="margin-top: 16px;">
+                                <thead>
+                                    <tr>
+                                        <th>Εργαστήριο</th>
+                                        <th>Ιατρός (Παραπέμπων)</th>
+                                        <th>Εξετάσεις</th>
+                                        <th>Διαγνώστης</th>
+                                        <th>Περιγραφή</th>
+                                        <th>Κατάσταση</th>
+                                        <th>Ενέργειες</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="adv-route-tbody"></tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- EXCLUSIVE LAB RULES -->
+                    <div class="admin-card">
+                        <div class="admin-card-title">Αποκλειστικά Εργαστήρια</div>
+                        <p
+                            style="color:var(--text-secondary);font-size:var(--font-size-sm);margin-bottom:var(--space-lg);">
+                            Περιορισμός ώστε ο διαγνώστης να λαμβάνει εξετάσεις ΜΟΝΟ από το συγκεκριμένο εργαστήριο.
+                        </p>
+                        <div class="admin-form" style="grid-template-columns:1fr 1fr auto;align-items:end;">
+                            <div class="form-group" style="margin:0;">
+                                <label class="form-label">Διαγνώστης</label>
+                                <select id="adv-excl-diag" class="form-input filter-select"></select>
+                            </div>
+                            <div class="form-group" style="margin:0;">
+                                <label class="form-label">Εργαστήριο</label>
+                                <select id="adv-excl-lab" class="form-input filter-select">
+                                    <option value="">— Επιλογή —</option>
+                                    <option value="1">ΚΟΛΙΑΤΣΟΥ</option>
+                                    <option value="6">ΑΝΩ ΠΑΤΗΣΙΑ</option>
+                                    <option value="7">ΙΛΙΟΝ</option>
+                                    <option value="8">ΣΕΠΟΛΙΑ</option>
+                                </select>
+                            </div>
+                            <button class="btn btn-primary" onclick="addExclusiveLabRule()">Προσθήκη</button>
+                        </div>
+                        <div style="overflow-x: auto; width: 100%;">
+                            <table class="admin-table" style="margin-top: 16px;">
+                                <thead>
+                                    <tr>
+                                        <th>Διαγνώστης</th>
+                                        <th>Όνομα Εργαστηρίου</th>
+                                        <th>Κατάσταση</th>
+                                        <th>Ενέργειες</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="adv-excl-tbody"></tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- MODALITY QUOTAS -->
+                    <div class="admin-card">
+                        <div class="admin-card-title">Ειδικά Όρια ανά Εξέταση</div>
+                        <p
+                            style="color:var(--text-secondary);font-size:var(--font-size-sm);margin-bottom:var(--space-lg);">
+                            Μέγιστος ημερήσιος αριθμός ανά κατηγορία (CT / MRI) για συγκεκριμένο διαγνώστη.
+                        </p>
+                        <div class="admin-form" style="grid-template-columns:1fr 1fr 1fr auto;align-items:end;">
+                            <div class="form-group" style="margin:0;">
+                                <label class="form-label">Διαγνώστης</label>
+                                <select id="adv-quota-diag" class="form-input filter-select"></select>
+                            </div>
+                            <div class="form-group" style="margin:0;">
+                                <label class="form-label">Κατηγορία</label>
+                                <select id="adv-quota-modality" class="form-input filter-select">
+                                    <option value="CT">CT (Αξονική)</option>
+                                    <option value="MRI">MRI (Μαγνητική)</option>
+                                </select>
+                            </div>
+                            <div class="form-group" style="margin:0;">
+                                <label class="form-label">Όριο (Αριθμός)</label>
+                                <input type="number" id="adv-quota-count" class="form-input" placeholder="π.χ. 20">
+                            </div>
+                            <button class="btn btn-primary" onclick="addModalityQuota()">Προσθήκη</button>
+                        </div>
+                        <table class="admin-table" style="margin-top: 16px;">
+                            <thead>
+                                <tr>
+                                    <th>Διαγνώστης</th>
+                                    <th>Κατηγορία</th>
+                                    <th>Μέγιστο Ημερήσιο Όριο</th>
+                                    <th>Κατάσταση</th>
+                                    <th>Ενέργειες</th>
+                                </tr>
+                            </thead>
+                            <tbody id="adv-quota-tbody"></tbody>
+                        </table>
                     </div>
                 </div>
 

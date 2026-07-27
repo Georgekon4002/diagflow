@@ -165,5 +165,72 @@ class HealthResponse(BaseModel):
 
     status: str
     app: str
-    version: str
     environment: str
+
+
+# ── Advanced Options Schemas ──
+
+class ExamRoutingRuleBase(BaseModel):
+    lab_id: int | None = None
+    issuing_doctor_id: str | None = None
+    issuing_doctor_name: str | None = None
+    is_pamakristos: bool = False
+    exam_codes: str
+    diagnostician_id: int
+    description: str
+    is_active: bool = True
+
+class ExamRoutingRuleCreate(ExamRoutingRuleBase):
+    pass
+
+class ExamRoutingRuleUpdate(BaseModel):
+    lab_id: int | None = None
+    issuing_doctor_id: str | None = None
+    issuing_doctor_name: str | None = None
+    is_pamakristos: bool | None = None
+    exam_codes: str | None = None
+    diagnostician_id: int | None = None
+    description: str | None = None
+    is_active: bool | None = None
+
+class ExamRoutingRuleResponse(ExamRoutingRuleBase):
+    id: int
+    diagnostician_name: str
+
+class ExclusiveLabRuleBase(BaseModel):
+    diagnostician_id: int
+    lab_id: int
+    lab_name: str | None = None
+    is_active: bool = True
+
+class ExclusiveLabRuleCreate(ExclusiveLabRuleBase):
+    pass
+
+class ExclusiveLabRuleUpdate(BaseModel):
+    diagnostician_id: int | None = None
+    lab_id: int | None = None
+    lab_name: str | None = None
+    is_active: bool | None = None
+
+class ExclusiveLabRuleResponse(ExclusiveLabRuleBase):
+    id: int
+    diagnostician_name: str
+
+class ModalityQuotaBase(BaseModel):
+    diagnostician_id: int
+    modality: str
+    max_count: int
+    is_active: bool = True
+
+class ModalityQuotaCreate(ModalityQuotaBase):
+    pass
+
+class ModalityQuotaUpdate(BaseModel):
+    diagnostician_id: int | None = None
+    modality: str | None = None
+    max_count: int | None = None
+    is_active: bool | None = None
+
+class ModalityQuotaResponse(ModalityQuotaBase):
+    id: int
+    diagnostician_name: str

@@ -539,3 +539,175 @@ def get_dashboard_data() -> list[dict]:
             dashboard_map[d_id]["assigned_orders"].append(r["extracode"])
             
     return list(dashboard_map.values())
+
+# ── Advanced Options: Exam Routing Rules ──────────────────────────────────────
+
+def get_all_exam_routing_rules() -> list[dict]:
+    with _conn() as con:
+        rows = con.execute(
+            '''SELECT err.id, err.lab_id, err.issuing_doctor_id, err.issuing_doctor_name, err.is_pamakristos, err.exam_codes, err.diagnostician_id, err.description, err.is_active, d.name AS diagnostician_name
+               FROM exam_routing_rules err
+               JOIN diagnosticians d ON err.diagnostician_id = d.id
+               ORDER BY err.id'''
+        ).fetchall()
+    return [_row_to_dict(r) for r in rows]
+
+def create_exam_routing_rule(lab_id: int | None, issuing_doctor_id: str | None, issuing_doctor_name: str | None, is_pamakristos: bool, exam_codes: str, diagnostician_id: int, description: str, is_active: bool = True) -> dict:
+    with _conn() as con:
+        cur = con.execute(
+            '''INSERT INTO exam_routing_rules (lab_id, issuing_doctor_id, issuing_doctor_name, is_pamakristos, exam_codes, diagnostician_id, description, is_active)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)''',
+            (lab_id, issuing_doctor_id, issuing_doctor_name, int(is_pamakristos), exam_codes, diagnostician_id, description, int(is_active))
+        )
+        row = con.execute(
+            '''SELECT err.id, err.lab_id, err.issuing_doctor_id, err.issuing_doctor_name, err.is_pamakristos, err.exam_codes, err.diagnostician_id, err.description, err.is_active, d.name AS diagnostician_name
+               FROM exam_routing_rules err
+               JOIN diagnosticians d ON err.diagnostician_id = d.id
+               WHERE err.id = ?''',
+            (cur.lastrowid,)
+        ).fetchone()
+    return _row_to_dict(row)
+
+def update_exam_routing_rule(rule_id: int, update_data: dict) -> dict | None:
+    if not update_data:
+        pass
+    else:
+        with _conn() as con:
+            sets = []
+            vals = []
+            for k, v in update_data.items():
+                if k == 'is_pamakristos' or k == 'is_active':
+                    v = int(v)
+                sets.append(f"{k} = ?")
+                vals.append(v)
+            vals.append(rule_id)
+            con.execute(f"UPDATE exam_routing_rules SET {', '.join(sets)} WHERE id = ?", tuple(vals))
+            
+    with _conn() as con:
+        row = con.execute(
+            '''SELECT err.id, err.lab_id, err.issuing_doctor_id, err.issuing_doctor_name, err.is_pamakristos, err.exam_codes, err.diagnostician_id, err.description, err.is_active, d.name AS diagnostician_name
+               FROM exam_routing_rules err
+               JOIN diagnosticians d ON err.diagnostician_id = d.id
+               WHERE err.id = ?''',
+            (rule_id,)
+        ).fetchone()
+    return _row_to_dict(row) if row else None
+
+def delete_exam_routing_rule(rule_id: int) -> bool:
+    with _conn() as con:
+        cur = con.execute('DELETE FROM exam_routing_rules WHERE id = ?', (rule_id,))
+    return cur.rowcount > 0
+
+
+# ── Advanced Options: Exclusive Lab Rules ─────────────────────────────────────
+
+def get_all_exclusive_lab_rules() -> list[dict]:
+    with _conn() as con:
+        rows = con.execute(
+            '''SELECT elr.id, elr.diagnostician_id, elr.lab_id, elr.lab_name, elr.is_active, d.name AS diagnostician_name
+               FROM exclusive_lab_rules elr
+               JOIN diagnosticians d ON elr.diagnostician_id = d.id
+               ORDER BY elr.id'''
+        ).fetchall()
+    return [_row_to_dict(r) for r in rows]
+
+def create_exclusive_lab_rule(diagnostician_id: int, lab_id: int, lab_name: str, is_active: bool = True) -> dict:
+    with _conn() as con:
+        cur = con.execute(
+            '''INSERT INTO exclusive_lab_rules (diagnostician_id, lab_id, lab_name, is_active)
+               VALUES (?, ?, ?, ?)''',
+            (diagnostician_id, lab_id, lab_name, int(is_active))
+        )
+        row = con.execute(
+            '''SELECT elr.id, elr.diagnostician_id, elr.lab_id, elr.lab_name, elr.is_active, d.name AS diagnostician_name
+               FROM exclusive_lab_rules elr
+               JOIN diagnosticians d ON elr.diagnostician_id = d.id
+               WHERE elr.id = ?''',
+            (cur.lastrowid,)
+        ).fetchone()
+    return _row_to_dict(row)
+
+def update_exclusive_lab_rule(rule_id: int, update_data: dict) -> dict | None:
+    if update_data:
+        with _conn() as con:
+            sets = []
+            vals = []
+            for k, v in update_data.items():
+                if k == 'is_active':
+                    v = int(v)
+                sets.append(f"{k} = ?")
+                vals.append(v)
+            vals.append(rule_id)
+            con.execute(f"UPDATE exclusive_lab_rules SET {', '.join(sets)} WHERE id = ?", tuple(vals))
+            
+    with _conn() as con:
+        row = con.execute(
+            '''SELECT elr.id, elr.diagnostician_id, elr.lab_id, elr.lab_name, elr.is_active, d.name AS diagnostician_name
+               FROM exclusive_lab_rules elr
+               JOIN diagnosticians d ON elr.diagnostician_id = d.id
+               WHERE elr.id = ?''',
+            (rule_id,)
+        ).fetchone()
+    return _row_to_dict(row) if row else None
+
+def delete_exclusive_lab_rule(rule_id: int) -> bool:
+    with _conn() as con:
+        cur = con.execute('DELETE FROM exclusive_lab_rules WHERE id = ?', (rule_id,))
+    return cur.rowcount > 0
+
+
+# ── Advanced Options: Modality Quotas ─────────────────────────────────────────
+
+def get_all_modality_quotas() -> list[dict]:
+    with _conn() as con:
+        rows = con.execute(
+            '''SELECT mq.id, mq.diagnostician_id, mq.modality, mq.max_count, mq.is_active, d.name AS diagnostician_name
+               FROM modality_quotas mq
+               JOIN diagnosticians d ON mq.diagnostician_id = d.id
+               ORDER BY mq.id'''
+        ).fetchall()
+    return [_row_to_dict(r) for r in rows]
+
+def create_modality_quota(diagnostician_id: int, modality: str, max_count: int, is_active: bool = True) -> dict:
+    with _conn() as con:
+        cur = con.execute(
+            '''INSERT INTO modality_quotas (diagnostician_id, modality, max_count, is_active)
+               VALUES (?, ?, ?, ?)''',
+            (diagnostician_id, modality, max_count, int(is_active))
+        )
+        row = con.execute(
+            '''SELECT mq.id, mq.diagnostician_id, mq.modality, mq.max_count, mq.is_active, d.name AS diagnostician_name
+               FROM modality_quotas mq
+               JOIN diagnosticians d ON mq.diagnostician_id = d.id
+               WHERE mq.id = ?''',
+            (cur.lastrowid,)
+        ).fetchone()
+    return _row_to_dict(row)
+
+def update_modality_quota(rule_id: int, update_data: dict) -> dict | None:
+    if update_data:
+        with _conn() as con:
+            sets = []
+            vals = []
+            for k, v in update_data.items():
+                if k == 'is_active':
+                    v = int(v)
+                sets.append(f"{k} = ?")
+                vals.append(v)
+            vals.append(rule_id)
+            con.execute(f"UPDATE modality_quotas SET {', '.join(sets)} WHERE id = ?", tuple(vals))
+            
+    with _conn() as con:
+        row = con.execute(
+            '''SELECT mq.id, mq.diagnostician_id, mq.modality, mq.max_count, mq.is_active, d.name AS diagnostician_name
+               FROM modality_quotas mq
+               JOIN diagnosticians d ON mq.diagnostician_id = d.id
+               WHERE mq.id = ?''',
+            (rule_id,)
+        ).fetchone()
+    return _row_to_dict(row) if row else None
+
+def delete_modality_quota(quota_id: int) -> bool:
+    with _conn() as con:
+        cur = con.execute('DELETE FROM modality_quotas WHERE id = ?', (quota_id,))
+    return cur.rowcount > 0

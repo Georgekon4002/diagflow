@@ -160,29 +160,6 @@ def filter_by_capacity(
             rule_name="capacity",
             reason="Έχει συμπληρώσει το ημερήσιο όριο",
         )
-        
-    # Special rule: WEB (222) only proposed for ΚΟΛΙΑΤΣΟΥ (1)
-    if candidate.id == 222 and str(exam.lab_id) != "1":
-        return FilterResult(
-            passed=False,
-            rule_name="special_rule",
-            reason="Προτείνεται μόνο για ΚΟΛΙΑΤΣΟΥ",
-        )
-
-    # Special rule: ΚΥΠΡΙΩΤΗΣ (89) max 2 MRIs and 20 CTs
-    if candidate.id == 89:
-        if exam.modality.upper() == "MRI" and candidate.current_day_mri_count >= 2:
-            return FilterResult(
-                passed=False,
-                rule_name="special_rule",
-                reason="Έχει συμπληρώσει το όριο (2 MRI/ημέρα)",
-            )
-        elif exam.modality.upper() == "CT" and candidate.current_day_ct_count >= 20:
-            return FilterResult(
-                passed=False,
-                rule_name="special_rule",
-                reason="Έχει συμπληρώσει το όριο (20 CT/ημέρα)",
-            )
             
     return FilterResult(
         passed=True,
@@ -307,19 +284,56 @@ def apply_hard_filters(
       2. Capacity (daily quota limit)
       3. Modality capability (CT/MRI)
       4. Skills (only eliminates if proficiency == 0 AND data exists)
-
-    Returns:
-        - Filtered list of candidates that passed ALL hard filters
-        - Dictionary mapping ALL candidate IDs to their filter results
-          (including eliminated ones, so the UI can show them in the
-           alternatives list with a red indicator and reason)
+      5. Exclusive Lab Rules (Dynamic)
+      6. Modality Quotas (Dynamic)
     """
+    import diagflow.db.diagflow_db as cfg_db
+    exclusive_rules = cfg_db.get_all_exclusive_lab_rules()
+    modality_quotas = cfg_db.get_all_modality_quotas()
+
+    def filter_by_exclusive_lab_dynamic(candidate: CandidateDiagnostician, exam: ExamContext) -> FilterResult:
+        for rule in exclusive_rules:
+            if not rule.get("is_active", True):
+                continue
+            if candidate.id == rule["diagnostician_id"]:
+                if str(exam.lab_id) != str(rule["lab_id"]):
+                    return FilterResult(
+                        passed=False,
+                        rule_name="exclusive_lab_constraint",
+                        reason=f"Αποκλειστικό εργαστήριο ({rule['lab_name']})",
+                    )
+        return FilterResult(passed=True, rule_name="exclusive_lab_constraint", reason="OK")
+
+    def filter_by_modality_quotas_dynamic(candidate: CandidateDiagnostician, exam: ExamContext) -> FilterResult:
+        for quota in modality_quotas:
+            if not quota.get("is_active", True):
+                continue
+            quota_mod = quota["modality"].upper()
+            exam_mod = exam.modality.upper()
+            
+            match = False
+            if quota_mod == "MRI" and exam_mod in ("MRI", "MRA"):
+                match = True
+            elif quota_mod == exam_mod:
+                match = True
+                
+            if candidate.id == quota["diagnostician_id"] and match:
+                current_count = candidate.current_day_ct_count if quota_mod == "CT" else candidate.current_day_mri_count
+                if current_count >= quota["max_count"]:
+                    return FilterResult(
+                        passed=False,
+                        rule_name="modality_quota",
+                        reason=f"Έχει συμπληρώσει το όριο ({quota['max_count']} {quota['modality']}/ημέρα)",
+                    )
+        return FilterResult(passed=True, rule_name="modality_quota", reason="OK")
+
     active_filters = [
-        filter_by_web_lab,
+        filter_by_exclusive_lab_dynamic,
         filter_by_availability,
-        filter_by_capacity,       # Check capacity limit first to prioritize quota reason
-        filter_by_modality,       # Keep modality as a basic sanity filter
-        filter_by_skills_hard,    # Skill hard filter (only eliminates if 0 proficiency)
+        filter_by_capacity,
+        filter_by_modality_quotas_dynamic,
+        filter_by_modality,
+        filter_by_skills_hard,
     ]
 
     passed_candidates: list[CandidateDiagnostician] = []

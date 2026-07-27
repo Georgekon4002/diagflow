@@ -77,6 +77,7 @@ async function loadAll() {
         loadAvailability(),
         loadOncall(),
         loadPamakristosWeeklySchedule(),
+        loadAdvancedOptions(),
     ]);
 }
 
@@ -146,6 +147,7 @@ const SECTION_TITLES = {
     skills: 'Δεξιότητες & Χωρητικότητα',
     partnerships: 'Συνεργασίες Ιατρών',
     doctors: 'Ιατροί',
+    advanced: 'Για Προχωρημένους'
 };
 
 function showSection(name) {
@@ -360,7 +362,7 @@ async function savePamakristosWeeklySchedule() {
 }
 
 function populateDiagnosticianSelects() {
-    const selects = ['oncall-diag-select', 'avail-diag', 'skill-diag', 'part-diag', 'schedule-diag'];
+    const selects = ['oncall-diag-select', 'avail-diag', 'skill-diag', 'part-diag', 'schedule-diag', 'adv-route-diag', 'adv-excl-diag', 'adv-quota-diag'];
     selects.forEach(id => {
         const sel = document.getElementById(id);
         if (!sel) return;
@@ -1154,6 +1156,372 @@ function selectDoctor(id, name) {
 document.addEventListener('click', (e) => {
     const res = document.getElementById('part-doctor-results');
     if (res && e.target.id !== 'part-doctor-search') {
+        res.style.display = 'none';
+    }
+});
+
+// ══════════════════════════════════════════════
+//  Advanced Options Logic
+// ══════════════════════════════════════════════
+
+let advRoutingRules = [];
+let advExclusiveRules = [];
+let advModalityQuotas = [];
+let advDoctorsList = [];
+
+async function loadAdvancedOptions() {
+    try {
+        const [routing, exclusive, quotas] = await Promise.all([
+            apiCall('/admin/advanced/exam-routing-rules'),
+            apiCall('/admin/advanced/exclusive-lab-rules'),
+            apiCall('/admin/advanced/modality-quotas'),
+            
+        ]);
+        advRoutingRules = routing || [];
+        advExclusiveRules = exclusive || [];
+        advModalityQuotas = quotas || [];
+        
+        renderAdvancedOptions();
+    } catch (e) {
+        console.error("Failed to load advanced options", e);
+    }
+}
+
+function renderAdvancedOptions() {
+    const getLabName = (id) => {
+        if (!id) return 'Όλα';
+        if (id === 1) return 'ΚΟΛΙΑΤΣΟΥ';
+        if (id === 6) return 'ΑΝΩ ΠΑΤΗΣΙΑ';
+        if (id === 7) return 'ΙΛΙΟΝ';
+        if (id === 8) return 'ΣΕΠΟΛΙΑ';
+        return `Εργ. ${id}`;
+    };
+
+    // 1. Exam Routing Rules
+    const routingTbody = document.getElementById('adv-route-tbody');
+    if (routingTbody) {
+        routingTbody.innerHTML = advRoutingRules.map(r => `
+            <tr>
+                <td>${getLabName(r.lab_id)}</td>
+                <td>${r.is_pamakristos ? 'ΠΑΜΜΑΚΑΡΙΣΤΟΣ' : (r.issuing_doctor_name || '-')}</td>
+                <td class="wrap-text">${r.exam_codes}</td>
+                <td>${r.diagnostician_name}</td>
+                <td class="wrap-text">${r.description || '-'}</td>
+                <td>
+                    <button class="btn ${r.is_active ? 'btn-danger' : 'btn-success'} btn-sm" onclick="toggleAdvancedRule('routing', ${r.id}, ${!r.is_active})">
+                        ${r.is_active ? 'Απενεργοποίηση' : 'Ενεργοποίηση'}
+                    </button>
+                </td>
+                <td>
+                    <button class="btn btn-secondary btn-sm" onclick="editExamRoutingRule(${r.id})" style="margin-right:4px;" title="Επεξεργασία">✏️</button>
+                    <button class="btn btn-danger btn-sm" onclick="deleteExamRoutingRule(${r.id})" title="Διαγραφή">🗑️</button>
+                </td>
+            </tr>
+        `).join('');
+    }
+
+    
+
+    // 2. Exclusive Labs
+    const exclTbody = document.getElementById('adv-excl-tbody');
+    if (exclTbody) {
+        exclTbody.innerHTML = advExclusiveRules.map(r => `
+            <tr>
+                <td>${r.diagnostician_name}</td>
+                <td>${r.lab_name}</td>
+                <td>
+                    <button class="btn ${r.is_active ? 'btn-danger' : 'btn-success'} btn-sm" onclick="toggleAdvancedRule('exclusive', ${r.id}, ${!r.is_active})">
+                        ${r.is_active ? 'Απενεργοποίηση' : 'Ενεργοποίηση'}
+                    </button>
+                </td>
+                <td>
+                    <button class="btn btn-secondary btn-sm" onclick="editExclusiveLabRule(${r.id})" style="margin-right:4px;" title="Επεξεργασία">✏️</button>
+                    <button class="btn btn-danger btn-sm" onclick="deleteExclusiveLabRule(${r.id})" title="Διαγραφή">🗑️</button>
+                </td>
+            </tr>
+        `).join('');
+    }
+
+    // 3. Modality Quotas
+    const quotaTbody = document.getElementById('adv-quota-tbody');
+    if (quotaTbody) {
+        quotaTbody.innerHTML = advModalityQuotas.map(r => `
+            <tr>
+                <td>${r.diagnostician_name}</td>
+                <td>${r.modality}</td>
+                <td>${r.max_count}</td>
+                <td>
+                    <button class="btn ${r.is_active ? 'btn-danger' : 'btn-success'} btn-sm" onclick="toggleAdvancedRule('quota', ${r.id}, ${!r.is_active})">
+                        ${r.is_active ? 'Απενεργοποίηση' : 'Ενεργοποίηση'}
+                    </button>
+                </td>
+                <td>
+                    <button class="btn btn-secondary btn-sm" onclick="editModalityQuota(${r.id})" style="margin-right:4px;" title="Επεξεργασία">✏️</button>
+                    <button class="btn btn-danger btn-sm" onclick="deleteModalityQuota(${r.id})" title="Διαγραφή">🗑️</button>
+                </td>
+            </tr>
+        `).join('');
+    }
+}
+
+async function addExamRoutingRule() {
+    const labId = document.getElementById('adv-route-lab').value;
+    const isPam = document.getElementById('adv-route-pam').checked;
+    const codes = document.getElementById('adv-route-codes').value;
+    const diagId = document.getElementById('adv-route-diag').value;
+    const docId = document.getElementById('adv-route-doc').value;
+    const docSearch = document.getElementById('adv-route-doc-search').value;
+    const docName = docSearch ? docSearch.split(' (')[0] : null;
+    const desc = document.getElementById('adv-route-desc').value;
+    
+    if (!codes || !diagId) {
+        showToast('Συμπληρώστε κωδικούς και διαγνώστη.', 'warning');
+        return;
+    }
+    const data = await apiCall('/admin/advanced/exam-routing-rules', 'POST', {
+        lab_id: labId ? parseInt(labId) : null,
+        issuing_doctor_id: docId || null,
+        issuing_doctor_name: docName || null,
+        is_pamakristos: isPam,
+        exam_codes: codes,
+        diagnostician_id: parseInt(diagId),
+        description: desc || (isPam ? "Από Παμμακάριστο" : (labId ? `Εργ. ${labId}` : "Γενικός κανόνας"))
+    });
+    if (data) {
+        showToast('Ο κανόνας προστέθηκε.');
+        document.getElementById('adv-route-lab').value = '';
+        document.getElementById('adv-route-codes').value = '';
+        document.getElementById('adv-route-doc').value = '';
+        document.getElementById('adv-route-doc-search').value = '';
+        document.getElementById('adv-route-desc').value = '';
+        document.getElementById('adv-route-pam').checked = false;
+        await loadAdvancedOptions();
+    }
+}
+async function deleteExamRoutingRule(id) {
+    if(!confirm("Διαγραφή κανόνα;")) return;
+    const res = await apiCall(`/admin/advanced/exam-routing-rules/${id}`, 'DELETE');
+    if(res) {
+        showToast('Διαγράφηκε.');
+        await loadAdvancedOptions();
+    }
+}
+
+async function addExclusiveLabRule() {
+    const diagId = document.getElementById('adv-excl-diag').value;
+    const labSelect = document.getElementById('adv-excl-lab');
+    const labId = labSelect.value;
+    
+    if(!diagId || !labId) {
+        showToast('Συμπληρώστε διαγνώστη και εργαστήριο.', 'warning');
+        return;
+    }
+    const name = labSelect.options[labSelect.selectedIndex].text;
+    const data = await apiCall('/admin/advanced/exclusive-lab-rules', 'POST', {
+        diagnostician_id: parseInt(diagId),
+        lab_id: parseInt(labId),
+        lab_name: name
+    });
+    if(data) {
+        showToast('Ο κανόνας προστέθηκε.');
+        labSelect.value = '';
+        await loadAdvancedOptions();
+    }
+}
+async function deleteExclusiveLabRule(id) {
+    if(!confirm("Διαγραφή κανόνα;")) return;
+    const res = await apiCall(`/admin/advanced/exclusive-lab-rules/${id}`, 'DELETE');
+    if(res) {
+        showToast('Διαγράφηκε.');
+        await loadAdvancedOptions();
+    }
+}
+
+async function addModalityQuota() {
+    const diagId = document.getElementById('adv-quota-diag').value;
+    const mod = document.getElementById('adv-quota-modality').value;
+    const count = document.getElementById('adv-quota-count').value;
+    if(!diagId || !count) {
+        showToast('Συμπληρώστε διαγνώστη και όριο.', 'warning');
+        return;
+    }
+    const data = await apiCall('/admin/advanced/modality-quotas', 'POST', {
+        diagnostician_id: parseInt(diagId),
+        modality: mod,
+        max_count: parseInt(count)
+    });
+    if(data) {
+        showToast('Ο κανόνας προστέθηκε.');
+        document.getElementById('adv-quota-count').value = '';
+        await loadAdvancedOptions();
+    }
+}
+async function deleteModalityQuota(id) {
+    if(!confirm("Διαγραφή κανόνα;")) return;
+    const res = await apiCall(`/admin/advanced/modality-quotas/${id}`, 'DELETE');
+    if(res) {
+        showToast('Διαγράφηκε.');
+        await loadAdvancedOptions();
+    }
+}
+
+async function toggleAdvancedRule(type, id, newStatus) {
+    let endpoint = '';
+    if (type === 'routing') endpoint = `/admin/advanced/exam-routing-rules/${id}`;
+    if (type === 'exclusive') endpoint = `/admin/advanced/exclusive-lab-rules/${id}`;
+    if (type === 'quota') endpoint = `/admin/advanced/modality-quotas/${id}`;
+    
+    const res = await apiCall(endpoint, 'PUT', { is_active: newStatus });
+    if (res) {
+        showToast(newStatus ? 'Ενεργοποιήθηκε' : 'Απενεργοποιήθηκε');
+        await loadAdvancedOptions();
+    }
+}
+
+// Inline Editing Logic (Populate form)
+function editExamRoutingRule(id) {
+    const r = advRoutingRules.find(x => x.id === id);
+    if (!r) return;
+    document.getElementById('adv-route-lab').value = r.lab_id || '';
+    document.getElementById('adv-route-doc').value = r.issuing_doctor_id || '';
+    document.getElementById('adv-route-doc-search').value = r.issuing_doctor_name ? `${r.issuing_doctor_name} (${r.issuing_doctor_id})` : '';
+    document.getElementById('adv-route-pam').checked = r.is_pamakristos;
+    document.getElementById('adv-route-codes').value = r.exam_codes;
+    document.getElementById('adv-route-diag').value = r.diagnostician_id;
+    document.getElementById('adv-route-desc').value = r.description || '';
+    
+    const btn = document.getElementById('adv-route-lab').closest('.admin-form').querySelector('button.btn-primary');
+    btn.textContent = 'Αποθήκευση';
+    btn.onclick = async () => {
+        const labId = document.getElementById('adv-route-lab').value;
+        const docId = document.getElementById('adv-route-doc').value;
+        const docSearch = document.getElementById('adv-route-doc-search').value;
+        const docName = docSearch ? docSearch.split(' (')[0] : null;
+        
+        const data = await apiCall(`/admin/advanced/exam-routing-rules/${id}`, 'PUT', {
+             lab_id: labId ? parseInt(labId) : null,
+             issuing_doctor_id: docId || null,
+             issuing_doctor_name: docName || null,
+             is_pamakristos: document.getElementById('adv-route-pam').checked,
+             exam_codes: document.getElementById('adv-route-codes').value,
+             diagnostician_id: parseInt(document.getElementById('adv-route-diag').value),
+             description: document.getElementById('adv-route-desc').value
+        });
+        if(data) {
+             showToast('Αποθηκεύτηκε');
+             btn.textContent = 'Προσθήκη';
+             btn.onclick = addExamRoutingRule;
+             
+             document.getElementById('adv-route-lab').value = '';
+             document.getElementById('adv-route-doc').value = '';
+             document.getElementById('adv-route-doc-search').value = '';
+        document.getElementById('adv-route-doc-search').value = '';
+             document.getElementById('adv-route-pam').checked = false;
+             document.getElementById('adv-route-codes').value = '';
+             document.getElementById('adv-route-desc').value = '';
+             await loadAdvancedOptions();
+        }
+    };
+}
+
+function editExclusiveLabRule(id) {
+    const r = advExclusiveRules.find(x => x.id === id);
+    if (!r) return;
+    document.getElementById('adv-excl-diag').value = r.diagnostician_id;
+    document.getElementById('adv-excl-lab').value = r.lab_id;
+    
+    const btn = document.getElementById('adv-excl-lab').closest('.admin-form').querySelector('button.btn-primary');
+    btn.textContent = 'Αποθήκευση';
+    btn.onclick = async () => {
+        const labSelect = document.getElementById('adv-excl-lab');
+        const data = await apiCall(`/admin/advanced/exclusive-lab-rules/${id}`, 'PUT', {
+             diagnostician_id: parseInt(document.getElementById('adv-excl-diag').value),
+             lab_id: parseInt(labSelect.value),
+             lab_name: labSelect.options[labSelect.selectedIndex].text
+        });
+        if(data) {
+             showToast('Αποθηκεύτηκε');
+             btn.textContent = 'Προσθήκη';
+             btn.onclick = addExclusiveLabRule;
+             
+             labSelect.value = '';
+             await loadAdvancedOptions();
+        }
+    };
+}
+
+function editModalityQuota(id) {
+    const r = advModalityQuotas.find(x => x.id === id);
+    if (!r) return;
+    document.getElementById('adv-quota-diag').value = r.diagnostician_id;
+    document.getElementById('adv-quota-modality').value = r.modality;
+    document.getElementById('adv-quota-count').value = r.max_count;
+    
+    const btn = document.getElementById('adv-quota-count').closest('.admin-form').querySelector('button.btn-primary');
+    btn.textContent = 'Αποθήκευση';
+    btn.onclick = async () => {
+        const data = await apiCall(`/admin/advanced/modality-quotas/${id}`, 'PUT', {
+             diagnostician_id: parseInt(document.getElementById('adv-quota-diag').value),
+             modality: document.getElementById('adv-quota-modality').value,
+             max_count: parseInt(document.getElementById('adv-quota-count').value)
+        });
+        if(data) {
+             showToast('Αποθηκεύτηκε');
+             btn.textContent = 'Προσθήκη';
+             btn.onclick = addModalityQuota;
+             
+             document.getElementById('adv-quota-count').value = '';
+             await loadAdvancedOptions();
+        }
+    };
+}
+
+
+// Advanced Routing Doctor Search
+let advDoctorSearchTimeout;
+async function debounceAdvDoctorSearch() {
+    clearTimeout(advDoctorSearchTimeout);
+    advDoctorSearchTimeout = setTimeout(searchAdvDoctors, 300);
+}
+
+async function searchAdvDoctors() {
+    const q = document.getElementById('adv-route-doc-search').value;
+    const resEl = document.getElementById('adv-route-doc-results');
+    
+    if (!q || q.length < 2) {
+        resEl.style.display = 'none';
+        return;
+    }
+    
+    try {
+        const data = await apiCall(`/admin/doctors?q=${encodeURIComponent(q)}&limit=15`);
+        if (data && data.items && data.items.length > 0) {
+            resEl.innerHTML = data.items.map(d => `
+                <div style="padding:8px 12px; cursor:pointer; border-bottom:1px solid var(--border-color);" 
+                     onclick="selectAdvDoctor(${d.id}, '${d.name.replace(/'/g, "\'")}')">
+                    <strong>${d.name}</strong> <span style="color:var(--text-secondary);font-size:0.85em;">(${d.id})</span>
+                </div>
+            `).join('');
+            resEl.style.display = 'block';
+        } else {
+            resEl.innerHTML = '<div style="padding:8px 12px; color:var(--text-secondary);">Δεν βρέθηκαν αποτελέσματα</div>';
+            resEl.style.display = 'block';
+        }
+    } catch (e) {
+        console.error("Doctor search error", e);
+    }
+}
+
+function selectAdvDoctor(id, name) {
+    document.getElementById('adv-route-doc').value = id;
+    document.getElementById('adv-route-doc-search').value = `${name} (${id})`;
+    document.getElementById('adv-route-doc-results').style.display = 'none';
+}
+
+// Close adv doctor search on outside click
+document.addEventListener('click', (e) => {
+    const res = document.getElementById('adv-route-doc-results');
+    if (res && e.target.id !== 'adv-route-doc-search') {
         res.style.display = 'none';
     }
 });

@@ -27689,3 +27689,38 @@ INSERT INTO "sqlite_sequence" VALUES('diagnostician_skills',2911);
 INSERT INTO "sqlite_sequence" VALUES('partnerships',266);
 COMMIT;
 CREATE TABLE IF NOT EXISTS assignment_log (exammoreid INTEGER PRIMARY KEY, diagnostician_id INTEGER NOT NULL, assigned_at TEXT NOT NULL, modality TEXT, extracode TEXT);
+
+
+CREATE TABLE IF NOT EXISTS exam_routing_rules (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    lab_id INTEGER,
+    is_pamakristos INTEGER NOT NULL DEFAULT 0,
+    exam_codes TEXT NOT NULL,
+    diagnostician_id INTEGER NOT NULL,
+    description TEXT
+);
+
+CREATE TABLE IF NOT EXISTS exclusive_lab_rules (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    diagnostician_id INTEGER NOT NULL,
+    lab_id INTEGER NOT NULL,
+    lab_name TEXT
+);
+
+CREATE TABLE IF NOT EXISTS modality_quotas (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    diagnostician_id INTEGER NOT NULL,
+    modality TEXT NOT NULL,
+    max_count INTEGER NOT NULL
+);
+
+INSERT INTO exam_routing_rules (lab_id, is_pamakristos, exam_codes, diagnostician_id, description) VALUES (6, 0, '21850,22700,22701,22702,22703,22704', 14, 'Αρθρογραφίες (Άνω Πατήσια -> Νάτσικα)');
+INSERT INTO exam_routing_rules (lab_id, is_pamakristos, exam_codes, diagnostician_id, description) VALUES (7, 0, '21850,22700,22701,22702,22703,22704', 41, 'Αρθρογραφίες (Ίλιον -> Παπουτσή)');
+INSERT INTO exam_routing_rules (lab_id, is_pamakristos, exam_codes, diagnostician_id, description) VALUES (NULL, 1, '22705', 59, 'Φασματοσκοπίες από Παμμακάριστο -> Μπερέτης');
+INSERT INTO exam_routing_rules (lab_id, is_pamakristos, exam_codes, diagnostician_id, description) VALUES (NULL, 0, '21038,21061,21062,21063', 59, 'Κροταφογναθικές -> Μπερέτης');
+
+INSERT INTO exclusive_lab_rules (diagnostician_id, lab_id, lab_name) VALUES (222, 1, 'ΚΟΛΙΑΤΣΟΥ');
+
+INSERT INTO modality_quotas (diagnostician_id, modality, max_count) VALUES (89, 'CT', 20);
+INSERT INTO modality_quotas (diagnostician_id, modality, max_count) VALUES (89, 'MRI', 2);
+

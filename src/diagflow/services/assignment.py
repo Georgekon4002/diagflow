@@ -278,6 +278,8 @@ def _get_pending_exams_from_db() -> list[dict]:
         pam_oncall = cfg_db.get_oncall_diagnostician(today)
         # Fetch active exclusive partnerships once
         exclusive_map = cfg_db.get_exclusive_partnerships()
+        # Fetch dynamic routing rules
+        routing_rules = cfg_db.get_all_exam_routing_rules()
 
         con = _get_mock_db()
         cur = con.execute(
@@ -318,72 +320,56 @@ def _get_pending_exams_from_db() -> list[dict]:
                 )
                 continue
 
-            # Check 2: Παμμακάριστος auto-assignment
-            is_pam = "ΠΑΜΜΑΚΑΡΙΣΤΟΣ" in (r["wname"] or "").upper()
-            if is_pam:
-                exam_code_str = str(r["examnumcode"]).strip() if r["examnumcode"] else ""
-                # Special case: 22705 (ΜΑΓΝΗΤΙΚΗ ΦΑΣΜΑΤΟΣΚΟΠΙΑ) -> Always assigned to ΜΠΕΡΕΤΗΣ (ID 59)
-                if "22705" in exam_code_str:
-                    beretis = cfg_db.get_diagnostician(59)
-                    beretis_name = beretis["name"] if beretis else "ΜΠΕΡΕΤΗΣ ΓΕΩΡΓΙΟΣ"
-                    cfg_db.upsert_local_assignment(
-                        exam_id,
-                        59,
-                        beretis_name,
-                        now_iso,
-                        modality=r["category"],
-                        extracode=str(r["extracode"]) if r["extracode"] else None,
-                        is_auto=True
-                    )
-                    logger.info(
-                        "pam_22705_auto_assigned_to_beretis",
-                        exam_id=exam_id,
-                        exam_code=exam_code_str,
-                    )
-                    continue
-
-                if pam_oncall:
-                    cfg_db.upsert_local_assignment(
-                        exam_id,
-                        pam_oncall["diagnostician_id"],
-                        pam_oncall["diagnostician_name"],
-                        now_iso,
-                        modality=r["category"],
-                        extracode=str(r["extracode"]) if r["extracode"] else None,
-                        is_auto=True
-                    )
-                    logger.info(
-                        "pam_exam_auto_assigned",
-                        exam_id=exam_id,
-                        oncall=pam_oncall["diagnostician_name"],
-                    )
-                    continue
-
-            # Check 3: Lab-specific specific exams auto-assignment
-            # 21850, 22700-22704 for ΑΝΩ ΠΑΤΗΣΙΑ (6) -> ΝΑΤΣΙΚΑ (14)
-            # 21850, 22700-22704 for ΙΛΙΟΝ (7) -> ΠΑΠΟΥΤΣΗ (41)
+            # Check 2: Dynamic Exam Routing Rules (Replaces hardcoded lab & exam rules)
             exam_code_str = str(r["examnumcode"]).strip() if r["examnumcode"] else ""
             lab_id_val = r["labcodeid"]
-            if exam_code_str in ("21850", "22700", "22701", "22702", "22703", "22704"):
-                if lab_id_val == 6:  # ΑΝΩ ΠΑΤΗΣΙΑ
-                    natsika = cfg_db.get_diagnostician(14)
-                    natsika_name = natsika["name"] if natsika else "ΝΑΤΣΙΚΑ"
-                    cfg_db.upsert_local_assignment(exam_id, 14, natsika_name, now_iso, modality=r["category"], extracode=str(r["extracode"]) if r["extracode"] else None, is_auto=True)
-                    logger.info("lab_specific_exam_auto_assigned", exam_id=exam_id, lab=6, diagnostician=14)
+            is_pam = "ΠΑΜΜΑΚΑΡΙΣΤΟΣ" in (r["wname"] or "").upper()
+            
+            routed = False
+            for rule in routing_rules:
+                if not rule.get("is_active", True):
                     continue
-                elif lab_id_val == 7:  # ΙΛΙΟΝ
-                    papoutsi = cfg_db.get_diagnostician(41)
-                    papoutsi_name = papoutsi["name"] if papoutsi else "ΠΑΠΟΥΤΣΗ ΔΗΜΗΤΡΑ"
-                    cfg_db.upsert_local_assignment(exam_id, 41, papoutsi_name, now_iso, modality=r["category"], extracode=str(r["extracode"]) if r["extracode"] else None, is_auto=True)
-                    logger.info("lab_specific_exam_auto_assigned", exam_id=exam_id, lab=7, diagnostician=41)
-                    continue
+                
+                # Does the rule apply to this exam?
+                lab_match = (rule["lab_id"] is None) or (rule["lab_id"] == lab_id_val)
+                pam_match = (not rule["is_pamakristos"]) or is_pam
+                doc_match = (rule.get("issuing_doctor_id") is None) or (rule.get("issuing_doctor_id") == doc_id)
+                
+                if lab_match and pam_match and doc_match:
+                    rule_codes = [c.strip() for c in rule["exam_codes"].split(",")]
+                    if exam_code_str in rule_codes:
+                        target_id = rule["diagnostician_id"]
+                        d_info = cfg_db.get_diagnostician(target_id)
+                        d_name = d_info["name"] if d_info else rule["diagnostician_name"]
+                        cfg_db.upsert_local_assignment(
+                            exam_id, target_id, d_name, now_iso,
+                            modality=r["category"],
+                            extracode=str(r["extracode"]) if r["extracode"] else None,
+                            is_auto=True
+                        )
+                        logger.info("dynamic_rule_auto_assigned", exam_id=exam_id, rule_id=rule["id"], diagnostician=target_id)
+                        routed = True
+                        break
+            
+            if routed:
+                continue
 
-            # Check 4: Κροταφογναθικές for ΜΠΕΡΕΤΗΣ
-            if exam_code_str in ("21038", "21061", "21062", "21063"):
-                beretis = cfg_db.get_diagnostician(59)
-                beretis_name = beretis["name"] if beretis else "ΜΠΕΡΕΤΗΣ ΓΕΩΡΓΙΟΣ"
-                cfg_db.upsert_local_assignment(exam_id, 59, beretis_name, now_iso, modality=r["category"], extracode=str(r["extracode"]) if r["extracode"] else None, is_auto=True)
-                logger.info("krotafognathikes_auto_assigned", exam_id=exam_id, diagnostician=59)
+            # Check 3: Παμμακάριστος general on-call (if not routed by a specific rule)
+            if is_pam and pam_oncall:
+                cfg_db.upsert_local_assignment(
+                    exam_id,
+                    pam_oncall["diagnostician_id"],
+                    pam_oncall["diagnostician_name"],
+                    now_iso,
+                    modality=r["category"],
+                    extracode=str(r["extracode"]) if r["extracode"] else None,
+                    is_auto=True
+                )
+                logger.info(
+                    "pam_exam_auto_assigned",
+                    exam_id=exam_id,
+                    oncall=pam_oncall["diagnostician_name"],
+                )
                 continue
 
             # Normal pending exam
