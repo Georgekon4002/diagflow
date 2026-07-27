@@ -178,7 +178,19 @@ class AssignmentService:
             import diagflow.db.diagflow_db as cfg_db
             d_info = cfg_db.get_diagnostician(diagnostician_id)
             d_name = d_info["name"] if d_info else ""
-            cfg_db.upsert_local_assignment(int(exam_id), diagnostician_id, d_name, datetime.now().isoformat(), modality=suggestion.modality if hasattr(suggestion, 'modality') else None, extracode=None)
+            
+            # Fetch modality and extracode from mock_slis.db
+            mod, ext = None, None
+            try:
+                con = _get_mock_db()
+                row = con.execute("SELECT category, extracode FROM slis_exams WHERE exammoreid = ?", (int(exam_id),)).fetchone()
+                if row:
+                    mod = row["category"]
+                    ext = str(row["extracode"]) if row["extracode"] else None
+            except Exception as db_e:
+                logger.warning("failed_to_fetch_exam_details", error=str(db_e))
+
+            cfg_db.upsert_local_assignment(int(exam_id), diagnostician_id, d_name, datetime.now().isoformat(), modality=mod, extracode=ext)
         except Exception as e:
             logger.warning("local_assignment_update_failed", error=str(e))
 
@@ -222,7 +234,19 @@ class AssignmentService:
             import diagflow.db.diagflow_db as cfg_db
             d_info = cfg_db.get_diagnostician(override_diagnostician_id)
             d_name = d_info["name"] if d_info else ""
-            cfg_db.upsert_local_assignment(int(exam_id), override_diagnostician_id, d_name, datetime.now().isoformat(), modality=suggestion.modality if suggestion and hasattr(suggestion, 'modality') else None, extracode=None)
+
+            # Fetch modality and extracode from mock_slis.db
+            mod, ext = None, None
+            try:
+                con = _get_mock_db()
+                row = con.execute("SELECT category, extracode FROM slis_exams WHERE exammoreid = ?", (int(exam_id),)).fetchone()
+                if row:
+                    mod = row["category"]
+                    ext = str(row["extracode"]) if row["extracode"] else None
+            except Exception as db_e:
+                logger.warning("failed_to_fetch_exam_details", error=str(db_e))
+
+            cfg_db.upsert_local_assignment(int(exam_id), override_diagnostician_id, d_name, datetime.now().isoformat(), modality=mod, extracode=ext)
         except Exception as e:
             logger.warning("local_assignment_update_failed", error=str(e))
 
@@ -283,7 +307,8 @@ def _get_pending_exams_from_db() -> list[dict]:
                     ex_part["preferred_diagnostician_name"],
                     now_iso,
                     modality=r["category"],
-                    extracode=str(r["extracode"]) if r["extracode"] else None
+                    extracode=str(r["extracode"]) if r["extracode"] else None,
+                    is_auto=True
                 )
                 logger.info(
                     "exclusive_partner_auto_assigned",
@@ -307,7 +332,8 @@ def _get_pending_exams_from_db() -> list[dict]:
                         beretis_name,
                         now_iso,
                         modality=r["category"],
-                        extracode=str(r["extracode"]) if r["extracode"] else None
+                        extracode=str(r["extracode"]) if r["extracode"] else None,
+                        is_auto=True
                     )
                     logger.info(
                         "pam_22705_auto_assigned_to_beretis",
@@ -323,7 +349,8 @@ def _get_pending_exams_from_db() -> list[dict]:
                         pam_oncall["diagnostician_name"],
                         now_iso,
                         modality=r["category"],
-                        extracode=str(r["extracode"]) if r["extracode"] else None
+                        extracode=str(r["extracode"]) if r["extracode"] else None,
+                        is_auto=True
                     )
                     logger.info(
                         "pam_exam_auto_assigned",
@@ -341,15 +368,23 @@ def _get_pending_exams_from_db() -> list[dict]:
                 if lab_id_val == 6:  # ΑΝΩ ΠΑΤΗΣΙΑ
                     natsika = cfg_db.get_diagnostician(14)
                     natsika_name = natsika["name"] if natsika else "ΝΑΤΣΙΚΑ"
-                    cfg_db.upsert_local_assignment(exam_id, 14, natsika_name, now_iso, modality=r["category"], extracode=str(r["extracode"]) if r["extracode"] else None)
+                    cfg_db.upsert_local_assignment(exam_id, 14, natsika_name, now_iso, modality=r["category"], extracode=str(r["extracode"]) if r["extracode"] else None, is_auto=True)
                     logger.info("lab_specific_exam_auto_assigned", exam_id=exam_id, lab=6, diagnostician=14)
                     continue
                 elif lab_id_val == 7:  # ΙΛΙΟΝ
                     papoutsi = cfg_db.get_diagnostician(41)
                     papoutsi_name = papoutsi["name"] if papoutsi else "ΠΑΠΟΥΤΣΗ ΔΗΜΗΤΡΑ"
-                    cfg_db.upsert_local_assignment(exam_id, 41, papoutsi_name, now_iso, modality=r["category"], extracode=str(r["extracode"]) if r["extracode"] else None)
+                    cfg_db.upsert_local_assignment(exam_id, 41, papoutsi_name, now_iso, modality=r["category"], extracode=str(r["extracode"]) if r["extracode"] else None, is_auto=True)
                     logger.info("lab_specific_exam_auto_assigned", exam_id=exam_id, lab=7, diagnostician=41)
                     continue
+
+            # Check 4: Κροταφογναθικές for ΜΠΕΡΕΤΗΣ
+            if exam_code_str in ("21038", "21061", "21062", "21063"):
+                beretis = cfg_db.get_diagnostician(59)
+                beretis_name = beretis["name"] if beretis else "ΜΠΕΡΕΤΗΣ ΓΕΩΡΓΙΟΣ"
+                cfg_db.upsert_local_assignment(exam_id, 59, beretis_name, now_iso, modality=r["category"], extracode=str(r["extracode"]) if r["extracode"] else None, is_auto=True)
+                logger.info("krotafognathikes_auto_assigned", exam_id=exam_id, diagnostician=59)
+                continue
 
             # Normal pending exam
             rows.append(_row_to_exam_dict(r))
@@ -391,6 +426,7 @@ def _get_assigned_exams_from_db() -> list[dict]:
             exam_dict["code"] = loc["diagnostician_name"]
             exam_dict["diagnostician_name"] = loc["diagnostician_name"]
             exam_dict["status"] = "assigned"
+            exam_dict["is_auto_assigned"] = bool(loc.get("is_auto", False))
             rows.append(exam_dict)
         con.close()
         logger.info("assigned_exams_loaded_from_db", count=len(rows))

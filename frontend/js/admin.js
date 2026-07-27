@@ -492,19 +492,57 @@ function renderAvailability() {
 
     // Filter only today and future dates, excluding entries marked as 'available'
     const todayStr = new Date().toISOString().split('T')[0];
-    const filteredAvailability = availability.filter(a => a.date >= todayStr && a.status !== 'available');
+    const filteredAvailability = availability
+        .filter(a => a.date >= todayStr && a.status !== 'available')
+        .sort((a, b) => a.diagnostician_id - b.diagnostician_id || a.date.localeCompare(b.date));
 
     const statusLabel = { available: 'Διαθέσιμος/η', on_leave: 'Άδεια', half_day: 'Μισή Μέρα' };
     const statusClass = { available: 'active', on_leave: 'on-leave', half_day: 'inactive' };
 
     const rows = [];
 
-    // 1. Add diagnosticians on leave
+    // Group consecutive dates
+    let currentGroup = null;
     filteredAvailability.forEach(a => {
-        rows.push({
+        if (!currentGroup) {
+            currentGroup = { ...a, startDate: a.date, endDate: a.date };
+        } else if (
+            currentGroup.diagnostician_id === a.diagnostician_id &&
+            currentGroup.status === a.status &&
+            currentGroup.notes === a.notes
+        ) {
+            // Check if dates are consecutive
+            const currDate = new Date(currentGroup.endDate);
+            const nextDate = new Date(a.date);
+            const diffTime = Math.abs(nextDate - currDate);
+            const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)); 
+            
+            if (diffDays <= 1) { // 1 day diff or same day
+                currentGroup.endDate = a.date;
+            } else {
+                rows.push(currentGroup);
+                currentGroup = { ...a, startDate: a.date, endDate: a.date };
+            }
+        } else {
+            rows.push(currentGroup);
+            currentGroup = { ...a, startDate: a.date, endDate: a.date };
+        }
+    });
+    if (currentGroup) rows.push(currentGroup);
+
+    const finalRows = [];
+
+    // 1. Add grouped diagnosticians on leave
+    rows.forEach(a => {
+        let dateDisplay = formatDate(a.startDate);
+        if (a.startDate !== a.endDate) {
+            dateDisplay += ` - ${formatDate(a.endDate)}`;
+        }
+        finalRows.push({
             diagnostician_id: a.diagnostician_id,
             diagnostician_name: a.diagnostician_name,
-            date: a.date,
+            sortDate: a.startDate,
+            dateDisplay: dateDisplay,
             statusBadge: `<span class="status-badge ${statusClass[a.status] || 'on-leave'}">${statusLabel[a.status] || 'Άδεια'}</span>`,
             notes: a.notes || '—'
         });
@@ -521,30 +559,31 @@ function renderAvailability() {
 
     offToday.forEach(d => {
         // Skip if this diagnostician already has an explicit leave entry recorded for today
-        const hasLeaveToday = rows.some(r => r.diagnostician_id === d.id && r.date === todayStr);
+        const hasLeaveToday = filteredAvailability.some(r => r.diagnostician_id === d.id && r.date === todayStr);
         if (!hasLeaveToday) {
-            rows.push({
+            finalRows.push({
                 diagnostician_id: d.id,
                 diagnostician_name: d.name,
-                date: todayStr,
+                sortDate: todayStr,
+                dateDisplay: formatDate(todayStr),
                 statusBadge: `<span class="status-badge inactive">Όχι σήμερα</span>`,
                 notes: ''
             });
         }
     });
 
-    if (!rows.length) {
+    if (!finalRows.length) {
         tbody.innerHTML = '<tr><td colspan="4" style="color:var(--text-tertiary);text-align:center;padding:20px;">Δεν υπάρχουν εγγραφές</td></tr>';
         return;
     }
 
     // Sort rows by date ascending
-    rows.sort((a, b) => a.date.localeCompare(b.date));
+    finalRows.sort((a, b) => a.sortDate.localeCompare(b.sortDate));
 
-    tbody.innerHTML = rows.map(r => `
+    tbody.innerHTML = finalRows.map(r => `
         <tr>
             <td style="font-weight:500;">${r.diagnostician_name}</td>
-            <td class="date-cell">${formatDate(r.date)}</td>
+            <td class="date-cell">${r.dateDisplay}</td>
             <td>${r.statusBadge}</td>
             <td style="color:var(--text-tertiary);">${r.notes}</td>
         </tr>

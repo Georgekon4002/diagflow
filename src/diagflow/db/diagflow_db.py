@@ -471,26 +471,26 @@ def delete_doctor(doctor_id: str) -> bool:
 
 # ── Local Assignments ─────────────────────────────────────────────────────────
 
-def upsert_local_assignment(exammoreid: int, diagnostician_id: int, diagnostician_name: str, assigned_at: str, modality: str | None = None, extracode: str | None = None) -> dict:
+def upsert_local_assignment(exammoreid: int, diagnostician_id: int, diagnostician_name: str, assigned_at: str, modality: str | None = None, extracode: str | None = None, is_auto: bool = False) -> dict:
     with _conn() as con:
         con.execute(
-            "INSERT INTO local_assignments (exammoreid, diagnostician_id, diagnostician_name, assigned_at) VALUES (?, ?, ?, ?) "
-            "ON CONFLICT(exammoreid) DO UPDATE SET diagnostician_id=excluded.diagnostician_id, diagnostician_name=excluded.diagnostician_name, assigned_at=excluded.assigned_at",
-            (exammoreid, diagnostician_id, diagnostician_name, assigned_at),
+            "INSERT INTO local_assignments (exammoreid, diagnostician_id, diagnostician_name, assigned_at, is_auto) VALUES (?, ?, ?, ?, ?) "
+            "ON CONFLICT(exammoreid) DO UPDATE SET diagnostician_id=excluded.diagnostician_id, diagnostician_name=excluded.diagnostician_name, assigned_at=excluded.assigned_at, is_auto=excluded.is_auto",
+            (exammoreid, diagnostician_id, diagnostician_name, assigned_at, int(is_auto)),
         )
         con.execute(
             "INSERT OR REPLACE INTO assignment_log (exammoreid, diagnostician_id, assigned_at, modality, extracode) VALUES (?, ?, ?, ?, ?)",
             (exammoreid, diagnostician_id, assigned_at, modality, extracode),
         )
         row = con.execute(
-            "SELECT exammoreid, diagnostician_id, diagnostician_name, assigned_at FROM local_assignments WHERE exammoreid = ?", (exammoreid,)
+            "SELECT exammoreid, diagnostician_id, diagnostician_name, assigned_at, is_auto FROM local_assignments WHERE exammoreid = ?", (exammoreid,)
         ).fetchone()
     return _row_to_dict(row)
 
 def get_all_local_assignments() -> dict[int, dict]:
     with _conn() as con:
-        rows = con.execute("SELECT exammoreid, diagnostician_id, diagnostician_name, assigned_at FROM local_assignments").fetchall()
-    return {r["exammoreid"]: _row_to_dict(r) for r in rows}
+        rows = con.execute("SELECT exammoreid, diagnostician_id, diagnostician_name, assigned_at, is_auto FROM local_assignments").fetchall()
+        return {r["exammoreid"]: _row_to_dict(r) for r in rows}
 
 def get_daily_assignment_counts() -> dict[int, dict]:
     with _conn() as con:

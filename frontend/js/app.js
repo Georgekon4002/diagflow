@@ -767,6 +767,8 @@ function renderAssignedRows(exams) {
                 <td class="demogid-cell" style="border-left: 1px solid rgba(255, 255, 255, 0.2);" rowspan="${span}">${exam.demogid || exam.patient_id || '—'}</td>
                 <td style="border-right: 1px solid rgba(255, 255, 255, 0.2);" rowspan="${span}">${patientName}</td>` : '';
 
+        const autoBadge = exam.is_auto_assigned ? '<span class="status-badge" style="background:#9b59b6; margin-left:6px; padding: 2px 6px; font-size:10px;">⚡ Auto</span>' : '';
+
         return `
             <tr id="assigned-row-${exam.exam_id}" class="${rowClass} ${pamClass}">
                 <td class="frozen-col-1" style="width: 48px; min-width: 48px; padding: 0; text-align: center;">
@@ -783,7 +785,7 @@ ${groupedCols}
                 <td>${exam.wname || exam.issuing_doctor_name || '—'}</td>
                 <td class="comment-cell">${notesHtml}</td>
                 <td class="comment-cell">${oldVisitHtml}</td>
-                <td><span class="assigned-name">${diagName}</span></td>
+                <td><span class="assigned-name">${diagName}</span>${autoBadge}</td>
                 <td>
                     <div class="btn-group">
                         <button class="btn btn-slis-update btn-sm" onclick="updateExamOnSlis('${exam.exam_id}', ${exammoreid || 'null'})">

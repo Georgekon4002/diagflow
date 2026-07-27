@@ -275,6 +275,26 @@ def filter_by_lab_preference(
     )
 
 
+def filter_by_web_lab(
+    candidate: CandidateDiagnostician,
+    exam: ExamContext,
+) -> FilterResult:
+    """
+    WEB (id 222) should ONLY receive exams from ΚΟΛΙΑΤΣΟΥ lab.
+    """
+    if candidate.id == 222 and (exam.lab_name or "").upper() != "ΚΟΛΙΑΤΣΟΥ":
+        return FilterResult(
+            passed=False,
+            rule_name="web_lab_constraint",
+            reason="WEB παίρνει μόνο Κολιάτσου",
+        )
+    return FilterResult(
+        passed=True,
+        rule_name="web_lab_constraint",
+        reason="WEB constraint passed"
+    )
+
+
 def apply_hard_filters(
     candidates: list[CandidateDiagnostician],
     exam: ExamContext,
@@ -295,12 +315,11 @@ def apply_hard_filters(
            alternatives list with a red indicator and reason)
     """
     active_filters = [
+        filter_by_web_lab,
         filter_by_availability,
         filter_by_capacity,       # Check capacity limit first to prioritize quota reason
         filter_by_modality,       # Keep modality as a basic sanity filter
-        filter_by_skills_hard,    # Skills hard filter
-        # filter_by_comment_exclusion — DISABLED in this phase
-        # filter_by_lab_preference   — Now WEIGHTED, not hard
+        filter_by_skills_hard,    # Skill hard filter (only eliminates if 0 proficiency)
     ]
 
     passed_candidates: list[CandidateDiagnostician] = []
