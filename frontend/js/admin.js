@@ -92,6 +92,7 @@ async function loadAll() {
         loadOncall(),
         loadPamakristosWeeklySchedule(),
         loadAdvancedOptions(),
+        loadSystemWeights(),
     ]);
 }
 
@@ -1615,6 +1616,194 @@ function editModalityQuota(id) {
     };
 }
 
+const WEIGHT_KEYS = [
+    'pts_partnership', 'pts_history', 
+    'pts_skills_pref', 'pts_skills_neut', 'pts_skills_none',
+    'pts_lab_pref', 'pts_lab_neut', 'pts_lab_other',
+    'pts_capacity'
+];
+
+async function loadSystemWeights() {
+    try {
+        const res = await fetch('/assignments/weights');
+        const data = await res.json();
+        
+        // Populate inputs (API gives absolute points like 0.35, UI displays 35%)
+        WEIGHT_KEYS.forEach(k => {
+            const el = document.getElementById(k.replace('_', '-').replace('_', '-')); // e.g. pts_skills_pref -> pts-skills-pref
+            if (el && data[k] !== undefined) {
+                el.value = (parseFloat(data[k]) * 100).toFixed(1).replace(/\.0$/, '');
+            }
+        });
+        
+        updateWeightsTotal();
+        updateScoringGuide(data);
+    } catch (err) {
+        console.error('Error loading weights:', err);
+    }
+}
+
+function updateWeightsTotal() {
+    // Only sum the max potential points for validation
+    const maxKeys = ['pts-partnership', 'pts-history', 'pts-skills-pref', 'pts-lab-pref', 'pts-capacity'];
+    let sum = 0;
+    
+    maxKeys.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) sum += parseFloat(el.value || 0);
+    });
+    
+    const display = document.getElementById('weights-total-display');
+    const btn = document.getElementById('btn-save-weights');
+    const errMsg = document.getElementById('weights-error-message');
+    
+    if (display) {
+        display.textContent = `Σύνολο Max: ${sum.toFixed(1).replace(/\.0$/, '')}%`;
+        if (Math.abs(sum - 100) > 0.1) {
+            display.style.color = '#ef4444'; // Red
+            if (btn) btn.disabled = true;
+            if (errMsg) {
+                errMsg.style.color = '#ef4444';
+                errMsg.style.fontWeight = 'bold';
+            }
+        } else {
+            display.style.color = '#10b981'; // Green
+            if (btn) btn.disabled = false;
+            if (errMsg) {
+                errMsg.style.color = 'var(--text-secondary)';
+                errMsg.style.fontWeight = 'normal';
+            }
+        }
+    }
+    
+    // Live update the table
+    const currentWeights = {};
+    WEIGHT_KEYS.forEach(k => {
+        const id = k.replace('_', '-').replace('_', '-');
+        const el = document.getElementById(id);
+        if (el) {
+            currentWeights[k] = parseFloat(el.value || 0) / 100;
+        }
+    });
+    updateScoringGuide(currentWeights);
+}
+
+async function saveSystemWeights() {
+    const payload = {};
+    WEIGHT_KEYS.forEach(k => {
+        const id = k.replace('_', '-').replace('_', '-');
+        const el = document.getElementById(id);
+        if (el) {
+            // Convert back to absolute (0 to 1) for the DB
+            payload[k] = (parseFloat(el.value || 0) / 100).toString();
+        }
+    });
+    
+    try {
+        const res = await fetch('/assignments/weights', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        if (!res.ok) {
+            const err = await res.json();
+            throw new Error(err.detail || 'Αποτυχία αποθήκευσης βαρών');
+        }
+        
+        // Update the guide text with new max values
+        updateScoringGuide(payload);
+        
+        // Show success
+        const btn = document.getElementById('btn-save-weights');
+        const origText = btn.textContent;
+        btn.textContent = 'Αποθηκεύτηκαν!';
+        btn.classList.add('btn-success');
+        setTimeout(() => {
+            btn.textContent = origText;
+            btn.classList.remove('btn-success');
+        }, 2000);
+        
+    } catch (err) {
+        alert(err.message);
+    }
+}
+
+function updateScoringGuide(weights) {
+    const guideTable = document.getElementById('scoring-guide-table');
+    if (!guideTable) return;
+    
+    // Map absolute to percentage string for the guide display
+    const fmt = (val) => (parseFloat(val) * 100).toFixed(1).replace(/\.0$/, '') + '%';
+    
+    const wPart = fmt(weights.pts_partnership || 0.35);
+    const wHist = fmt(weights.pts_history || 0.20);
+    const wSkill = fmt(weights.pts_skills_pref || 0.20);
+    const wLab = fmt(weights.pts_lab_pref || 0.15);
+    const wCap = fmt(weights.pts_capacity || 0.10);
+    
+    const sPref = fmt(weights.pts_skills_pref || 0.20);
+    const sNeut = fmt(weights.pts_skills_neut || 0.10);
+    const sNone = fmt(weights.pts_skills_none || 0.06);
+    
+    const lPref = fmt(weights.pts_lab_pref || 0.15);
+    const lNeut = fmt(weights.pts_lab_neut || 0.075);
+    const lOther = fmt(weights.pts_lab_other || 0.015);
+    
+    guideTable.innerHTML = `
+        <thead>
+            <tr>
+                <th style="width:25%">Κριτήριο</th>
+                <th style="width:15%">Max Bonus</th>
+                <th>Επεξήγηση & Υπο-Βαθμολογίες</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td><b>1. Συνεργασία Ιατρού</b></td>
+                <td style="color:#4ade80; font-weight:600;">+${wPart}</td>
+                <td>Αν ο παραπέμπων ιατρός έχει "Προτιμώμενο Διαγνώστη" αυτόν τον ιατρό.</td>
+            </tr>
+            <tr>
+                <td><b>2. Ιστορικό Ασθενή</b></td>
+                <td style="color:#4ade80; font-weight:600;">+${wHist}</td>
+                <td>Αν ο διαγνώστης έχει διαβάσει στο παρελθόν εξετάσεις του ίδιου ασθενή.</td>
+            </tr>
+            <tr>
+                <td><b>3. Εξειδίκευση (Skills)</b></td>
+                <td style="color:#4ade80; font-weight:600;">+${wSkill}</td>
+                <td>
+                    <div style="font-size:12px; margin-top:4px;">
+                        <span style="display:inline-block; width:120px;">Προτιμά να διαβάζει:</span> <b style="color:#4ade80;">+${sPref}</b><br>
+                        <span style="display:inline-block; width:120px;">Διαβάζει κανονικά:</span> <b style="color:#60a5fa;">+${sNeut}</b><br>
+                        <span style="display:inline-block; width:120px;">Χωρίς δεδομένα:</span> <b style="color:#a78bfa;">+${sNone}</b>
+                    </div>
+                </td>
+            </tr>
+            <tr>
+                <td><b>4. Προτίμηση Εργαστηρίου</b></td>
+                <td style="color:#4ade80; font-weight:600;">+${wLab}</td>
+                <td>
+                    <div style="font-size:12px; margin-top:4px;">
+                        <span style="display:inline-block; width:120px;">Προτιμά το Εργαστήριο:</span> <b style="color:#4ade80;">+${lPref}</b><br>
+                        <span style="display:inline-block; width:120px;">Χωρίς προτίμηση:</span> <b style="color:#60a5fa;">+${lNeut}</b><br>
+                        <span style="display:inline-block; width:120px;">Προτιμά άλλο:</span> <b style="color:#fbbf24;">+${lOther}</b>
+                    </div>
+                </td>
+            </tr>
+            <tr>
+                <td><b>5. Χωρητικότητα</b></td>
+                <td style="color:#4ade80; font-weight:600;">+${wCap}</td>
+                <td>Υπολογίζεται αναλογικά (π.χ. διαθέσιμα 5/20 όριο → παίρνει το 25% του bonus).</td>
+            </tr>
+        </tbody>
+    `;
+}
+
+// Add event listeners to all weight inputs to update the total
+document.querySelectorAll('.weight-input').forEach(input => {
+    input.addEventListener('input', updateWeightsTotal);
+    input.addEventListener('change', updateWeightsTotal);
+});
 
 // Advanced Routing Doctor Search
 let advDoctorSearchTimeout;
@@ -1665,3 +1854,5 @@ document.addEventListener('click', (e) => {
         res.style.display = 'none';
     }
 });
+
+

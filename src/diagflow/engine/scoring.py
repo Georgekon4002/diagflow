@@ -48,7 +48,7 @@ class CandidateScore:
     rank: int = 0  # Populated after sorting
 
 
-def score_capacity(candidate: CandidateDiagnostician) -> ScoreComponent:
+def score_capacity(candidate: CandidateDiagnostician, weights: dict) -> ScoreComponent:
     """
     Priority b: Score based on remaining daily quota.
 
@@ -56,18 +56,22 @@ def score_capacity(candidate: CandidateDiagnostician) -> ScoreComponent:
     At quota → 0.0, fully available → 1.0
     Over quota → 0.0 (should have been filtered, but defensive)
     """
+    pts_max = float(weights.get("pts_capacity", 0.1))
+    
     if candidate.daily_quota <= 0:
+        actual_pts = 0.0
         raw = 0.0
     else:
         remaining = max(0, candidate.daily_quota - candidate.current_day_count)
         raw = remaining / candidate.daily_quota
+        actual_pts = raw * pts_max
 
     return ScoreComponent(
         rule_name="capacity",
         display_name="Χωρητικότητα",
         raw_score=raw,
-        weight=settings.weight_capacity,
-        weighted_score=raw * settings.weight_capacity,
+        weight=pts_max,
+        weighted_score=actual_pts,
         explanation=(
             f"Υπόλοιπο: {max(0, candidate.daily_quota - candidate.current_day_count)}"
             f"/{candidate.daily_quota} εξετάσεις"
@@ -75,40 +79,44 @@ def score_capacity(candidate: CandidateDiagnostician) -> ScoreComponent:
     )
 
 
-def score_partnership(candidate: CandidateDiagnostician, exam: ExamContext) -> ScoreComponent:
+def score_partnership(candidate: CandidateDiagnostician, exam: ExamContext, weights: dict) -> ScoreComponent:
     """
     Priority c: Score based on issuing doctor partnership.
 
     If the issuing doctor has a preferred diagnostician and this candidate matches,
     they get a full score.
     """
+    pts_max = float(weights.get("pts_partnership", 0.35))
+    
     if candidate.is_partnership_exclusive:
-        raw = 1.0
+        actual_pts = pts_max
         explanation = (
             f"⚡ Αποκλειστική συνεργασία ιατρού '{exam.issuing_doctor_name}' → "
             f"{candidate.name}"
         )
     elif candidate.is_partnership_match:
-        raw = 1.0
+        actual_pts = pts_max
         explanation = (
             f"Προτίμηση ιατρού '{exam.issuing_doctor_name}' → "
             f"{candidate.name}"
         )
     else:
-        raw = 0.0
+        actual_pts = 0.0
         explanation = f"Δεν υπάρχει συνεργασία με τον ιατρό '{exam.issuing_doctor_name}'"
+
+    raw = actual_pts / pts_max if pts_max > 0 else 0.0
 
     return ScoreComponent(
         rule_name="partnership",
         display_name="Συνεργασία Ιατρού",
         raw_score=raw,
-        weight=settings.weight_partnership,
-        weighted_score=raw * settings.weight_partnership,
+        weight=pts_max,
+        weighted_score=actual_pts,
         explanation=explanation,
     )
 
 
-def score_skills_weighted(candidate: CandidateDiagnostician, exam: ExamContext) -> ScoreComponent:
+def score_skills_weighted(candidate: CandidateDiagnostician, exam: ExamContext, weights: dict) -> ScoreComponent:
     """
     Skills weighted bonus (after passing the hard skills filter).
 
@@ -118,27 +126,34 @@ def score_skills_weighted(candidate: CandidateDiagnostician, exam: ExamContext) 
     """
     exam_type = exam.exam_name if exam.exam_name else (f"{exam.body_part} ({exam.modality})" if exam.body_part else exam.modality)
     
+    pts_max = float(weights.get("pts_skills_pref", 0.20))
+    pts_neut = float(weights.get("pts_skills_neut", 0.10))
+    pts_none = float(weights.get("pts_skills_none", 0.06))
+    
     if candidate.has_skill_match and candidate.has_skill_data:
-        raw = candidate.skill_proficiency # Which is 1.0 if preferred, 0.5 if neutral
-        if raw >= 1.0:
+        if candidate.skill_proficiency >= 1.0:
+            actual_pts = pts_max
             explanation = f"Προτιμά να διαγνώσει '{exam_type}'"
         else:
+            actual_pts = pts_neut
             explanation = f"Μπορεί να διαγνώσει '{exam_type}' (Ουδέτερο)"
     else:
-        raw = 0.3  # Neutral — no data doesn't mean they can't do it
+        actual_pts = pts_none
         explanation = f"Δεν υπάρχουν δεδομένα εξειδίκευσης για '{exam_type}' (ουδέτερο)"
+
+    raw = actual_pts / pts_max if pts_max > 0 else 0.0
 
     return ScoreComponent(
         rule_name="skills",
         display_name="Εξειδίκευση",
         raw_score=raw,
-        weight=settings.weight_skills,
-        weighted_score=raw * settings.weight_skills,
+        weight=pts_max,
+        weighted_score=actual_pts,
         explanation=explanation,
     )
 
 
-def score_lab_preference(candidate: CandidateDiagnostician, exam: ExamContext) -> ScoreComponent:
+def score_lab_preference(candidate: CandidateDiagnostician, exam: ExamContext, weights: dict) -> ScoreComponent:
     """
     Priority e: Weighted score for lab preference (NOT a hard filter).
 
@@ -146,30 +161,36 @@ def score_lab_preference(candidate: CandidateDiagnostician, exam: ExamContext) -
     If they have no preference or it doesn't match, they get a neutral/low score,
     so they are not excluded but ranked lower if someone else prefers this lab.
     """
+    pts_max = float(weights.get("pts_lab_pref", 0.15))
+    pts_neut = float(weights.get("pts_lab_neut", 0.075))
+    pts_other = float(weights.get("pts_lab_other", 0.015))
+    
     preferred_lab_id = getattr(candidate, "preferred_lab_id", "")
     
     if preferred_lab_id and str(preferred_lab_id) == str(exam.lab_id):
-        raw = 1.0
+        actual_pts = pts_max
         explanation = f"Προτιμά τις εξετάσεις από '{exam.lab_name}'"
     elif preferred_lab_id:
-        raw = 0.1  # They prefer another lab
+        actual_pts = pts_other
         explanation = f"Δεν είναι το προτιμώμενο εργαστήριό του/της (προτιμά άλλο)"
     else:
-        raw = 0.5  # No specific preference
+        actual_pts = pts_neut
         explanation = f"Δεν έχει συγκεκριμένη προτίμηση εργαστηρίου (ουδέτερο)"
+
+    raw = actual_pts / pts_max if pts_max > 0 else 0.0
 
     return ScoreComponent(
         rule_name="lab_preference",
         display_name="Προτίμηση Εργαστηρίου",
         raw_score=raw,
-        weight=settings.weight_lab,
-        weighted_score=raw * settings.weight_lab,
+        weight=pts_max,
+        weighted_score=actual_pts,
         explanation=explanation,
     )
 
 
 def score_patient_history(
-    candidate: CandidateDiagnostician, exam: ExamContext
+    candidate: CandidateDiagnostician, exam: ExamContext, weights: dict
 ) -> ScoreComponent:
     """
     Priority f: Score based on continuity of care.
@@ -177,23 +198,26 @@ def score_patient_history(
     If this diagnostician has handled this patient's past similar exams,
     they get a bonus for consistency.
     """
+    pts_max = float(weights.get("pts_history", 0.20))
+    
     if candidate.has_patient_history:
-        # More past assignments = stronger continuity signal, capped at 1.0
-        raw = min(1.0, candidate.patient_history_count * 0.3)
+        actual_pts = pts_max
         explanation = (
-            f"Ο/Η {candidate.name} έχει αξιολογήσει {candidate.patient_history_count} "
-            f"παρόμοιες εξετάσεις αυτού του ασθενή στο παρελθόν"
+            f"Ο/Η {candidate.name} έχει αξιολογήσει εξέταση "
+            f"αυτού του ασθενή στο παρελθόν"
         )
     else:
-        raw = 0.0
+        actual_pts = 0.0
         explanation = "Δεν υπάρχει ιστορικό με αυτόν τον ασθενή"
+
+    raw = actual_pts / pts_max if pts_max > 0 else 0.0
 
     return ScoreComponent(
         rule_name="patient_history",
         display_name="Ιστορικό Ασθενή",
         raw_score=raw,
-        weight=settings.weight_patient_history,
-        weighted_score=raw * settings.weight_patient_history,
+        weight=pts_max,
+        weighted_score=actual_pts,
         explanation=explanation,
     )
 
@@ -202,6 +226,7 @@ def score_patient_history(
 def compute_candidate_score(
     candidate: CandidateDiagnostician,
     exam: ExamContext,
+    weights: dict,
 ) -> CandidateScore:
     """
     Compute the complete composite score for a single candidate.
@@ -214,11 +239,11 @@ def compute_candidate_score(
       f. Patient history
     """
     components = [
-        score_skills_weighted(candidate, exam),
-        score_patient_history(candidate, exam),
-        score_partnership(candidate, exam),
-        score_lab_preference(candidate, exam),
-        score_capacity(candidate),
+        score_skills_weighted(candidate, exam, weights),
+        score_patient_history(candidate, exam, weights),
+        score_partnership(candidate, exam, weights),
+        score_lab_preference(candidate, exam, weights),
+        score_capacity(candidate, weights),
     ]
 
     total = sum(c.weighted_score for c in components)
@@ -252,8 +277,14 @@ def score_all_candidates(
     """
     import math
     import random
-
-    scored_pairs = [(c, compute_candidate_score(c, exam)) for c in candidates]
+    from diagflow.db.diagflow_db import get_system_weights
+    
+    weights = get_system_weights()
+    scored_pairs = []
+    
+    for c in candidates:
+        candidate_score = compute_candidate_score(c, exam, weights)
+        scored_pairs.append((c, candidate_score))
 
     # First pass: find the top raw score to determine the near-tie boundary
     if not scored_pairs:

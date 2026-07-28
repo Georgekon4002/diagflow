@@ -970,3 +970,34 @@ async def remove_modality_quota(rule_id: int, _=Depends(_require_admin)):
     if not success:
         raise HTTPException(status_code=404, detail='Rule not found')
     return {'success': True}
+
+# ── Scoring System Weights ──────────────────────────────────────────────────────────
+
+from fastapi import Body
+
+@router.get("/assignments/weights")
+def get_weights():
+    """Retrieve dynamic scoring weights from the DB."""
+    from diagflow.db.diagflow_db import get_system_weights
+    return get_system_weights()
+
+@router.put("/assignments/weights")
+def update_weights(weights: dict = Body(...)):
+    """Update dynamic scoring weights."""
+    from diagflow.db.diagflow_db import update_system_weights
+    import math
+    
+    # Calculate sum of maximum points from each category
+    max_pts = (
+        float(weights.get("pts_partnership", 0)) +
+        float(weights.get("pts_history", 0)) +
+        float(weights.get("pts_skills_pref", 0)) +
+        float(weights.get("pts_lab_pref", 0)) +
+        float(weights.get("pts_capacity", 0))
+    )
+    
+    if not math.isclose(max_pts, 1.0, abs_tol=0.01):
+        raise HTTPException(status_code=400, detail=f"Το άθροισμα των μέγιστων πόντων πρέπει να είναι ακριβώς 100%. (Βρέθηκε {max_pts*100:.1f}%)")
+        
+    updated = update_system_weights(weights)
+    return {"message": "Τα βάρη αποθηκεύτηκαν επιτυχώς", "weights": updated}

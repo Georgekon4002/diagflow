@@ -739,3 +739,44 @@ def delete_modality_quota(quota_id: int) -> bool:
     with _conn() as con:
         cur = con.execute('DELETE FROM modality_quotas WHERE id = ?', (quota_id,))
     return cur.rowcount > 0
+
+# ── System Settings (Scoring Weights) ──────────────────────────────────────────
+
+def get_system_weights() -> dict:
+    """Returns the current AI scoring weights from the DB."""
+    with _conn() as con:
+        # Create table if it somehow doesn't exist
+        con.execute(
+            "CREATE TABLE IF NOT EXISTS system_settings ("
+            "key TEXT PRIMARY KEY, value TEXT NOT NULL)"
+        )
+        rows = con.execute("SELECT key, value FROM system_settings").fetchall()
+    
+    # Defaults
+    weights = {
+        "weight_partnership": 0.35,
+        "weight_patient_history": 0.20,
+        "weight_skills": 0.20,
+        "weight_lab": 0.15,
+        "weight_capacity": 0.10
+    }
+    
+    for r in rows:
+        key = r["key"]
+        try:
+            if key in weights:
+                weights[key] = float(r["value"])
+        except ValueError:
+            pass
+            
+    return weights
+
+def update_system_weights(new_weights: dict) -> dict:
+    """Updates the AI scoring weights in the DB."""
+    with _conn() as con:
+        for k, v in new_weights.items():
+            con.execute(
+                "INSERT OR REPLACE INTO system_settings (key, value) VALUES (?, ?)",
+                (k, str(v))
+            )
+    return get_system_weights()

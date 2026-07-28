@@ -4,7 +4,8 @@ CREATE TABLE local_assignments (
     diagnostician_id    INTEGER NOT NULL,
     diagnostician_name  TEXT    NOT NULL,
     assigned_at         TEXT    NOT NULL,
-    is_auto             INTEGER NOT NULL DEFAULT 0
+    is_auto             INTEGER NOT NULL DEFAULT 0,
+    rule_desc           TEXT
 );
 CREATE TABLE availability (
     id                      INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -27697,21 +27698,26 @@ CREATE TABLE IF NOT EXISTS exam_routing_rules (
     is_pamakristos INTEGER NOT NULL DEFAULT 0,
     exam_codes TEXT NOT NULL,
     diagnostician_id INTEGER NOT NULL,
-    description TEXT
+    description TEXT,
+    issuing_doctor_id INTEGER,
+    issuing_doctor_name TEXT,
+    is_active INTEGER NOT NULL DEFAULT 1
 );
 
 CREATE TABLE IF NOT EXISTS exclusive_lab_rules (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     diagnostician_id INTEGER NOT NULL,
     lab_id INTEGER NOT NULL,
-    lab_name TEXT
+    lab_name TEXT,
+    is_active INTEGER NOT NULL DEFAULT 1
 );
 
 CREATE TABLE IF NOT EXISTS modality_quotas (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     diagnostician_id INTEGER NOT NULL,
     modality TEXT NOT NULL,
-    max_count INTEGER NOT NULL
+    max_count INTEGER NOT NULL,
+    is_active INTEGER NOT NULL DEFAULT 1
 );
 
 INSERT INTO exam_routing_rules (lab_id, is_pamakristos, exam_codes, diagnostician_id, description) VALUES (6, 0, '21850,22700,22701,22702,22703,22704', 14, 'Αρθρογραφίες (Άνω Πατήσια -> Νάτσικα)');
@@ -27724,3 +27730,19 @@ INSERT INTO exclusive_lab_rules (diagnostician_id, lab_id, lab_name) VALUES (222
 INSERT INTO modality_quotas (diagnostician_id, modality, max_count) VALUES (89, 'CT', 20);
 INSERT INTO modality_quotas (diagnostician_id, modality, max_count) VALUES (89, 'MRI', 2);
 
+CREATE TABLE system_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+
+INSERT INTO system_settings (key, value) VALUES ('weight_partnership', '0.35'), ('weight_patient_history', '0.20'), ('weight_skills', '0.20'), ('weight_lab', '0.15'), ('weight_capacity', '0.10');
+
+
+CREATE TABLE IF NOT EXISTS system_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+INSERT INTO system_settings (key, value) VALUES
+('pts_partnership', '0.35'),
+('pts_history', '0.20'),
+('pts_skills_pref', '0.20'),
+('pts_skills_neut', '0.10'),
+('pts_skills_none', '0.06'),
+('pts_lab_pref', '0.15'),
+('pts_lab_neut', '0.075'),
+('pts_lab_other', '0.015'),
+('pts_capacity', '0.10');
