@@ -65,6 +65,20 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     await loadAll();
     showSection('oncall');
+
+    // Set up mutual exclusion for advanced exam routing
+    const advRouteDocSearch = document.getElementById('adv-route-doc-search');
+    const advRoutePam = document.getElementById('adv-route-pam');
+    if (advRouteDocSearch && advRoutePam) {
+        advRoutePam.addEventListener('change', () => {
+            if (advRoutePam.checked) {
+                advRouteDocSearch.value = '';
+                document.getElementById('adv-route-doc').value = '';
+            }
+            updateAdvRouteMutualExclusion();
+        });
+        advRouteDocSearch.addEventListener('input', updateAdvRouteMutualExclusion);
+    }
 });
 
 async function loadAll() {
@@ -206,6 +220,7 @@ async function loadDiagnosticians() {
     renderDiagnosticians();
     populateDiagnosticianSelects();
     renderAvailability();
+    renderWeeklyScheduleGrid();
 }
 
 async function loadPartnerships() {
@@ -233,7 +248,7 @@ async function loadDoctors(page = 0) {
         let mock = getMockDoctors();
         if (docSearchQuery) {
             const lowerQ = docSearchQuery.toLowerCase();
-            mock = mock.filter(d => d.name.toLowerCase().includes(lowerQ) || String(d.id).includes(lowerQ));
+            mock = mock.filter(d => d.name.toLowerCase().includes(lowerQ) || String(d.id).includes(lowerQ) || (d.partner_name && d.partner_name.toLowerCase().includes(lowerQ)));
         }
         doctors = mock.slice(skip, skip + limit);
         totalDoctors = mock.length;
@@ -246,6 +261,8 @@ function changeDoctorPage(dir) {
     const newPage = doctorsPage + dir;
     if (newPage < 0 || newPage * doctorsPageSize >= totalDoctors) return;
     loadDoctors(newPage);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    document.querySelectorAll('div[style*="overflow-x: auto"], .main-content').forEach(el => el.scrollTo({ top: 0, behavior: 'smooth' }));
 }
 
 function updateDoctorPagination() {
@@ -452,6 +469,8 @@ function changeDiagPage(dir) {
     if (newPage < 0 || newPage * diagsPageSize >= totalDiags) return;
     diagsPage = newPage;
     renderDiagnosticians();
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    document.querySelectorAll('div[style*="overflow-x: auto"], .main-content').forEach(el => el.scrollTo({ top: 0, behavior: 'smooth' }));
 }
 
 function updateDiagPagination() {
@@ -752,6 +771,7 @@ function renderDoctors() {
         <tr>
             <td style="color:var(--text-tertiary);font-size:var(--font-size-xs);">${d.id}</td>
             <td style="font-weight:500;">${d.name}</td>
+            <td style="color:var(--text-secondary);">${d.partner_name || '—'}</td>
         </tr>
     `).join('');
 }
@@ -913,6 +933,11 @@ async function setSkill() {
 
     if (!diagId) { showToast('Επιλέξτε διαγνώστη', 'warning'); return; }
     if (!exam_code) { showToast('Εισάγετε κωδικό εξέτασης', 'warning'); return; }
+
+    if (Object.keys(EXAM_CODE_MAP).length > 0 && !EXAM_CODE_MAP[exam_code]) {
+        showToast(`Ο κωδικός εξέτασης ${exam_code} δεν βρέθηκε στις κατηγορίες.`, 'warning');
+        return;
+    }
 
     // Build title from code map
     const exam_title = EXAM_CODE_MAP[exam_code] || `Εξέταση ${exam_code}`;
@@ -1160,6 +1185,38 @@ document.addEventListener('click', (e) => {
     }
 });
 
+function renderWeeklyScheduleGrid() {
+    const tbody = document.getElementById('weekly-schedule-tbody');
+    if (!tbody) return;
+
+    const activeDiags = diagnosticians.filter(d => d.active).sort((a, b) => a.name.localeCompare(b.name, 'el'));
+
+    if (!activeDiags.length) {
+        tbody.innerHTML = '<tr><td colspan="8" style="color:var(--text-tertiary);text-align:center;padding:20px;">Δεν υπάρχουν ενεργοί διαγνώστες</td></tr>';
+        return;
+    }
+
+    const quotaKeys = ['quota_monday', 'quota_tuesday', 'quota_wednesday', 'quota_thursday', 'quota_friday', 'quota_saturday', 'quota_sunday'];
+
+    tbody.innerHTML = activeDiags.map(d => {
+        let cells = `<td style="font-weight:500;">${d.name}</td>`;
+        for (let day = 0; day < 7; day++) {
+            const quotaVal = d[quotaKeys[day]] || 0;
+            cells += `
+                <td style="text-align:center;">
+                    <input type="number" 
+                           class="form-input"
+                           style="width:50px;padding:4px;text-align:center;${quotaVal === 0 ? 'background-color:#ffe4e6;color:#e11d48;font-weight:bold;' : ''}" 
+                           value="${quotaVal}"
+                           min="0"
+                           onchange="updateWeeklyQuota(${d.id}, '${quotaKeys[day]}', this.value)">
+                </td>
+            `;
+        }
+        return `<tr>${cells}</tr>`;
+    }).join('');
+}
+
 // ══════════════════════════════════════════════
 //  Advanced Options Logic
 // ══════════════════════════════════════════════
@@ -1193,7 +1250,7 @@ function renderAdvancedOptions() {
         if (id === 1) return 'ΚΟΛΙΑΤΣΟΥ';
         if (id === 6) return 'ΑΝΩ ΠΑΤΗΣΙΑ';
         if (id === 7) return 'ΙΛΙΟΝ';
-        if (id === 8) return 'ΣΕΠΟΛΙΑ';
+        if (id === 5) return 'ΣΕΠΟΛΙΑ';
         return `Εργ. ${id}`;
     };
 
@@ -1264,6 +1321,43 @@ function renderAdvancedOptions() {
     }
 }
 
+function updateAdvRouteMutualExclusion() {
+    const docSearch = document.getElementById('adv-route-doc-search');
+    const pam = document.getElementById('adv-route-pam');
+    if (!docSearch || !pam) return;
+
+    if (pam.checked) {
+        docSearch.disabled = true;
+    } else {
+        docSearch.disabled = false;
+    }
+
+    if (docSearch.value.trim() !== '') {
+        pam.disabled = true;
+    } else {
+        pam.disabled = false;
+    }
+}
+
+function checkRoutingRuleOverlap(payload, editId = null) {
+    const payloadCodes = payload.exam_codes.split(',').map(c => c.trim());
+    for (let r of advRoutingRules) {
+        if (!r.is_active) continue;
+        if (editId && r.id === editId) continue;
+        
+        const labMatch = r.lab_id == null || payload.lab_id == null || r.lab_id == payload.lab_id;
+        const pamIntersect = (!r.is_pamakristos) || (!payload.is_pamakristos) || (!!r.is_pamakristos === !!payload.is_pamakristos);
+        const docMatch = r.issuing_doctor_id == null || payload.issuing_doctor_id == null || r.issuing_doctor_id == payload.issuing_doctor_id;
+        const rCodes = (r.exam_codes || '').split(',').map(c => c.trim());
+        const codeIntersect = payloadCodes.some(c => rCodes.includes(c));
+        
+        if (labMatch && pamIntersect && docMatch && codeIntersect) {
+            return r;
+        }
+    }
+    return null;
+}
+
 async function addExamRoutingRule() {
     const labId = document.getElementById('adv-route-lab').value;
     const isPam = document.getElementById('adv-route-pam').checked;
@@ -1272,13 +1366,22 @@ async function addExamRoutingRule() {
     const docId = document.getElementById('adv-route-doc').value;
     const docSearch = document.getElementById('adv-route-doc-search').value;
     const docName = docSearch ? docSearch.split(' (')[0] : null;
-    const desc = document.getElementById('adv-route-desc').value;
+    const desc = document.getElementById('adv-route-desc').value.trim();
     
-    if (!codes || !diagId) {
-        showToast('Συμπληρώστε κωδικούς και διαγνώστη.', 'warning');
+    if (!codes || !diagId || !desc) {
+        showToast('Συμπληρώστε κωδικούς, διαγνώστη και περιγραφή.', 'warning');
         return;
     }
-    const data = await apiCall('/admin/advanced/exam-routing-rules', 'POST', {
+
+    if (Object.keys(EXAM_CODE_MAP).length > 0) {
+        const invalidCodes = codes.split(',').map(c => c.trim()).filter(c => c && !EXAM_CODE_MAP[c]);
+        if (invalidCodes.length > 0) {
+            showToast(`Οι παρακάτω κωδικοί εξέτασης δεν υπάρχουν: ${invalidCodes.join(', ')}`, 'warning');
+            return;
+        }
+    }
+
+    const payload = {
         lab_id: labId ? parseInt(labId) : null,
         issuing_doctor_id: docId || null,
         issuing_doctor_name: docName || null,
@@ -1286,7 +1389,16 @@ async function addExamRoutingRule() {
         exam_codes: codes,
         diagnostician_id: parseInt(diagId),
         description: desc || (isPam ? "Από Παμμακάριστο" : (labId ? `Εργ. ${labId}` : "Γενικός κανόνας"))
-    });
+    };
+
+    const overlap = checkRoutingRuleOverlap(payload);
+    if (overlap) {
+        if (!confirm(`Προσοχή: Ο νέος κανόνας επικαλύπτεται με τον ενεργό κανόνα "${overlap.description}".\nΕξετάσεις που πληρούν και τα δύο κριτήρια θα πηγαίνουν στον πρώτο κανόνα που θα ελεγχθεί.\n\nΘέλετε σίγουρα να συνεχίσετε;`)) {
+            return;
+        }
+    }
+
+    const data = await apiCall('/admin/advanced/exam-routing-rules', 'POST', payload);
     if (data) {
         showToast('Ο κανόνας προστέθηκε.');
         document.getElementById('adv-route-lab').value = '';
@@ -1295,6 +1407,7 @@ async function addExamRoutingRule() {
         document.getElementById('adv-route-doc-search').value = '';
         document.getElementById('adv-route-desc').value = '';
         document.getElementById('adv-route-pam').checked = false;
+        updateAdvRouteMutualExclusion();
         await loadAdvancedOptions();
     }
 }
@@ -1390,6 +1503,8 @@ function editExamRoutingRule(id) {
     document.getElementById('adv-route-diag').value = r.diagnostician_id;
     document.getElementById('adv-route-desc').value = r.description || '';
     
+    updateAdvRouteMutualExclusion();
+    
     const btn = document.getElementById('adv-route-lab').closest('.admin-form').querySelector('button.btn-primary');
     btn.textContent = 'Αποθήκευση';
     btn.onclick = async () => {
@@ -1397,16 +1512,40 @@ function editExamRoutingRule(id) {
         const docId = document.getElementById('adv-route-doc').value;
         const docSearch = document.getElementById('adv-route-doc-search').value;
         const docName = docSearch ? docSearch.split(' (')[0] : null;
+        const desc = document.getElementById('adv-route-desc').value.trim();
         
-        const data = await apiCall(`/admin/advanced/exam-routing-rules/${id}`, 'PUT', {
+        const codesValue = document.getElementById('adv-route-codes').value.trim();
+        if (!codesValue || !document.getElementById('adv-route-diag').value || !desc) {
+             showToast('Συμπληρώστε κωδικούς, διαγνώστη και περιγραφή.', 'warning');
+             return;
+        }
+
+        if (Object.keys(EXAM_CODE_MAP).length > 0) {
+            const invalidCodes = codesValue.split(',').map(c => c.trim()).filter(c => c && !EXAM_CODE_MAP[c]);
+            if (invalidCodes.length > 0) {
+                showToast(`Οι παρακάτω κωδικοί εξέτασης δεν υπάρχουν: ${invalidCodes.join(', ')}`, 'warning');
+                return;
+            }
+        }
+
+        const payload = {
              lab_id: labId ? parseInt(labId) : null,
              issuing_doctor_id: docId || null,
              issuing_doctor_name: docName || null,
              is_pamakristos: document.getElementById('adv-route-pam').checked,
-             exam_codes: document.getElementById('adv-route-codes').value,
+             exam_codes: codesValue,
              diagnostician_id: parseInt(document.getElementById('adv-route-diag').value),
-             description: document.getElementById('adv-route-desc').value
-        });
+             description: desc
+        };
+
+        const overlap = checkRoutingRuleOverlap(payload, id);
+        if (overlap) {
+            if (!confirm(`Προσοχή: Ο κανόνας επικαλύπτεται με τον ενεργό κανόνα "${overlap.description}".\nΕξετάσεις που πληρούν και τα δύο κριτήρια θα πηγαίνουν στον πρώτο κανόνα που θα ελεγχθεί.\n\nΘέλετε σίγουρα να συνεχίσετε;`)) {
+                return;
+            }
+        }
+
+        const data = await apiCall(`/admin/advanced/exam-routing-rules/${id}`, 'PUT', payload);
         if(data) {
              showToast('Αποθηκεύτηκε');
              btn.textContent = 'Προσθήκη';
@@ -1415,10 +1554,10 @@ function editExamRoutingRule(id) {
              document.getElementById('adv-route-lab').value = '';
              document.getElementById('adv-route-doc').value = '';
              document.getElementById('adv-route-doc-search').value = '';
-        document.getElementById('adv-route-doc-search').value = '';
              document.getElementById('adv-route-pam').checked = false;
              document.getElementById('adv-route-codes').value = '';
              document.getElementById('adv-route-desc').value = '';
+             updateAdvRouteMutualExclusion();
              await loadAdvancedOptions();
         }
     };
@@ -1516,6 +1655,7 @@ function selectAdvDoctor(id, name) {
     document.getElementById('adv-route-doc').value = id;
     document.getElementById('adv-route-doc-search').value = `${name} (${id})`;
     document.getElementById('adv-route-doc-results').style.display = 'none';
+    updateAdvRouteMutualExclusion();
 }
 
 // Close adv doctor search on outside click

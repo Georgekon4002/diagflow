@@ -137,7 +137,7 @@ class DiagnosticianResponse(BaseModel):
     quota_friday: int
     quota_saturday: int
     quota_sunday: int
-    current_day_count: int | dict
+    current_day_count: int
     available: bool
 
 
@@ -158,6 +158,20 @@ class OncallResponse(BaseModel):
     diagnostician_id: int
     diagnostician_name: str
     source: str
+
+
+class BulkEligibleRequest(BaseModel):
+    exam_ids: list[str]
+
+
+class BulkEligibleResponseItem(BaseModel):
+    diagnostician_id: int
+    is_eligible: bool
+    reject_reason: str | None
+
+
+class BulkEligibleResponse(BaseModel):
+    diagnosticians: list[BulkEligibleResponseItem]
 
 
 class HealthResponse(BaseModel):

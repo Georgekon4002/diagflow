@@ -259,6 +259,28 @@
                         </div>
                     </div>
 
+                    <div class="admin-card" style="margin-top: 24px;">
+                        <div class="admin-card-title">Ημερήσια Όρια Διαγνωστών (Quotas)</div>
+                        <div style="overflow-x:auto;">
+                            <table class="admin-table">
+                                <thead>
+                                    <tr>
+                                        <th>Διαγνώστης</th>
+                                        <th style="text-align:center;">Δευτέρα</th>
+                                        <th style="text-align:center;">Τρίτη</th>
+                                        <th style="text-align:center;">Τετάρτη</th>
+                                        <th style="text-align:center;">Πέμπτη</th>
+                                        <th style="text-align:center;">Παρασκευή</th>
+                                        <th style="text-align:center;">Σάββατο</th>
+                                        <th style="text-align:center;">Κυριακή</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="weekly-schedule-tbody">
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
                     <div class="admin-card">
                         <div class="admin-card-title">Καταγεγραμμένες Δεξιότητες</div>
                         <table class="admin-table">
@@ -360,6 +382,7 @@
                                 <tr>
                                     <th>ID</th>
                                     <th>Ονοματεπώνυμο</th>
+                                    <th>Συνεργαζόμενος Διαγνώστης</th>
                                 </tr>
                             </thead>
                             <tbody id="doc-tbody"></tbody>
@@ -386,11 +409,42 @@
                     <!-- EXAM ROUTING RULES -->
                     <div class="admin-card">
                         <div class="admin-card-title">Αυτόματη Ανάθεση Εξετάσεων</div>
-                        <p
-                            style="color:var(--text-secondary);font-size:var(--font-size-sm);margin-bottom:var(--space-lg);">
-                            Αυτόματη ανάθεση συγκεκριμένων εξετάσεων από επιλεγμένα εργαστήρια (ή γενικά) σε
+                        <p style="color:var(--text-secondary);font-size:var(--font-size-sm);margin-bottom:16px;">
+                            Αυτόματη ανάθεση συγκεκριμένων εξετάσεων από επιλεγμένα εργαστήρια/ιατρούς (ή γενικά) σε
                             συγκεκριμένο διαγνώστη.
                         </p>
+
+                        <div
+                            style="background: rgba(59, 130, 246, 0.1); border: 1px solid rgba(59, 130, 246, 0.3); border-radius: 8px; padding: 16px; margin-bottom: 24px; color: var(--text-primary);">
+                            <h4
+                                style="margin-top: 0; margin-bottom: 12px; color: #60a5fa; display: flex; align-items: center; gap: 8px;">
+                                <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                        d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                                </svg>
+                                Οδηγός Αυτόματης Ανάθεσης
+                            </h4>
+                            <p style="margin-bottom: 8px; font-size: 13.5px; line-height: 1.5;">Η αυτόματη ανάθεση
+                                παρακάμπτει <b>πλήρως</b> το σύστημα απόδοσης score βάσει ικανοτήτων, προτιμήσεων,
+                                συνεργασιών, χωρητικότητας και ιστορικού ασθενή και εκτελείται με την εξής σειρά
+                                προτεραιότητας:</p>
+                            <ol
+                                style="margin-bottom: 12px; margin-top: 0; font-size: 13.5px; line-height: 1.5; padding-left: 20px;">
+                                <li style="margin-bottom: 4px;"><b>Αποκλειστικοί Συνεργάτες (Υψηλότερη
+                                        Προτεραιότητα):</b> Εξετάσεις από ιατρούς που έχουν δηλωθεί ως αποκλειστικοί
+                                    συνεργάτες πάνε απευθείας στον συγκεκριμένο διαγνώστη.</li>
+                                <li style="margin-bottom: 4px;"><b>Κανόνες Ανάθεσης (Αυτή η ενότητα):</b> Αν ταιριάζει
+                                    κάποιος από τους παρακάτω κανόνες, η εξέταση ανατίθεται άμεσα.</li>
+                                <li><b>Εφημερία Παμμακάριστου:</b> Αν η εξέταση είναι από την Παμμακάριστο, πάει στον
+                                    εφημερεύοντα της ημέρας.</li>
+                            </ol>
+                            <div
+                                style="font-size: 13.5px; line-height: 1.5; color: #fca5a5; background: rgba(239, 68, 68, 0.1); padding: 8px 12px; border-radius: 6px; border: 1px solid rgba(239, 68, 68, 0.2);">
+                                <b>Προσοχή:</b> Επειδή οι κανόνες παρακάμπτουν το σύστημα απόδοσης score, αγνοούν
+                                ταυτόχρονα και τα φίλτρα ικανοτήτων ή ημερήσιων ορίων! Ένας κανόνας μπορεί να αναθέσει
+                                π.χ. μία αξονική 21500 σε ιατρό που δεν κάνει διάγνωση σε αυτή την εξέταση.
+                            </div>
+                        </div>
                         <div class="admin-form" style="display: flex; flex-wrap: wrap; gap: 16px; align-items: end;">
                             <div class="form-group" style="margin:0; flex: 1; min-width: 150px;">
                                 <label class="form-label">Εργαστήριο</label>
@@ -399,7 +453,7 @@
                                     <option value="1">ΚΟΛΙΑΤΣΟΥ (1)</option>
                                     <option value="6">ΑΝΩ ΠΑΤΗΣΙΑ (6)</option>
                                     <option value="7">ΙΛΙΟΝ (7)</option>
-                                    <option value="8">ΣΕΠΟΛΙΑ (8)</option>
+                                    <option value="5">ΣΕΠΟΛΙΑ (5)</option>
                                 </select>
                             </div>
                             <div class="form-group" style="margin:0; flex: 1; min-width: 150px;">
@@ -417,7 +471,8 @@
                             <div class="form-group"
                                 style="margin:0; display:flex; align-items:center; height:38px; gap:8px;">
                                 <input type="checkbox" id="adv-route-pam">
-                                <label class="form-label" style="margin:0; cursor:pointer;" for="adv-route-pam">Παμμακάριστος</label>
+                                <label class="form-label" style="margin:0; cursor:pointer;"
+                                    for="adv-route-pam">Παμμακάριστος</label>
                             </div>
                             <div class="form-group" style="margin:0; flex: 1; min-width: 150px;">
                                 <label class="form-label">Κωδικοί Εξετάσεων (κόμμα)</label>
@@ -429,7 +484,7 @@
                                 <select id="adv-route-diag" class="form-input filter-select"></select>
                             </div>
                             <div class="form-group" style="margin:0; flex: 1; min-width: 150px;">
-                                <label class="form-label">Περιγραφή</label>
+                                <label class="form-label">Περιγραφή *</label>
                                 <input type="text" id="adv-route-desc" class="form-input"
                                     placeholder="Σύντομη περιγραφή">
                             </div>
@@ -472,7 +527,7 @@
                                     <option value="1">ΚΟΛΙΑΤΣΟΥ</option>
                                     <option value="6">ΑΝΩ ΠΑΤΗΣΙΑ</option>
                                     <option value="7">ΙΛΙΟΝ</option>
-                                    <option value="8">ΣΕΠΟΛΙΑ</option>
+                                    <option value="5">ΣΕΠΟΛΙΑ</option>
                                 </select>
                             </div>
                             <button class="btn btn-primary" onclick="addExclusiveLabRule()">Προσθήκη</button>
@@ -529,6 +584,113 @@
                             </thead>
                             <tbody id="adv-quota-tbody"></tbody>
                         </table>
+                    </div>
+
+                    <!-- SCORING SYSTEM GUIDE -->
+                    <div style="background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.3); border-radius: 8px; padding: 16px; margin-top: 32px; margin-bottom: 24px; color: var(--text-primary);">
+                        <h4 style="margin-top: 0; margin-bottom: 12px; color: #34d399; display: flex; align-items: center; gap: 8px;">
+                            <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                            Πώς Λειτουργεί το Σύστημα Απόδοσης Score
+                        </h4>
+
+                        <!-- Flowchart -->
+                        <div style="display:flex; flex-direction:column; align-items:center; gap:8px; margin:24px 0; font-size:13px; font-weight:500;">
+                            <div style="background:var(--bg-secondary); border:1px solid var(--border-color); padding:8px 16px; border-radius:100px;">Νέα Εξέταση</div>
+                            <div style="color:var(--text-tertiary);">↓</div>
+                            <div style="background:rgba(59, 130, 246, 0.1); border:1px solid rgba(59, 130, 246, 0.3); padding:8px 16px; border-radius:8px; text-align:center;">
+                                <b style="color: #60a5fa;">Φάση 0: Αυτόματη Ανάθεση (Παράκαμψη ΑΙ)</b><br>
+                                <span style="font-weight:normal;">1. Αποκλειστικοί Συνεργάτες → 2. Κανόνες Ανάθεσης → 3. Εφημερία Παμμακάριστου</span>
+                            </div>
+                            <div style="color:var(--text-tertiary);">↓ (Αν δεν γίνει αυτόματη ανάθεση)</div>
+                            <div style="background:rgba(239, 68, 68, 0.1); border:1px solid rgba(239, 68, 68, 0.3); padding:8px 16px; border-radius:8px; text-align:center;">
+                                <b style="color: #f87171;">Φάση 1: Φιλτράρισμα (Αποκλεισμός)</b><br>
+                                <span style="font-weight:normal;">Αποκλειστικότητα Εργαστηρίου, Ικανότητες (Skills), Ημερήσια Όρια (Quotas)</span>
+                            </div>
+                            <div style="color:var(--text-tertiary);">↓ (Για όσους επιβιώσουν)</div>
+                            <div style="background:rgba(16, 185, 129, 0.15); border:1px solid rgba(16, 185, 129, 0.3); padding:8px 16px; border-radius:8px; text-align:center;">
+                                <b style="color: #34d399;">Φάση 2: Βαθμολόγηση (Scoring)</b><br>
+                                <span style="font-weight:normal;">Συνεργασίες, Ιστορικό, Εξειδίκευση, Προτίμηση Εργαστηρίου, Χωρητικότητα<br>
+                                <i style="color:var(--text-tertiary); font-size:12px;">(Σε ισοπαλία >95%, κερδίζει αυτός με τον μικρότερο φόρτο εργασίας)</i></span>
+                            </div>
+                            <div style="color:var(--text-tertiary);">↓</div>
+                            <div style="background:var(--bg-secondary); border:1px solid var(--border-color); padding:8px 16px; border-radius:100px;">Προτεινόμενος Διαγνώστης</div>
+                        </div>
+
+                        <p style="margin-bottom: 8px; font-size: 13.5px; line-height: 1.5;">Όταν μία εξέταση <b>δεν</b> πιάσει κάποιον από τους "Κανόνες Αυτόματης Ανάθεσης", τότε μπαίνει στο scoring system, το οποίο αποφασίζει σε ποιον διαγνώστη θα <b>προταθεί</b> η εξέταση μέσα από 2 φάσεις:</p>
+                        
+                        <h5 style="margin-top: 16px; margin-bottom: 8px; font-size: 14px; color: #10b981;">Φάση 1: Φιλτράρισμα (Αποκλεισμοί)</h5>
+                        <ul style="margin-bottom: 12px; margin-top: 0; font-size: 13.5px; line-height: 1.5; padding-left: 20px;">
+                            <li style="margin-bottom: 4px;"><b>Αποκλειστικότητα Εργαστηρίου:</b> Αν ένας ιατρός έχει ρυθμιστεί (πιο πάνω) να δέχεται εξετάσεις ΜΟΝΟ από συγκεκριμένο εργαστήριο, αποκλείεται από εξετάσεις άλλων εργαστηρίων.</li>
+                            <li style="margin-bottom: 4px;"><b>Ικανότητες (Skills):</b> Αν η εξέταση είναι π.χ. Μαγνητική και ο ιατρός στο προφίλ του διαβάζει μόνο Αξονικές (ή αν έχει δηλωθεί ότι δεν διαβάζει τον συγκεκριμένο κωδικό εξέτασης), αποκλείεται.</li>
+                            <li style="margin-bottom: 4px;"><b>Ημερήσια Όρια (Quotas):</b> Αν ο ιατρός έχει φτάσει το γενικό ημερήσιο όριό του, ή το ειδικό όριο ανά κατηγορία (π.χ. max 20 CT), αποκλείεται.</li>
+                        </ul>
+
+                        <h5 style="margin-top: 16px; margin-bottom: 8px; font-size: 14px; color: #10b981;">Φάση 2: Βαθμολόγηση (Scoring)</h5>
+                        <p style="margin-bottom: 8px; font-size: 13.5px; line-height: 1.5;">Οι διαγνώστες που "επιβίωσαν" από τα φίλτρα βαθμολογούνται για να βρεθεί ο ιδανικός. Η βαθμολογία προκύπτει συνδυάζοντας:</p>
+                        <ul style="margin-bottom: 0; margin-top: 0; font-size: 13.5px; line-height: 1.5; padding-left: 20px;">
+                            <li style="margin-bottom: 4px;"><b>Συνεργασίες:</b> Αν ο ιατρός έχει απλή (μη-αποκλειστική) συνεργασία με τον παραπέμποντα ιατρό.</li>
+                            <li style="margin-bottom: 4px;"><b>Ιστορικό Ασθενή:</b> Αν ο ίδιος ιατρός έχει ξαναδιαβάσει εξέταση του ίδιου ασθενή στο παρελθόν.</li>
+                            <li style="margin-bottom: 4px;"><b>Εξειδίκευση (Skills Bonus):</b> Επιπλέον μπόνους αν ο ιατρός εξειδικεύεται στον συγκεκριμένο τύπο εξέτασης (πλέον του φιλτραρίσματος).</li>
+                            <li style="margin-bottom: 4px;"><b>Προτίμηση Εργαστηρίου:</b> Λαμβάνεται υπόψη το εργαστήριο που προτιμά ο διαγνώστης (χωρίς να αποκλείονται τα υπόλοιπα, σε αντίθεση με την αποκλειστικότητα).</li>
+                            <li style="margin-bottom: 4px;"><b>Φόρτος Εργασίας (Χωρητικότητα):</b> Πριμοδοτούνται όσοι έχουν τις περισσότερες κενές θέσεις.</li>
+                        </ul>
+
+                        <h5 style="margin-top: 24px; margin-bottom: 12px; font-size: 14px; color: #10b981;">Αναλυτικός Πίνακας Βαθμολόγησης (Max 1.0 ή 100%)</h5>
+                        <div style="overflow-x:auto;">
+                            <table class="admin-table" style="font-size:13px; line-height:1.4; background: rgba(0,0,0,0.2);">
+                                <thead>
+                                    <tr>
+                                        <th style="width:25%;">Κριτήριο</th>
+                                        <th style="width:15%;">Βαρύτητα</th>
+                                        <th style="width:60%;">Πόντοι (Βαθμολογία)</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr>
+                                        <td><b>1. Συνεργασία Ιατρού</b></td>
+                                        <td>35% (+0.35)</td>
+                                        <td>
+                                            <b>+0.35</b>: Αν υπάρχει συνεργασία (απλή ή αποκλειστική) με τον παραπέμποντα ιατρό.<br>
+                                            <b>+0.00</b>: Αν δεν υπάρχει συνεργασία.
+                                        </td>
+                                    </tr>
+                                    <tr>
+                                        <td><b>2. Ιστορικό Ασθενή</b></td>
+                                        <td>20% (+0.20)</td>
+                                        <td>
+                                            <b>+0.06</b> ανά προηγούμενη εξέταση του ίδιου ασθενή στον ίδιο ιατρό.<br>
+                                            <i>(π.χ. 1 εξέταση = +0.06, 2 = +0.12, 3+ = +0.20 max)</i>
+                                        </td>
+                                    </tr>
+                                    <tr>
+                                        <td><b>3. Εξειδίκευση (Skills)</b></td>
+                                        <td>20% (+0.20)</td>
+                                        <td>
+                                            <b>+0.20</b>: Προτιμά να διαβάζει τη συγκεκριμένη κατηγορία (π.χ. Μαστούς).<br>
+                                            <b>+0.10</b>: Διαβάζει κανονικά την κατηγορία (ουδέτερος).<br>
+                                            <b>+0.06</b>: Δεν υπάρχουν επαρκή δεδομένα στο προφίλ του (ουδέτερος).
+                                        </td>
+                                    </tr>
+                                    <tr>
+                                        <td><b>4. Προτίμηση Εργαστηρίου</b></td>
+                                        <td>15% (+0.15)</td>
+                                        <td>
+                                            <b>+0.15</b>: Αν είναι το προτιμώμενο εργαστήριο του διαγνώστη.<br>
+                                            <b>+0.075</b>: Αν δεν έχει δηλώσει συγκεκριμένη προτίμηση (ουδέτερος).<br>
+                                            <b>+0.015</b>: Αν προτιμά άλλο εργαστήριο (χαμηλή βαθμολογία, αλλά δεν αποκλείεται).
+                                        </td>
+                                    </tr>
+                                    <tr>
+                                        <td><b>5. Χωρητικότητα</b></td>
+                                        <td>10% (+0.10)</td>
+                                        <td>
+                                            Ανάλογα με το ποσοστό των κενών θέσεων (quota) που του απομένουν σήμερα.<br>
+                                            <i>(<b>+0.10</b> αν είναι 100% άδειος, <b>+0.00</b> αν έχει φτάσει το όριο).</i>
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
                     </div>
                 </div>
 

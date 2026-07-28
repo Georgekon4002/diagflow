@@ -310,7 +310,8 @@ def _get_pending_exams_from_db() -> list[dict]:
                     now_iso,
                     modality=r["category"],
                     extracode=str(r["extracode"]) if r["extracode"] else None,
-                    is_auto=True
+                    is_auto=True,
+                    rule_desc="Συνεργάτης (Αποκλειστικότητα)"
                 )
                 logger.info(
                     "exclusive_partner_auto_assigned",
@@ -345,7 +346,8 @@ def _get_pending_exams_from_db() -> list[dict]:
                             exam_id, target_id, d_name, now_iso,
                             modality=r["category"],
                             extracode=str(r["extracode"]) if r["extracode"] else None,
-                            is_auto=True
+                            is_auto=True,
+                            rule_desc=rule["description"]
                         )
                         logger.info("dynamic_rule_auto_assigned", exam_id=exam_id, rule_id=rule["id"], diagnostician=target_id)
                         routed = True
@@ -363,7 +365,8 @@ def _get_pending_exams_from_db() -> list[dict]:
                     now_iso,
                     modality=r["category"],
                     extracode=str(r["extracode"]) if r["extracode"] else None,
-                    is_auto=True
+                    is_auto=True,
+                    rule_desc="Παμμακάριστος Εφημερία"
                 )
                 logger.info(
                     "pam_exam_auto_assigned",
@@ -413,6 +416,7 @@ def _get_assigned_exams_from_db() -> list[dict]:
             exam_dict["diagnostician_name"] = loc["diagnostician_name"]
             exam_dict["status"] = "assigned"
             exam_dict["is_auto_assigned"] = bool(loc.get("is_auto", False))
+            exam_dict["rule_desc"] = loc.get("rule_desc", "")
             rows.append(exam_dict)
         con.close()
         logger.info("assigned_exams_loaded_from_db", count=len(rows))

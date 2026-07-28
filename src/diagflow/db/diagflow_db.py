@@ -431,17 +431,23 @@ def get_oncall_diagnostician(date_str: str) -> dict | None:
 
 def get_all_doctors(q: str = "", skip: int = 0, limit: int = 50) -> dict:
     with _conn() as con:
+        base_query = """
+            FROM doctors doc
+            LEFT JOIN partnerships p ON doc.id = p.issuing_doctor_id
+            LEFT JOIN diagnosticians diag ON p.preferred_diagnostician_id = diag.id
+        """
         if q:
             like_q = f"%{q}%"
-            total = con.execute("SELECT count(*) FROM doctors WHERE name LIKE ? OR id LIKE ?", (like_q, like_q)).fetchone()[0]
+            where_clause = "WHERE doc.name LIKE ? OR doc.id LIKE ? OR diag.name LIKE ?"
+            total = con.execute(f"SELECT count(DISTINCT doc.id) {base_query} {where_clause}", (like_q, like_q, like_q)).fetchone()[0]
             rows = con.execute(
-                "SELECT id, name, specialty FROM doctors WHERE name LIKE ? OR id LIKE ? ORDER BY name LIMIT ? OFFSET ?",
-                (like_q, like_q, limit, skip)
+                f"SELECT doc.id, doc.name, doc.specialty, GROUP_CONCAT(diag.name, ', ') as partner_name {base_query} {where_clause} GROUP BY doc.id, doc.name, doc.specialty ORDER BY doc.name LIMIT ? OFFSET ?",
+                (like_q, like_q, like_q, limit, skip)
             ).fetchall()
         else:
-            total = con.execute("SELECT count(*) FROM doctors").fetchone()[0]
+            total = con.execute(f"SELECT count(DISTINCT doc.id) {base_query}").fetchone()[0]
             rows = con.execute(
-                "SELECT id, name, specialty FROM doctors ORDER BY name LIMIT ? OFFSET ?",
+                f"SELECT doc.id, doc.name, doc.specialty, GROUP_CONCAT(diag.name, ', ') as partner_name {base_query} GROUP BY doc.id, doc.name, doc.specialty ORDER BY doc.name LIMIT ? OFFSET ?",
                 (limit, skip)
             ).fetchall()
     return {
@@ -471,25 +477,25 @@ def delete_doctor(doctor_id: str) -> bool:
 
 # ── Local Assignments ─────────────────────────────────────────────────────────
 
-def upsert_local_assignment(exammoreid: int, diagnostician_id: int, diagnostician_name: str, assigned_at: str, modality: str | None = None, extracode: str | None = None, is_auto: bool = False) -> dict:
+def upsert_local_assignment(exammoreid: int, diagnostician_id: int, diagnostician_name: str, assigned_at: str, modality: str | None = None, extracode: str | None = None, is_auto: bool = False, rule_desc: str | None = None) -> dict:
     with _conn() as con:
         con.execute(
-            "INSERT INTO local_assignments (exammoreid, diagnostician_id, diagnostician_name, assigned_at, is_auto) VALUES (?, ?, ?, ?, ?) "
-            "ON CONFLICT(exammoreid) DO UPDATE SET diagnostician_id=excluded.diagnostician_id, diagnostician_name=excluded.diagnostician_name, assigned_at=excluded.assigned_at, is_auto=excluded.is_auto",
-            (exammoreid, diagnostician_id, diagnostician_name, assigned_at, int(is_auto)),
+            "INSERT INTO local_assignments (exammoreid, diagnostician_id, diagnostician_name, assigned_at, is_auto, rule_desc) VALUES (?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(exammoreid) DO UPDATE SET diagnostician_id=excluded.diagnostician_id, diagnostician_name=excluded.diagnostician_name, assigned_at=excluded.assigned_at, is_auto=excluded.is_auto, rule_desc=excluded.rule_desc",
+            (exammoreid, diagnostician_id, diagnostician_name, assigned_at, int(is_auto), rule_desc),
         )
         con.execute(
             "INSERT OR REPLACE INTO assignment_log (exammoreid, diagnostician_id, assigned_at, modality, extracode) VALUES (?, ?, ?, ?, ?)",
             (exammoreid, diagnostician_id, assigned_at, modality, extracode),
         )
         row = con.execute(
-            "SELECT exammoreid, diagnostician_id, diagnostician_name, assigned_at, is_auto FROM local_assignments WHERE exammoreid = ?", (exammoreid,)
+            "SELECT exammoreid, diagnostician_id, diagnostician_name, assigned_at, is_auto, rule_desc FROM local_assignments WHERE exammoreid = ?", (exammoreid,)
         ).fetchone()
     return _row_to_dict(row)
 
 def get_all_local_assignments() -> dict[int, dict]:
     with _conn() as con:
-        rows = con.execute("SELECT exammoreid, diagnostician_id, diagnostician_name, assigned_at, is_auto FROM local_assignments").fetchall()
+        rows = con.execute("SELECT exammoreid, diagnostician_id, diagnostician_name, assigned_at, is_auto, rule_desc FROM local_assignments").fetchall()
         return {r["exammoreid"]: _row_to_dict(r) for r in rows}
 
 def get_daily_assignment_counts() -> dict[int, dict]:
@@ -526,6 +532,15 @@ def get_dashboard_data() -> list[dict]:
             """
         ).fetchall()
         
+        # Fetch modality quotas
+        quota_rows = con.execute("SELECT diagnostician_id, modality, max_count FROM modality_quotas WHERE is_active = 1").fetchall()
+        modality_limits = {}
+        for qr in quota_rows:
+            did = qr["diagnostician_id"]
+            if did not in modality_limits:
+                modality_limits[did] = {}
+            modality_limits[did][qr["modality"].upper()] = qr["max_count"]
+        
     dashboard_map = {}
     for r in rows:
         d_id = r["diagnostician_id"]
@@ -533,10 +548,23 @@ def get_dashboard_data() -> list[dict]:
             dashboard_map[d_id] = {
                 "diagnostician_id": d_id,
                 "diagnostician_name": r["diagnostician_name"],
-                "assigned_orders": []
+                "assigned_orders": [],
+                "modality_counts": {"CT": 0, "MRI": 0, "US": 0, "XRAY": 0},
+                "assigned_exam_ids": [],
+                "modality_limits": modality_limits.get(d_id, {})
             }
+        
+        mod = r["category"]
+        if mod:
+            mod = mod.upper()
+            if mod not in dashboard_map[d_id]["modality_counts"]:
+                dashboard_map[d_id]["modality_counts"][mod] = 0
+            dashboard_map[d_id]["modality_counts"][mod] += 1
+
         if r["extracode"]:
             dashboard_map[d_id]["assigned_orders"].append(r["extracode"])
+        if r["exammoreid"]:
+            dashboard_map[d_id]["assigned_exam_ids"].append(r["exammoreid"])
             
     return list(dashboard_map.values())
 

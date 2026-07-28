@@ -173,7 +173,11 @@ class DiagnosticianService:
                 "quota_friday": d["quota_friday"],
                 "quota_saturday": d["quota_saturday"],
                 "quota_sunday": d["quota_sunday"],
-                "current_day_count": counts.get(d["id"], 0),
+                "current_day_count": (
+                    counts.get(d["id"], {}).get("total", 0)
+                    if isinstance(counts.get(d["id"]), dict)
+                    else (counts.get(d["id"]) or 0)
+                ),
                 "available": bool(d["active"]) and (d["id"] not in absent_ids),
             }
             for d in diags

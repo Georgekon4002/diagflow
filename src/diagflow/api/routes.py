@@ -40,6 +40,9 @@ from diagflow.api.dependencies import (
 from diagflow.api.schemas import (
     AssignmentConfirmation,
     BulkConfirmRequest,
+    BulkEligibleRequest,
+    BulkEligibleResponse,
+    BulkEligibleResponseItem,
     BulkOverrideRequest,
     ConfirmAssignmentRequest,
     DiagnosticianResponse,
@@ -267,6 +270,85 @@ async def override_assignment(
     )
 
 
+@router.post("/assignments/bulk-eligible-diagnosticians", response_model=BulkEligibleResponse)
+async def bulk_eligible_diagnosticians(
+    request: BulkEligibleRequest,
+    assign_svc: AssignmentService = Depends(get_assignment_service),
+    diag_svc: DiagnosticianService = Depends(get_diagnostician_service),
+):
+    """
+    Check eligibility for diagnosticians across a set of exams.
+    A diagnostician is only eligible if they are eligible for ALL provided exams.
+    """
+    if not request.exam_ids:
+        return BulkEligibleResponse(diagnosticians=[])
+
+    from diagflow.engine.filters import apply_hard_filters, get_elimination_reason, ExamContext
+
+    all_exams = assign_svc.get_pending_exams() + assign_svc.get_assigned_exams()
+    selected_exams = [e for e in all_exams if e["exam_id"] in request.exam_ids]
+
+    if not selected_exams:
+        return BulkEligibleResponse(diagnosticians=[])
+
+    # Start with all diagnosticians as eligible
+    all_diags = await diag_svc.get_all_diagnosticians()
+    eligible_diags = {d["id"]: d for d in all_diags}
+    reasons: dict[int, str | None] = {d_id: None for d_id in eligible_diags}
+    is_eligible = {d_id: True for d_id in eligible_diags}
+
+    for exam_data in selected_exams:
+        exam = ExamContext(
+            exam_id=exam_data["exam_id"],
+            patient_id=exam_data["patient_id"],
+            patient_name=exam_data.get("patient_name", ""),
+            modality=exam_data["modality"],
+            body_part=exam_data["body_part"],
+            exam_code=str(exam_data.get("examnumcode", "")),
+            exam_name=exam_data.get("examname", ""),
+            lab_id=exam_data["lab_id"],
+            lab_name=exam_data["lab_name"],
+            issuing_doctor_id=exam_data["issuing_doctor_id"],
+            issuing_doctor_name=exam_data["issuing_doctor_name"],
+            comments=exam_data.get("comments", ""),
+            is_pamakristos="ΠΑΜΜΑΚΑΡΙΣΤΟΣ" in exam_data.get("issuing_doctor_name", "").upper(),
+            oldpers=exam_data.get("oldpers"),
+        )
+        
+        candidates = await diag_svc.get_candidates_for_exam(
+            exam_id=exam.exam_id,
+            modality=exam.modality,
+            body_part=exam.body_part,
+            lab_id=exam.lab_id,
+            issuing_doctor_id=exam.issuing_doctor_id,
+            patient_id=exam.patient_id,
+            exam_code=exam.exam_code,
+            lab_name=exam.lab_name,
+            oldpers=exam.oldpers,
+        )
+        # Run filters for this exam
+        passed, results_dict = apply_hard_filters(
+            candidates=[c for c in candidates if is_eligible[c.id]],
+            exam=exam
+        )
+        passed_ids = {p.id for p in passed}
+
+        for d_id in list(eligible_diags.keys()):
+            if is_eligible[d_id] and d_id not in passed_ids:
+                is_eligible[d_id] = False
+                reasons[d_id] = get_elimination_reason(d_id, results_dict)
+
+    res = [
+        BulkEligibleResponseItem(
+            diagnostician_id=d_id,
+            is_eligible=is_eligible[d_id],
+            reject_reason=reasons[d_id]
+        )
+        for d_id in eligible_diags
+    ]
+    return BulkEligibleResponse(diagnosticians=res)
+
+
 @router.post("/assignments/bulk-confirm", response_model=list[AssignmentConfirmation])
 async def bulk_confirm_assignments(
     request: BulkConfirmRequest,
@@ -344,7 +426,30 @@ async def list_diagnosticians(
 @router.get("/dashboard")
 async def get_dashboard():
     """Get today's assigned exams per diagnostician."""
-    return cfg_db.get_dashboard_data()
+    dashboard_data = cfg_db.get_dashboard_data()
+    
+    # Resolve exam descriptions from mock SLIS
+    try:
+        from diagflow.services.assignment import _get_mock_db
+        con = _get_mock_db()
+        all_exam_ids = []
+        for d in dashboard_data:
+            all_exam_ids.extend(d.get("assigned_exam_ids", []))
+        
+        if all_exam_ids:
+            placeholders = ",".join("?" * len(all_exam_ids))
+            rows = con.execute(f"SELECT exammoreid, examname FROM slis_exams WHERE exammoreid IN ({placeholders})", tuple(all_exam_ids)).fetchall()
+            exam_names = {str(r["exammoreid"]): r["examname"] for r in rows}
+            
+            for d in dashboard_data:
+                d["exam_names"] = {}
+                for eid in d.get("assigned_exam_ids", []):
+                    name = exam_names.get(str(eid), "Unknown Exam")
+                    d["exam_names"][name] = d["exam_names"].get(name, 0) + 1
+    except Exception as e:
+        print(f"Failed to fetch dashboard exam names: {e}")
+        
+    return dashboard_data
 
 # ─────────────────────────────────────────────────────
 #  Παμμακάριστος

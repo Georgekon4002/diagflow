@@ -72,36 +72,40 @@
     <main class="main-content">
 
         <!-- ─── Floating Action Bar (Bulk Actions) ─── -->
-    <div id="floating-action-bar" class="floating-action-bar" style="display: none;">
-        <div class="fab-content">
-            <span id="fab-selected-count" class="fab-count">0 επιλεγμένα</span>
-            
-            <div class="fab-actions">
-                <button id="fab-btn-assign-proposed" class="btn btn-secondary" onclick="bulkAssignToProposed()">
-                    Ανάθεση σε Προτεινόμενους
-                </button>
-                <button id="fab-btn-update-slis" class="btn btn-slis-update" onclick="updateSelectedToSlis()" style="display: none;">
-                    Ενημέρωση Slis
-                </button>
-                <div class="fab-dropdown-wrap" style="position: relative; display: inline-block;">
-                    <button class="btn btn-secondary" onclick="toggleFabDropdown(event)">
-                        Ανάθεση σε... <span style="font-size: 10px;">▼</span>
+        <div id="floating-action-bar" class="floating-action-bar" style="display: none;">
+            <div class="fab-content">
+                <span id="fab-selected-count" class="fab-count">0 επιλεγμένα</span>
+
+                <div class="fab-actions">
+                    <button id="fab-btn-assign-proposed" class="btn btn-secondary" onclick="bulkAssignToProposed()">
+                        Ανάθεση σε Προτεινόμενους
                     </button>
-                    <div id="fab-dropdown-menu" class="fab-dropdown-menu" style="display: none; position: absolute; top: 100%; right: 0; background: var(--bg-tertiary); border: 1px solid var(--border-color); border-radius: 8px; padding: 8px; margin-top: 4px; box-shadow: 0 4px 12px rgba(0,0,0,0.2); z-index: 100; min-width: 200px;">
-                        <input type="text" id="fab-diag-search" placeholder="Αναζήτηση..." class="search-input" style="width: 100%; margin-bottom: 8px; padding: 6px;" onclick="event.stopPropagation()" oninput="filterFabDiagnosticians()">
-                        <div id="fab-diag-list" style="max-height: 200px; overflow-y: auto;">
-                            <!-- Populated dynamically -->
+                    <button id="fab-btn-update-slis" class="btn btn-slis-update" onclick="updateSelectedToSlis()"
+                        style="display: none;">
+                        Ενημέρωση Slis
+                    </button>
+                    <div class="fab-dropdown-wrap" style="position: relative; display: inline-block;">
+                        <button class="btn btn-secondary" onclick="toggleFabDropdown(event)">
+                            Ανάθεση σε... <span style="font-size: 10px;">▼</span>
+                        </button>
+                        <div id="fab-dropdown-menu" class="fab-dropdown-menu"
+                            style="display: none; position: absolute; top: 100%; right: 0; background: var(--bg-tertiary); border: 1px solid var(--border-color); border-radius: 8px; padding: 8px; margin-top: 4px; box-shadow: 0 4px 12px rgba(0,0,0,0.2); z-index: 100; min-width: 200px;">
+                            <input type="text" id="fab-diag-search" placeholder="Αναζήτηση..." class="search-input"
+                                style="width: 100%; margin-bottom: 8px; padding: 6px;" onclick="event.stopPropagation()"
+                                oninput="filterFabDiagnosticians()">
+                            <div id="fab-diag-list" style="max-height: 200px; overflow-y: auto;">
+                                <!-- Populated dynamically -->
+                            </div>
                         </div>
                     </div>
+                    <button class="btn btn-ghost" onclick="clearUnifiedSelection()" style="margin-left: 8px;">
+                        Ακύρωση
+                    </button>
                 </div>
-                <button class="btn btn-ghost" onclick="clearUnifiedSelection()" style="margin-left: 8px;">
-                    Ακύρωση
-                </button>
             </div>
         </div>
-    </div>
 
-    <!-- ─── Scripts ─── -->
+        <!-- ─── Scripts ─── -->
         <div class="tabs-container">
             <button class="tab-btn active" id="tab-pending" onclick="switchTab('pending')">
                 Εκκρεμείς
@@ -217,9 +221,11 @@
                         </svg>
                         Ανανέωση
                     </button>
-                    <button class="btn btn-slis-update" id="btn-update-slis-all" onclick="updateAllToSlis()" style="display:none;">
+                    <button class="btn btn-slis-update" id="btn-update-slis-all" onclick="updateAllToSlis()"
+                        style="display:none;">
                         <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-                            <path d="M2 7h10M8 3l4 4-4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                            <path d="M2 7h10M8 3l4 4-4 4" stroke="currentColor" stroke-width="1.5"
+                                stroke-linecap="round" stroke-linejoin="round" />
                         </svg>
                         Update Slis
                     </button>
@@ -228,16 +234,21 @@
 
             <!-- ─── Pending Exams Table ─── -->
             <div id="tab-content-pending" class="tab-content active">
+                <div style="font-size: 13px; color: var(--text-secondary); text-align: center; margin-bottom: 12px; font-style: italic;">
+                    Εμφανίζονται οι εξετάσεις CT/MRI των τελευταίων 3 ημερών χωρίς διαγνώστη
+                </div>
                 <div class="exams-table-container">
                     <table class="exams-table" id="exams-table-pending">
                         <thead>
                             <tr style="background-color: #DB241E;">
-                                <th class="frozen-col-1" style="width: 48px; min-width: 48px; padding: 0; text-align: center;">
+                                <th class="frozen-col-1"
+                                    style="width: 48px; min-width: 48px; padding: 0; text-align: center;">
                                     <input type="checkbox" id="selectAllCheckbox" onclick="toggleSelectAll()">
                                 </th>
-                                <th class="frozen-col-2" style="text-align: center; cursor: pointer;" onclick="handleSort('extracode')">
-                                    Εντολή <span id="sort-icon-extracode"
-                                        style="opacity:0.5; font-size:10px;">↕️</span></th>
+                                <th class="frozen-col-2" style="text-align: center; cursor: pointer;"
+                                    onclick="handleSort('extracode')">
+                                    Εντολή <span id="sort-icon-extracode" style="opacity:0.5; font-size:10px;">↕️</span>
+                                </th>
                                 <th style="cursor: pointer;" onclick="handleSort('date')">Ημερομηνία <span
                                         id="sort-icon-date" style="opacity:0.5; font-size:10px;">↕️</span></th>
                                 <th style="cursor: pointer;" onclick="handleSort('lab')">Μονάδα <span id="sort-icon-lab"
@@ -272,10 +283,13 @@
                 </div>
                 <!-- Pagination Controls (Outside table container with permanent bottom margin for FAB) -->
                 <div class="bottom-pagination-wrapper">
-                    <span id="pending-pagination-info" style="font-size:var(--font-size-sm); color:var(--text-tertiary); text-align:center;"></span>
+                    <span id="pending-pagination-info"
+                        style="font-size:var(--font-size-sm); color:var(--text-tertiary); text-align:center;"></span>
                     <div style="display:flex; gap:8px; align-items:center;">
-                        <button class="btn btn-secondary btn-sm" id="btn-pending-prev" onclick="changePendingPage(-1)">Προηγούμενο</button>
-                        <button class="btn btn-secondary btn-sm" id="btn-pending-next" onclick="changePendingPage(1)">Επόμενο</button>
+                        <button class="btn btn-secondary btn-sm" id="btn-pending-prev"
+                            onclick="changePendingPage(-1)">Προηγούμενο</button>
+                        <button class="btn btn-secondary btn-sm" id="btn-pending-next"
+                            onclick="changePendingPage(1)">Επόμενο</button>
                     </div>
                 </div>
             </div>
@@ -286,10 +300,13 @@
                     <table class="exams-table" id="exams-table-assigned">
                         <thead>
                             <tr style="background-color: #DB241E;">
-                                <th class="frozen-col-1" style="width: 48px; min-width: 48px; padding: 0; text-align: center;">
-                                    <input type="checkbox" id="selectAllAssignedCheckbox" onclick="toggleSelectAllAssigned()">
+                                <th class="frozen-col-1"
+                                    style="width: 48px; min-width: 48px; padding: 0; text-align: center;">
+                                    <input type="checkbox" id="selectAllAssignedCheckbox"
+                                        onclick="toggleSelectAllAssigned()">
                                 </th>
-                                <th class="frozen-col-2" style="text-align: center; cursor: pointer;" onclick="handleSort('extracode')">
+                                <th class="frozen-col-2" style="text-align: center; cursor: pointer;"
+                                    onclick="handleSort('extracode')">
                                     Εντολή <span id="sort-icon-extracode-assigned"
                                         style="opacity:0.5; font-size:10px;">↕️</span></th>
                                 <th style="cursor: pointer;" onclick="handleSort('date')">Ημερομηνία <span
@@ -327,10 +344,16 @@
                 </div>
                 <!-- Pagination Controls (Outside table container with permanent bottom margin for FAB) -->
                 <div class="bottom-pagination-wrapper">
-                    <span id="assigned-pagination-info" style="font-size:var(--font-size-sm); color:var(--text-tertiary); text-align:center;"></span>
+                    <div style="font-size: 13px; color: #ef4444; font-weight: 600; text-align: center;">
+                        ΠΡΟΣΟΧΗ: Στο τέλος της ημέρας να μην μείνουν εκκρεμείς ανατεθειμένες εξετάσεις προς ενημέρωση στο Slis
+                    </div>
+                    <span id="assigned-pagination-info"
+                        style="font-size:var(--font-size-sm); color:var(--text-tertiary); text-align:center;"></span>
                     <div style="display:flex; gap:8px; align-items:center;">
-                        <button class="btn btn-secondary btn-sm" id="btn-assigned-prev" onclick="changeAssignedPage(-1)">Προηγούμενο</button>
-                        <button class="btn btn-secondary btn-sm" id="btn-assigned-next" onclick="changeAssignedPage(1)">Επόμενο</button>
+                        <button class="btn btn-secondary btn-sm" id="btn-assigned-prev"
+                            onclick="changeAssignedPage(-1)">Προηγούμενο</button>
+                        <button class="btn btn-secondary btn-sm" id="btn-assigned-next"
+                            onclick="changeAssignedPage(1)">Επόμενο</button>
                     </div>
                 </div>
             </div>
@@ -339,8 +362,9 @@
 
         <!-- ─── Dashboard List ─── -->
         <div class="dashboard-section" id="dashboard-section" style="display: none; padding: 20px;">
-            <h2>Σημερινό Dashboard Ιατρών</h2>
-            <div id="dashboard-grid" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 16px; margin-top: 16px;">
+            <h2>Σημερινές Αναθέσεις</h2>
+            <div id="dashboard-grid"
+                style="display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 16px; margin-top: 16px;">
                 <!-- Populated by JS -->
             </div>
         </div>
@@ -444,14 +468,16 @@
         <div class="modal" style="max-width: 800px; width: 90%;">
             <div class="modal-header">
                 <h3 id="slis-sql-title">SQL Ενημέρωσης Slis</h3>
-                <button class="modal-close" onclick="document.getElementById('slis-sql-modal').style.display='none'">&times;</button>
+                <button class="modal-close"
+                    onclick="document.getElementById('slis-sql-modal').style.display='none'">&times;</button>
             </div>
             <div class="modal-body">
                 <p>Εκτελέστηκαν τα παρακάτω ερωτήματα στο Slis:</p>
                 <pre><code id="slis-sql-content" style="display: block; padding: 12px; background: #1e1e1e; color: #d4d4d4; border-radius: 6px; overflow-x: auto; white-space: pre-wrap; font-family: monospace; font-size: 13px;"></code></pre>
             </div>
             <div class="modal-footer">
-                <button class="btn btn-secondary" onclick="document.getElementById('slis-sql-modal').style.display='none'">Κλείσιμο</button>
+                <button class="btn btn-secondary"
+                    onclick="document.getElementById('slis-sql-modal').style.display='none'">Κλείσιμο</button>
             </div>
         </div>
     </div>
