@@ -38,6 +38,8 @@ from diagflow.api.dependencies import (
     get_pamakristos_scheduler,
 )
 from diagflow.api.schemas import (
+    AdminChangeCredentialsRequest,
+    AdminChangeCredentialsResponse,
     AssignmentConfirmation,
     BulkConfirmRequest,
     BulkEligibleRequest,
@@ -57,6 +59,13 @@ from diagflow.services.assignment import AssignmentService
 from diagflow.services.diagnostician import DiagnosticianService
 from diagflow.services.pamakristos import PamakristosScheduler
 import diagflow.db.diagflow_db as cfg_db
+from fastapi import APIRouter, Depends, HTTPException, Header, Request
+
+import asyncio
+import hashlib
+import hmac
+import time
+import bcrypt
 
 router = APIRouter()
 
@@ -69,8 +78,9 @@ _suggestion_cache: dict = {}
 #    Keys: diagnostician_id (int), Values: count (int)
 _session_suggestion_counts: dict[int, int] = {}
 
-# ── Admin session store ──
-_admin_sessions: set[str] = set()
+# ── Admin session & rate limit stores ──
+_admin_sessions: dict[str, dict] = {}
+_failed_login_attempts: dict[str, list[float]] = {}
 
 
 # ─────────────────────────────────────────────────────
@@ -85,24 +95,204 @@ class AdminLoginRequest(BaseModel):
 class AdminLoginResponse(BaseModel):
     token: str
     username: str
-
-
-@router.post("/admin/auth/login", response_model=AdminLoginResponse)
-async def admin_login(request: AdminLoginRequest):
-    """Authenticate admin user. Returns a session token."""
-    if request.username == "admin" and request.password == "admin1234":
-        import secrets
-        token = secrets.token_hex(16)
-        _admin_sessions.add(token)
-        return AdminLoginResponse(token=token, username=request.username)
-    raise HTTPException(status_code=401, detail="Λάθος στοιχεία σύνδεσης")
+    role: str = "admin"
 
 
 def _require_admin(x_admin_token: str = Header(default="")):
     """Dependency: require a valid admin token."""
     if not x_admin_token or x_admin_token not in _admin_sessions:
         raise HTTPException(status_code=403, detail="Απαιτείται σύνδεση διαχειριστή")
-    return x_admin_token
+    return _admin_sessions[x_admin_token]
+
+def _require_super_admin(session: dict = Depends(_require_admin)):
+    """Dependency: require super_admin or it_support role."""
+    if session.get("role") not in ("super_admin", "it_support"):
+        raise HTTPException(status_code=403, detail="Απαιτούνται δικαιώματα διαχείρισης χρηστών")
+    return session
+
+@router.post("/admin/auth/login", response_model=AdminLoginResponse)
+async def admin_login(request: AdminLoginRequest, raw_request: Request):
+    """Authenticate admin user with rate limiting and bcrypt password verification.
+    
+    Includes a transparent SHA-256 → bcrypt migration path: if the stored hash
+    is a legacy SHA-256 hex string, the password is verified with SHA-256 and the
+    hash is immediately re-stored as bcrypt (cost=12). No admin action required.
+    """
+    client_ip = raw_request.client.host if raw_request.client else "unknown"
+    now = time.time()
+
+    # Rate limiting: allow max 5 failed attempts per 60 seconds per IP
+    attempts = [t for t in _failed_login_attempts.get(client_ip, []) if now - t < 60.0]
+    _failed_login_attempts[client_ip] = attempts
+
+    if len(attempts) >= 5:
+        raise HTTPException(
+            status_code=429,
+            detail="Πολλές αποτυχημένες προσπάθειες. Παρακαλώ περιμένετε 1 λεπτό."
+        )
+
+    user = cfg_db.get_admin_user_by_username(request.username.strip())
+    password_bytes = request.password.encode("utf-8")
+
+    username_valid = user is not None
+    password_valid = False
+
+    if user:
+        db_password_hash = user["password_hash"]
+        is_legacy_sha256 = len(db_password_hash) == 64 and not db_password_hash.startswith("$2")
+
+        if is_legacy_sha256:
+            input_sha256 = hashlib.sha256(password_bytes).hexdigest()
+            if hmac.compare_digest(input_sha256, db_password_hash):
+                password_valid = True
+                new_hash = bcrypt.hashpw(password_bytes, bcrypt.gensalt(rounds=12)).decode()
+                cfg_db.update_admin_user(user["id"], password_hash=new_hash)
+        else:
+            try:
+                password_valid = bcrypt.checkpw(password_bytes, db_password_hash.encode("utf-8"))
+            except Exception:
+                pass
+    else:
+        # Dummy check to prevent timing attacks
+        try:
+            bcrypt.checkpw(password_bytes, b"$2b$12$0qxEPV2WtZ00AhsmOgAbJOQuiessOk/m5jq4x55CB/c680fNiW13i")
+        except Exception:
+            pass
+
+    if not (username_valid and password_valid):
+        _failed_login_attempts.setdefault(client_ip, []).append(now)
+        await asyncio.sleep(1.0)  # Throttling delay against automated brute-force attacks
+        raise HTTPException(status_code=401, detail="Λάθος στοιχεία σύνδεσης")
+
+    # Clear failed attempts on success
+    _failed_login_attempts.pop(client_ip, None)
+
+    import secrets
+    token = secrets.token_hex(16)
+    _admin_sessions[token] = {"id": user["id"], "username": user["username"], "role": user["role"]}
+    return AdminLoginResponse(token=token, username=user["username"], role=user["role"])
+
+
+@router.post("/admin/auth/change-credentials", response_model=AdminChangeCredentialsResponse)
+async def change_admin_credentials(
+    req: AdminChangeCredentialsRequest,
+    session: dict = Depends(_require_admin)
+):
+    """Update admin username and/or password. New password is stored as bcrypt hash."""
+    user = cfg_db.get_admin_user_by_id(session["id"])
+    if not user:
+        raise HTTPException(status_code=404, detail="Ο χρήστης δεν βρέθηκε")
+    db_password_hash = user["password_hash"]
+    password_bytes = req.old_password.encode("utf-8")
+
+    is_legacy_sha256 = len(db_password_hash) == 64 and not db_password_hash.startswith("$2")
+    if is_legacy_sha256:
+        old_hash = hashlib.sha256(password_bytes).hexdigest()
+        old_password_valid = hmac.compare_digest(old_hash, db_password_hash)
+    else:
+        try:
+            old_password_valid = bcrypt.checkpw(password_bytes, db_password_hash.encode("utf-8"))
+        except Exception:
+            old_password_valid = False
+
+    if not old_password_valid:
+        raise HTTPException(status_code=400, detail="Ο τρέχων κωδικός πρόσβασης είναι λανθασμένος")
+
+    new_hash = (
+        bcrypt.hashpw(req.new_password.encode("utf-8"), bcrypt.gensalt(rounds=12)).decode()
+        if req.new_password and req.new_password.strip()
+        else None
+    )
+    new_user = req.new_username.strip() if req.new_username and req.new_username.strip() else None
+
+    if not new_user and not new_hash:
+        raise HTTPException(status_code=400, detail="Δεν δόθηκαν νέα στοιχεία προς ενημέρωση")
+
+    updated_user = cfg_db.update_admin_user(user["id"], username=new_user, password_hash=new_hash)
+    if not updated_user:
+        raise HTTPException(status_code=500, detail="Αποτυχία ενημέρωσης")
+    
+    # Update current session username if changed
+    if new_user:
+        session["username"] = updated_user["username"]
+
+    return AdminChangeCredentialsResponse(
+        message="Τα στοιχεία σύνδεσης ενημερώθηκαν επιτυχώς",
+        username=updated_user["username"]
+    )
+
+# ─────────────────────────────────────────────────────
+#  Admin — Users Management (super_admin only)
+# ─────────────────────────────────────────────────────
+
+class AdminUserCreateRequest(BaseModel):
+    username: str
+    password: str
+    role: str = "admin"
+
+class AdminUserUpdateRequest(BaseModel):
+    username: str | None = None
+    password: str | None = None
+    role: str | None = None
+    is_active: bool | None = None
+
+@router.get("/admin/users")
+async def get_admin_users(session: dict = Depends(_require_super_admin)):
+    users = cfg_db.get_all_admin_users()
+    # Don't expose password hashes
+    for u in users:
+        u.pop("password_hash", None)
+    return users
+
+@router.post("/admin/users")
+async def create_admin_user(req: AdminUserCreateRequest, session: dict = Depends(_require_super_admin)):
+    existing = cfg_db.get_admin_user_by_username(req.username.strip())
+    if existing:
+        raise HTTPException(status_code=400, detail="Το όνομα χρήστη υπάρχει ήδη")
+    new_hash = bcrypt.hashpw(req.password.encode("utf-8"), bcrypt.gensalt(rounds=12)).decode()
+    user = cfg_db.create_admin_user(req.username.strip(), new_hash, req.role)
+    user.pop("password_hash", None)
+    return user
+
+@router.put("/admin/users/{user_id}")
+async def update_admin_user(user_id: int, req: AdminUserUpdateRequest, session: dict = Depends(_require_super_admin)):
+    new_hash = None
+    if req.password and req.password.strip():
+        new_hash = bcrypt.hashpw(req.password.encode("utf-8"), bcrypt.gensalt(rounds=12)).decode()
+    
+    updated = cfg_db.update_admin_user(
+        user_id,
+        username=req.username.strip() if req.username else None,
+        password_hash=new_hash,
+        role=req.role,
+        is_active=req.is_active
+    )
+    if not updated:
+        raise HTTPException(status_code=404, detail="Ο χρήστης δεν βρέθηκε")
+    updated.pop("password_hash", None)
+    return updated
+
+@router.post("/admin/users/{user_id}/reset")
+async def reset_admin_user(user_id: int, session: dict = Depends(_require_super_admin)):
+    target_user = cfg_db.get_admin_user_by_id(user_id)
+    if not target_user:
+        raise HTTPException(status_code=404, detail="Ο χρήστης δεν βρέθηκε")
+    if target_user["role"] == "it_support":
+        raise HTTPException(status_code=400, detail="Δεν επιτρέπεται η επαναφορά του it_support")
+    
+    new_hash = bcrypt.hashpw(b"admin1234", bcrypt.gensalt(rounds=12)).decode()
+    updated = cfg_db.update_admin_user(user_id, username="admin", password_hash=new_hash)
+    if not updated:
+        raise HTTPException(status_code=500, detail="Αποτυχία επαναφοράς")
+    return {"message": "Τα στοιχεία επαναφέρθηκαν επιτυχώς σε admin / admin1234"}
+
+@router.delete("/admin/users/{user_id}")
+async def delete_admin_user(user_id: int, session: dict = Depends(_require_super_admin)):
+    if user_id == session["id"]:
+        raise HTTPException(status_code=400, detail="Δεν μπορείτε να διαγράψετε τον εαυτό σας")
+    if not cfg_db.delete_admin_user(user_id):
+        raise HTTPException(status_code=404, detail="Ο χρήστης δεν βρέθηκε")
+    return {"status": "ok"}
 
 
 # ─────────────────────────────────────────────────────
@@ -492,7 +682,7 @@ class WeeklyScheduleItem(BaseModel):
 
 
 @router.get("/admin/pamakristos/weekly-schedule")
-async def admin_get_weekly_schedule(_: str = Depends(_require_admin)):
+async def admin_get_weekly_schedule(_=Depends(_require_admin)):
     weekly = cfg_db.get_pamakristos_weekly_schedule_db()
     day_names = {0: "Δευτέρα", 1: "Τρίτη", 2: "Τετάρτη", 3: "Πέμπτη", 4: "Παρασκευή", 5: "Σάββατο", 6: "Κυριακή"}
     return [
@@ -509,7 +699,7 @@ async def admin_get_weekly_schedule(_: str = Depends(_require_admin)):
 @router.post("/admin/pamakristos/weekly-schedule")
 async def admin_update_weekly_schedule(
     items: list[WeeklyScheduleItem],
-    _: str = Depends(_require_admin),
+    _=Depends(_require_admin),
 ):
     cfg_db.update_pamakristos_weekly_schedule_db([item.model_dump() for item in items])
     return {"status": "ok", "updated": len(items)}
@@ -522,7 +712,7 @@ async def admin_update_weekly_schedule(
 @router.get("/admin/exam-categories")
 async def admin_get_exam_categories(
     svc: AssignmentService = Depends(get_assignment_service),
-    _: str = Depends(_require_admin)
+    _=Depends(_require_admin)
 ):
     return svc.get_exam_categories()
 
@@ -542,14 +732,14 @@ class DiagnosticianCreateRequest(BaseModel):
 
 
 @router.get("/admin/diagnosticians")
-async def admin_list_diagnosticians(_: str = Depends(_require_admin)):
+async def admin_list_diagnosticians(_=Depends(_require_admin)):
     return cfg_db.get_all_diagnosticians()
 
 
 @router.post("/admin/diagnosticians")
 async def admin_create_diagnostician(
     req: DiagnosticianCreateRequest,
-    _: str = Depends(_require_admin),
+    _=Depends(_require_admin),
 ):
     return cfg_db.create_diagnostician(
         name=req.name,
@@ -571,7 +761,7 @@ async def admin_create_diagnostician(
 async def admin_update_diagnostician(
     diag_id: int,
     req: DiagnosticianCreateRequest,
-    _: str = Depends(_require_admin),
+    _=Depends(_require_admin),
 ):
     record = cfg_db.update_diagnostician(
         diag_id=diag_id,
@@ -594,7 +784,7 @@ async def admin_update_diagnostician(
 
 
 @router.delete("/admin/diagnosticians/{diag_id}")
-async def admin_delete_diagnostician(diag_id: int, _: str = Depends(_require_admin)):
+async def admin_delete_diagnostician(diag_id: int, _=Depends(_require_admin)):
     if not cfg_db.delete_diagnostician(diag_id):
         raise HTTPException(status_code=404, detail="Ο ακτινοδιαγνώστης δεν βρέθηκε")
     return {"deleted": diag_id}
@@ -618,14 +808,14 @@ class PartnershipUpdateRequest(BaseModel):
 
 
 @router.get("/admin/partnerships")
-async def admin_list_partnerships(_: str = Depends(_require_admin)):
+async def admin_list_partnerships(_=Depends(_require_admin)):
     return cfg_db.get_all_partnerships()
 
 
 @router.post("/admin/partnerships")
 async def admin_create_partnership(
     req: PartnershipCreateRequest,
-    _: str = Depends(_require_admin),
+    _=Depends(_require_admin),
 ):
     return cfg_db.create_partnership(
         issuing_doctor_id=req.issuing_doctor_id,
@@ -641,7 +831,7 @@ async def admin_create_partnership(
 async def admin_update_partnership(
     part_id: int,
     req: PartnershipUpdateRequest,
-    _: str = Depends(_require_admin),
+    _=Depends(_require_admin),
 ):
     record = cfg_db.update_partnership(
         part_id=part_id,
@@ -654,7 +844,7 @@ async def admin_update_partnership(
 
 
 @router.delete("/admin/partnerships/{part_id}")
-async def admin_delete_partnership(part_id: int, _: str = Depends(_require_admin)):
+async def admin_delete_partnership(part_id: int, _=Depends(_require_admin)):
     if not cfg_db.delete_partnership(part_id):
         raise HTTPException(status_code=404, detail="Η σύμπραξη δεν βρέθηκε")
     return {"deleted": part_id}
@@ -675,20 +865,20 @@ def admin_list_doctors(
     q: str = "",
     skip: int = 0,
     limit: int = 50,
-    _: str = Depends(_require_admin)
+    _=Depends(_require_admin)
 ):
     return cfg_db.get_all_doctors(q=q, skip=skip, limit=limit)
 
 
 @router.post("/admin/doctors")
-async def admin_create_doctor(req: DoctorCreateRequest, _: str = Depends(_require_admin)):
+async def admin_create_doctor(req: DoctorCreateRequest, _=Depends(_require_admin)):
     import secrets
     doc_id = req.id if req.id else f"DR-{secrets.token_hex(4).upper()}"
     return cfg_db.upsert_doctor(doctor_id=doc_id, name=req.name, specialty=req.specialty)
 
 
 @router.delete("/admin/doctors/{doctor_id}")
-async def admin_delete_doctor(doctor_id: str, _: str = Depends(_require_admin)):
+async def admin_delete_doctor(doctor_id: str, _=Depends(_require_admin)):
     if not cfg_db.delete_doctor(doctor_id):
         raise HTTPException(status_code=404, detail="Ο γιατρός δεν βρέθηκε")
     return {"deleted": doctor_id}
@@ -707,14 +897,14 @@ class AvailabilitySetRequest(BaseModel):
 
 
 @router.get("/admin/availability")
-async def admin_list_availability(_: str = Depends(_require_admin)):
+async def admin_list_availability(_=Depends(_require_admin)):
     return cfg_db.get_all_availability()
 
 
 @router.post("/admin/availability")
 async def admin_set_availability(
     req: AvailabilitySetRequest,
-    _: str = Depends(_require_admin),
+    _=Depends(_require_admin),
 ):
     return cfg_db.upsert_availability(
         diagnostician_id=req.diagnostician_id,
@@ -723,6 +913,16 @@ async def admin_set_availability(
         is_pamakristos_oncall=req.is_pamakristos_oncall,
         notes=req.notes,
     )
+
+
+@router.delete("/admin/availability/{diagnostician_id}/{date}")
+async def admin_delete_availability(
+    diagnostician_id: int,
+    date: str,
+    _=Depends(_require_admin),
+):
+    success = cfg_db.delete_availability(diagnostician_id, date)
+    return {"success": success, "diagnostician_id": diagnostician_id, "date": date}
 
 
 # ─────────────────────────────────────────────────────
@@ -742,13 +942,13 @@ class SkillDeleteRequest(BaseModel):
 @router.get("/admin/skills")
 async def admin_list_skills(
     diagnostician_id: int | None = None,
-    _: str = Depends(_require_admin),
+    _=Depends(_require_admin),
 ):
     return cfg_db.get_skills(diagnostician_id)
 
 
 @router.post("/admin/skills")
-async def admin_set_skill(req: SkillSetRequest, _: str = Depends(_require_admin)):
+async def admin_set_skill(req: SkillSetRequest, _=Depends(_require_admin)):
     return cfg_db.upsert_skill(
         diagnostician_id=req.diagnostician_id,
         exam_code=req.exam_code,
@@ -757,7 +957,7 @@ async def admin_set_skill(req: SkillSetRequest, _: str = Depends(_require_admin)
 
 
 @router.delete("/admin/skills/{skill_id}")
-async def admin_delete_skill(skill_id: int, _: str = Depends(_require_admin)):
+async def admin_delete_skill(skill_id: int, _=Depends(_require_admin)):
     if not cfg_db.delete_skill(skill_id):
         raise HTTPException(status_code=404, detail="Η δεξιότητα δεν βρέθηκε")
     return {"deleted": skill_id}
@@ -773,7 +973,7 @@ class OncallSetRequest(BaseModel):
 
 
 @router.get("/admin/oncall")
-async def admin_get_oncall(_: str = Depends(_require_admin)):
+async def admin_get_oncall(_=Depends(_require_admin)):
     today = str(date.today())
     record = cfg_db.get_oncall_diagnostician(today)
     if record:
@@ -785,7 +985,7 @@ async def admin_get_oncall(_: str = Depends(_require_admin)):
 @router.post("/admin/oncall")
 async def admin_set_oncall(
     req: OncallSetRequest,
-    _: str = Depends(_require_admin),
+    _=Depends(_require_admin),
     scheduler: PamakristosScheduler = Depends(get_pamakristos_scheduler),
 ):
     # Clear any existing on-call for the date first
@@ -862,7 +1062,7 @@ async def slis_push_selected(req: PushSelectedRequest):
 
 
 @router.post("/admin/sync-diagnosticians")
-async def admin_sync_diagnosticians(_: str = Depends(_require_admin)):
+async def admin_sync_diagnosticians(_=Depends(_require_admin)):
     """Manual trigger to pull diagnosticians from Slis DB into diagflow.db."""
     from diagflow.services.slis_sync import sync_diagnosticians
     result = sync_diagnosticians()
@@ -870,7 +1070,7 @@ async def admin_sync_diagnosticians(_: str = Depends(_require_admin)):
 
 
 @router.post("/admin/sync-doctors")
-async def admin_sync_doctors(_: str = Depends(_require_admin)):
+async def admin_sync_doctors(_=Depends(_require_admin)):
     """Manual trigger to pull doctors from Slis DB into diagflow.db."""
     from diagflow.services.slis_sync import sync_doctors
     result = sync_doctors()

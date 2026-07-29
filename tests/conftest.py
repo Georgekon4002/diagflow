@@ -4,9 +4,27 @@ DiagFlow — Test Configuration
 Shared fixtures and test utilities.
 """
 
+import shutil
 import pytest
-
+import diagflow.db.diagflow_db as cfg_db
 from diagflow.engine.filters import CandidateDiagnostician, ExamContext
+
+
+@pytest.fixture(autouse=True, scope="session")
+def isolate_test_db(tmp_path_factory):
+    """Isolate database mutations during tests so dev db/diagflow.db is never modified."""
+    temp_dir = tmp_path_factory.mktemp("db")
+    temp_db_path = temp_dir / "test_diagflow.db"
+    
+    if cfg_db._DB_PATH.exists():
+        shutil.copy(cfg_db._DB_PATH, temp_db_path)
+        
+    original_db_path = cfg_db._DB_PATH
+    cfg_db._DB_PATH = temp_db_path
+    
+    yield
+    
+    cfg_db._DB_PATH = original_db_path
 
 
 @pytest.fixture

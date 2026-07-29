@@ -1,12 +1,23 @@
 @startuml
 
-title DiagFlow — Class Diagram: API Layer
+title DiagFlow — Class Diagram: API & Launcher Layer
 skinparam backgroundColor #FEFEFE
 skinparam defaultFontName Inter
 skinparam shadowing false
 skinparam classAttributeIconSize 0
 
-' ─── FastAPI Application ───
+' ─── Launcher & Application ───
+
+package "diagflow.launcher" as launcher_pkg #FFF3E0 {
+    class "Application Launcher" as launcher {
+        + APP_PORT: int = 8080
+        + APP_URL: str
+        + main(): void
+        + start_server(): void
+        + wait_for_server(timeout): bool
+        + get_frontend_dir(): str
+    }
+}
 
 package "diagflow.main" as main_pkg #E3F2FD {
     class "FastAPI App" as app {
@@ -40,21 +51,23 @@ package "diagflow.api" as api_pkg #BBDEFB {
         + POST /slis/pull
         + POST /slis/push-all
         + POST /slis/push-selected
-        __ Diagnosticians __
+        __ Diagnosticians & Schedule __
         + GET  /diagnosticians
-        __ Παμμακάριστος __
         + GET  /pamakristos/oncall
         + GET  /pamakristos/schedule
         + POST /pamakristos/oncall
-        __ Admin (auth required) __
+        __ Admin & Dynamic Rules (auth required) __
         + POST /admin/auth/login
+        + POST /admin/auth/change-credentials
         + CRUD /admin/diagnosticians
         + CRUD /admin/partnerships
         + CRUD /admin/doctors
         + CRUD /admin/availability
         + CRUD /admin/skills
-        + CRUD /admin/oncall
-        + CRUD /admin/pamakristos/weekly-schedule
+        + CRUD /admin/exam-routing-rules
+        + CRUD /admin/exclusive-lab-rules
+        + CRUD /admin/modality-quotas
+        + GET/POST /admin/system-settings
         + POST /admin/sync-diagnosticians
         + POST /admin/sync-doctors
         + GET  /admin/exam-categories
@@ -98,7 +111,7 @@ package "diagflow.api" as api_pkg #BBDEFB {
         + diagnostician_id: int
     }
 
-    ' ─── Response Schemas ───
+    ' ─── Response & Data Schemas ───
 
     class "SuggestionResponse" as resp_suggest {
         + exam_id: str
@@ -218,6 +231,7 @@ package "diagflow.config" as config_pkg #F3E5F5 {
 
 ' ─── Relationships ───
 
+launcher --> app : launches in background thread
 app --> router : includes
 router --> deps : uses
 deps --> assign_svc : provides
@@ -240,7 +254,7 @@ resp_suggest *-- resp_alt : contains
 
 assign_svc --> sync_svc : push to Slis
 router --> sync_svc : pull/push endpoints
-assign_svc ..> settings : reads weights
+assign_svc ..> settings : reads default weights
 diag_svc ..> settings : reads config
 
 @enduml

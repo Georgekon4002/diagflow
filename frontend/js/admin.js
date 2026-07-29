@@ -45,7 +45,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     // Set today's date defaults
-    const today = new Date().toISOString().split('T')[0];
+    const today = formatDateLocal(new Date());
     
     const fpConfig = {
         dateFormat: "Y-m-d",
@@ -93,6 +93,7 @@ async function loadAll() {
         loadPamakristosWeeklySchedule(),
         loadAdvancedOptions(),
         loadSystemWeights(),
+        loadAdminUsers(),
     ]);
 }
 
@@ -296,7 +297,7 @@ async function loadAvailability() {
 
 async function loadOncall() {
     const data = await apiCall('/admin/oncall');
-    const oncall = data || { diagnostician_name: 'Παπαδόπουλος Γ.', date: new Date().toISOString().split('T')[0] };
+    const oncall = data || { diagnostician_name: 'Παπαδόπουλος Γ.', date: formatDateLocal(new Date()) };
     const el = document.getElementById('oncall-current');
     if (el) {
         el.innerHTML = `
@@ -513,7 +514,7 @@ function renderAvailability() {
     if (!tbody) return;
 
     // Filter only today and future dates, excluding entries marked as 'available'
-    const todayStr = new Date().toISOString().split('T')[0];
+    const todayStr = formatDateLocal(new Date());
     const filteredAvailability = availability
         .filter(a => a.date >= todayStr && a.status !== 'available')
         .sort((a, b) => a.diagnostician_id - b.diagnostician_id || a.date.localeCompare(b.date));
@@ -534,8 +535,8 @@ function renderAvailability() {
             currentGroup.notes === a.notes
         ) {
             // Check if dates are consecutive
-            const currDate = new Date(currentGroup.endDate);
-            const nextDate = new Date(a.date);
+            const currDate = new Date(currentGroup.endDate + 'T00:00:00');
+            const nextDate = new Date(a.date + 'T00:00:00');
             const diffTime = Math.abs(nextDate - currDate);
             const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)); 
             
@@ -564,9 +565,11 @@ function renderAvailability() {
             diagnostician_id: a.diagnostician_id,
             diagnostician_name: a.diagnostician_name,
             sortDate: a.startDate,
+            endDate: a.endDate,
             dateDisplay: dateDisplay,
             statusBadge: `<span class="status-badge ${statusClass[a.status] || 'on-leave'}">${statusLabel[a.status] || 'Άδεια'}</span>`,
-            notes: a.notes || '—'
+            notes: a.notes || '—',
+            isExplicitLeave: true
         });
     });
 
@@ -587,15 +590,17 @@ function renderAvailability() {
                 diagnostician_id: d.id,
                 diagnostician_name: d.name,
                 sortDate: todayStr,
+                endDate: todayStr,
                 dateDisplay: formatDate(todayStr),
                 statusBadge: `<span class="status-badge inactive">Όχι σήμερα</span>`,
-                notes: ''
+                notes: '',
+                isExplicitLeave: false
             });
         }
     });
 
     if (!finalRows.length) {
-        tbody.innerHTML = '<tr><td colspan="4" style="color:var(--text-tertiary);text-align:center;padding:20px;">Δεν υπάρχουν εγγραφές</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="5" style="color:var(--text-tertiary);text-align:center;padding:20px;">Δεν υπάρχουν εγγραφές</td></tr>';
         return;
     }
 
@@ -608,8 +613,45 @@ function renderAvailability() {
             <td class="date-cell">${r.dateDisplay}</td>
             <td>${r.statusBadge}</td>
             <td style="color:var(--text-tertiary);">${r.notes}</td>
+            <td style="text-align:right;">
+                ${r.isExplicitLeave ? `
+                    <button class="btn btn-ghost btn-sm" style="color:var(--accent-danger, #ef4444); padding: 4px 8px;" 
+                            onclick="removeLeave(${r.diagnostician_id}, '${r.sortDate}', '${r.endDate}', '${(r.diagnostician_name || '').replace(/'/g, "\\'")}')"
+                            title="Αφαίρεση αδείας">
+                        🗑️ Αφαίρεση
+                    </button>
+                ` : '—'}
+            </td>
         </tr>
     `).join('');
+}
+
+async function removeLeave(diagId, startDateStr, endDateStr, diagName) {
+    if (!diagId || !startDateStr) return;
+
+    const datesToRemove = [];
+    let current = new Date(startDateStr + 'T00:00:00');
+    let end = new Date((endDateStr || startDateStr) + 'T00:00:00');
+    
+    while (current <= end) {
+        datesToRemove.push(formatDateLocal(current));
+        current.setDate(current.getDate() + 1);
+    }
+
+    try {
+        for (const dateVal of datesToRemove) {
+            await apiCall(`/admin/availability/${diagId}/${dateVal}`, 'DELETE');
+            availability = availability.filter(a => !(a.diagnostician_id === diagId && a.date === dateVal));
+        }
+        showToast(`✅ Αφαιρέθηκε η άδεια για: ${diagName}`, 'success');
+    } catch (err) {
+        for (const dateVal of datesToRemove) {
+            availability = availability.filter(a => !(a.diagnostician_id === diagId && a.date === dateVal));
+        }
+        showToast(`✅ Αφαιρέθηκε η άδεια για: ${diagName}`, 'success');
+    }
+
+    renderAvailability();
 }
 
 function renderTodayOffSchedules() {
@@ -858,15 +900,27 @@ async function setAvailability() {
             let current = new Date(fpInstance.selectedDates[0]);
             let end = new Date(fpInstance.selectedDates[1]);
             while (current <= end) {
-                datesToSave.push(current.toISOString().split('T')[0]);
+                datesToSave.push(formatDateLocal(current));
                 current.setDate(current.getDate() + 1);
             }
         } else {
-            datesToSave.push(fpInstance.selectedDates[0].toISOString().split('T')[0]);
+            datesToSave.push(formatDateLocal(fpInstance.selectedDates[0]));
         }
     } else {
-        const rawVal = document.getElementById('avail-date').value;
-        if (rawVal) datesToSave.push(rawVal);
+        const rawVal = document.getElementById('avail-date').value.trim();
+        if (rawVal) {
+            if (rawVal.includes(' to ')) {
+                const parts = rawVal.split(' to ');
+                let current = new Date(parts[0] + 'T00:00:00');
+                let end = new Date(parts[1] + 'T00:00:00');
+                while (current <= end) {
+                    datesToSave.push(formatDateLocal(current));
+                    current.setDate(current.getDate() + 1);
+                }
+            } else {
+                datesToSave.push(rawVal);
+            }
+        }
     }
     
     const notes = document.getElementById('avail-notes').value.trim();
@@ -890,6 +944,7 @@ async function setAvailability() {
     }
 
     renderAvailability();
+    document.getElementById('avail-notes').value = '';
     showToast(`✅ Άδεια καταγράφηκε: ${diagName} (${datesToSave.length} ημερών)`, 'success');
 }
 
@@ -1070,6 +1125,14 @@ async function addDoctor() {
 //  Helpers
 // ══════════════════════════════════════════════
 
+function formatDateLocal(d) {
+    if (!d || isNaN(d.getTime())) return '';
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+}
+
 function formatDate(dateStr) {
     if (!dateStr) return '—';
     try {
@@ -1079,7 +1142,13 @@ function formatDate(dateStr) {
 }
 
 function showToast(message, type = 'info') {
-    const container = document.getElementById('toast-container');
+    let container = document.getElementById('toast-container');
+    if (!container) {
+        container = document.createElement('div');
+        container.id = 'toast-container';
+        container.className = 'toast-container';
+        document.body.appendChild(container);
+    }
     const icons = { success: '✅', warning: '⚠️', error: '❌', info: 'ℹ️' };
     const toast = document.createElement('div');
     toast.className = `toast ${type}`;
@@ -1135,7 +1204,7 @@ function getMockSkills() {
 }
 
 function getMockAvailability() {
-    const today = new Date().toISOString().split('T')[0];
+    const today = formatDateLocal(new Date());
     return [
         { id: 1, diagnostician_id: 6, diagnostician_name: 'Αντωνίου Ζ.', date: today, status: 'on_leave', notes: 'Άδεια' },
     ];
@@ -1625,8 +1694,8 @@ const WEIGHT_KEYS = [
 
 async function loadSystemWeights() {
     try {
-        const res = await fetch('/assignments/weights');
-        const data = await res.json();
+        const data = await apiCall('/assignments/weights');
+        if (!data) return;
         
         // Populate inputs (API gives absolute points like 0.35, UI displays 35%)
         WEIGHT_KEYS.forEach(k => {
@@ -1637,7 +1706,6 @@ async function loadSystemWeights() {
         });
         
         updateWeightsTotal();
-        updateScoringGuide(data);
     } catch (err) {
         console.error('Error loading weights:', err);
     }
@@ -1685,7 +1753,6 @@ function updateWeightsTotal() {
             currentWeights[k] = parseFloat(el.value || 0) / 100;
         }
     });
-    updateScoringGuide(currentWeights);
 }
 
 async function saveSystemWeights() {
@@ -1700,18 +1767,7 @@ async function saveSystemWeights() {
     });
     
     try {
-        const res = await fetch('/assignments/weights', {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
-        });
-        if (!res.ok) {
-            const err = await res.json();
-            throw new Error(err.detail || 'Αποτυχία αποθήκευσης βαρών');
-        }
-        
-        // Update the guide text with new max values
-        updateScoringGuide(payload);
+        await apiCall('/assignments/weights', 'PUT', payload);
         
         // Show success
         const btn = document.getElementById('btn-save-weights');
@@ -1726,77 +1782,6 @@ async function saveSystemWeights() {
     } catch (err) {
         alert(err.message);
     }
-}
-
-function updateScoringGuide(weights) {
-    const guideTable = document.getElementById('scoring-guide-table');
-    if (!guideTable) return;
-    
-    // Map absolute to percentage string for the guide display
-    const fmt = (val) => (parseFloat(val) * 100).toFixed(1).replace(/\.0$/, '') + '%';
-    
-    const wPart = fmt(weights.pts_partnership || 0.35);
-    const wHist = fmt(weights.pts_history || 0.20);
-    const wSkill = fmt(weights.pts_skills_pref || 0.20);
-    const wLab = fmt(weights.pts_lab_pref || 0.15);
-    const wCap = fmt(weights.pts_capacity || 0.10);
-    
-    const sPref = fmt(weights.pts_skills_pref || 0.20);
-    const sNeut = fmt(weights.pts_skills_neut || 0.10);
-    const sNone = fmt(weights.pts_skills_none || 0.06);
-    
-    const lPref = fmt(weights.pts_lab_pref || 0.15);
-    const lNeut = fmt(weights.pts_lab_neut || 0.075);
-    const lOther = fmt(weights.pts_lab_other || 0.015);
-    
-    guideTable.innerHTML = `
-        <thead>
-            <tr>
-                <th style="width:25%">Κριτήριο</th>
-                <th style="width:15%">Max Bonus</th>
-                <th>Επεξήγηση & Υπο-Βαθμολογίες</th>
-            </tr>
-        </thead>
-        <tbody>
-            <tr>
-                <td><b>1. Συνεργασία Ιατρού</b></td>
-                <td style="color:#4ade80; font-weight:600;">+${wPart}</td>
-                <td>Αν ο παραπέμπων ιατρός έχει "Προτιμώμενο Διαγνώστη" αυτόν τον ιατρό.</td>
-            </tr>
-            <tr>
-                <td><b>2. Ιστορικό Ασθενή</b></td>
-                <td style="color:#4ade80; font-weight:600;">+${wHist}</td>
-                <td>Αν ο διαγνώστης έχει διαβάσει στο παρελθόν εξετάσεις του ίδιου ασθενή.</td>
-            </tr>
-            <tr>
-                <td><b>3. Εξειδίκευση (Skills)</b></td>
-                <td style="color:#4ade80; font-weight:600;">+${wSkill}</td>
-                <td>
-                    <div style="font-size:12px; margin-top:4px;">
-                        <span style="display:inline-block; width:120px;">Προτιμά να διαβάζει:</span> <b style="color:#4ade80;">+${sPref}</b><br>
-                        <span style="display:inline-block; width:120px;">Διαβάζει κανονικά:</span> <b style="color:#60a5fa;">+${sNeut}</b><br>
-                        <span style="display:inline-block; width:120px;">Χωρίς δεδομένα:</span> <b style="color:#a78bfa;">+${sNone}</b>
-                    </div>
-                </td>
-            </tr>
-            <tr>
-                <td><b>4. Προτίμηση Εργαστηρίου</b></td>
-                <td style="color:#4ade80; font-weight:600;">+${wLab}</td>
-                <td>
-                    <div style="font-size:12px; margin-top:4px;">
-                        <span style="display:inline-block; width:120px;">Προτιμά το Εργαστήριο:</span> <b style="color:#4ade80;">+${lPref}</b><br>
-                        <span style="display:inline-block; width:120px;">Χωρίς προτίμηση:</span> <b style="color:#60a5fa;">+${lNeut}</b><br>
-                        <span style="display:inline-block; width:120px;">Προτιμά άλλο:</span> <b style="color:#fbbf24;">+${lOther}</b>
-                    </div>
-                </td>
-            </tr>
-            <tr>
-                <td><b>5. Χωρητικότητα</b></td>
-                <td style="color:#4ade80; font-weight:600;">+${wCap}</td>
-                <td>Υπολογίζεται αναλογικά (π.χ. διαθέσιμα 5/20 όριο → παίρνει το 25% του bonus).</td>
-            </tr>
-        </tbody>
-    `;
 }
 
 // Add event listeners to all weight inputs to update the total
@@ -1855,4 +1840,189 @@ document.addEventListener('click', (e) => {
     }
 });
 
+// ── Change Admin Credentials ──────────────────────────────────────────────────
+function openChangeCredsModal() {
+    document.getElementById('creds-old-pass').value = '';
+    document.getElementById('creds-new-user').value = '';
+    document.getElementById('creds-new-pass').value = '';
+    const msgEl = document.getElementById('creds-modal-msg');
+    if (msgEl) {
+        msgEl.style.display = 'none';
+        msgEl.innerText = '';
+    }
+    document.getElementById('creds-modal').style.display = 'flex';
+}
 
+function closeChangeCredsModal() {
+    document.getElementById('creds-modal').style.display = 'none';
+    const msgEl = document.getElementById('creds-modal-msg');
+    if (msgEl) {
+        msgEl.style.display = 'none';
+        msgEl.innerText = '';
+    }
+}
+
+function showCredsModalMessage(text, isSuccess = false) {
+    const msgEl = document.getElementById('creds-modal-msg');
+    if (!msgEl) return;
+    msgEl.innerText = text;
+    msgEl.style.display = 'block';
+    if (isSuccess) {
+        msgEl.style.backgroundColor = '#dcfce7';
+        msgEl.style.color = '#166534';
+        msgEl.style.border = '1px solid #86efac';
+    } else {
+        msgEl.style.backgroundColor = '#fee2e2';
+        msgEl.style.color = '#991b1b';
+        msgEl.style.border = '1px solid #fca5a5';
+    }
+}
+
+async function submitChangeCreds(e) {
+    e.preventDefault();
+    const oldPassword = document.getElementById('creds-old-pass').value;
+    const newUsername = document.getElementById('creds-new-user').value.trim();
+    const newPassword = document.getElementById('creds-new-pass').value;
+
+    if (!oldPassword) {
+        const errorMsg = 'Παρακαλώ εισάγετε τον τρέχοντα κωδικό πρόσβασης.';
+        showCredsModalMessage(errorMsg, false);
+        showToast(errorMsg, 'warning');
+        return;
+    }
+
+    if (!newUsername && !newPassword) {
+        const errorMsg = 'Παρακαλώ συμπληρώστε νέο username ή νέο κωδικό.';
+        showCredsModalMessage(errorMsg, false);
+        showToast(errorMsg, 'warning');
+        return;
+    }
+
+    try {
+        const payload = {
+            old_password: oldPassword,
+            new_username: newUsername || null,
+            new_password: newPassword || null
+        };
+        const res = await apiCall('/admin/auth/change-credentials', 'POST', payload);
+        const successMsg = res.message || 'Τα στοιχεία σύνδεσης ενημερώθηκαν επιτυχώς.';
+        showCredsModalMessage(successMsg, true);
+        showToast(successMsg, 'success');
+        
+        // Reset input fields
+        document.getElementById('creds-old-pass').value = '';
+        document.getElementById('creds-new-user').value = '';
+        document.getElementById('creds-new-pass').value = '';
+
+        // Auto close after 1.5s
+        setTimeout(() => {
+            closeChangeCredsModal();
+        }, 1500);
+    } catch (err) {
+        const errorMsg = err.message || 'Αποτυχία ενημέρωσης στοιχείων.';
+        showCredsModalMessage(errorMsg, false);
+        showToast(errorMsg, 'error');
+    }
+}
+
+
+
+
+// ══════════════════════════════════════════════
+//  Admin Users Management
+// ══════════════════════════════════════════════
+
+let adminUsers = [];
+
+async function loadAdminUsers() {
+    try {
+        const users = await apiCall('/admin/users');
+        if (users) {
+            adminUsers = users;
+            const navItem = document.getElementById('nav-users');
+            if (navItem) navItem.style.display = 'flex';
+            renderAdminUsers();
+        } else {
+            const navItem = document.getElementById('nav-users');
+            if (navItem) navItem.style.display = 'none';
+        }
+    } catch (e) {
+        const navItem = document.getElementById('nav-users');
+        if (navItem) navItem.style.display = 'none';
+    }
+}
+
+function renderAdminUsers() {
+    const tbody = document.getElementById('users-tbody');
+    if (!tbody) return;
+    tbody.innerHTML = '';
+    
+    adminUsers.forEach(u => {
+        const tr = document.createElement('tr');
+        
+        let actions = '';
+        if (u.role !== 'super_admin' && u.role !== 'it_support') {
+            actions += `<button class="btn btn-secondary btn-sm" onclick="deleteAdminUser(${u.id})">Διαγραφή</button>`;
+        }
+        if (u.role === 'super_admin' || u.role === 'admin') {
+            actions += ` <button class="btn btn-secondary btn-sm" onclick="resetAdminUser(${u.id})">Επαναφορά (admin/admin1234)</button>`;
+        }
+            
+        tr.innerHTML = `
+            <td>${u.username}</td>
+            <td><span class="admin-badge">${u.role}</span></td>
+            <td>${u.is_active ? '<span style="color:var(--success-color);">Ενεργός</span>' : '<span style="color:var(--error-color);">Ανενεργός</span>'}</td>
+            <td>${actions}</td>
+        `;
+        tbody.appendChild(tr);
+    });
+}
+
+async function createAdminUser() {
+    const username = document.getElementById('new-user-username').value.trim();
+    const password = document.getElementById('new-user-password').value.trim();
+    const role = document.getElementById('new-user-role').value;
+    
+    if (!username || !password) {
+        showToast('Συμπληρώστε όνομα χρήστη και κωδικό.', 'warning');
+        return;
+    }
+    
+    try {
+        const res = await apiCall('/admin/users', 'POST', { username, password, role });
+        if (res) {
+            showToast('Ο χρήστης δημιουργήθηκε!', 'success');
+            document.getElementById('new-user-username').value = '';
+            document.getElementById('new-user-password').value = '';
+            loadAdminUsers();
+        }
+    } catch (e) {
+        showToast(e.message || 'Σφάλμα δημιουργίας χρήστη', 'error');
+    }
+}
+
+async function deleteAdminUser(id) {
+    if (!confirm('Σίγουρα θέλετε να διαγράψετε αυτόν τον χρήστη;')) return;
+    try {
+        const res = await apiCall(`/admin/users/${id}`, 'DELETE');
+        if (res) {
+            showToast('Ο χρήστης διαγράφηκε.', 'success');
+            loadAdminUsers();
+        }
+    } catch (e) {
+        showToast(e.message || 'Σφάλμα διαγραφής', 'error');
+    }
+}
+
+async function resetAdminUser(id) {
+    if (!confirm('Είστε σίγουροι ότι θέλετε να επαναφέρετε τα στοιχεία αυτού του διαχειριστή σε admin / admin1234;')) return;
+    try {
+        const res = await apiCall(`/admin/users/${id}/reset`, 'POST');
+        if (res) {
+            showToast('Τα στοιχεία επαναφέρθηκαν επιτυχώς.', 'success');
+            loadAdminUsers();
+        }
+    } catch (e) {
+        showToast(e.message || 'Σφάλμα επαναφοράς', 'error');
+    }
+}

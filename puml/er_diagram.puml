@@ -1,4 +1,4 @@
-@startuml
+@startuml er_diagram
 
 title DiagFlow — Entity-Relationship Diagram
 skinparam backgroundColor #FEFEFE
@@ -44,7 +44,7 @@ package "diagflow.db" as db1 #E3F2FD {
     entity "partnerships" as partners {
         * id : INTEGER <<PK, autoincrement>>
         --
-        issuing_doctor_id : TEXT <<NOT NULL>>
+        issuing_doctor_id : TEXT <<FK, NOT NULL>>
         issuing_doctor_name : TEXT <<NOT NULL>>
         preferred_diagnostician_id : INTEGER <<FK, NOT NULL>>
         priority : INTEGER <<default 1>>
@@ -75,8 +75,10 @@ package "diagflow.db" as db1 #E3F2FD {
         * exammoreid : INTEGER <<PK>>
         --
         diagnostician_id : INTEGER <<NOT NULL>>
-        diagnostician_name : TEXT
+        diagnostician_name : TEXT <<NOT NULL>>
         assigned_at : TEXT <<NOT NULL>> (ISO-8601)
+        is_auto : INTEGER <<NOT NULL, default 0>>
+        rule_desc : TEXT
     }
 
     entity "assignment_log" as log {
@@ -84,12 +86,60 @@ package "diagflow.db" as db1 #E3F2FD {
         --
         diagnostician_id : INTEGER <<NOT NULL>>
         assigned_at : TEXT <<NOT NULL>> (ISO-8601)
+        modality : TEXT
+        extracode : TEXT
     }
 
     entity "pamakristos_schedule" as pam {
         * weekday : INTEGER <<PK>> (0=Mon..6=Sun)
         --
         diagnostician_id : INTEGER <<FK, NOT NULL>>
+    }
+
+    entity "exam_routing_rules" as route {
+        * id : INTEGER <<PK, autoincrement>>
+        --
+        lab_id : INTEGER <<nullable>>
+        is_pamakristos : INTEGER <<NOT NULL, default 0>>
+        exam_codes : TEXT <<NOT NULL>>
+        diagnostician_id : INTEGER <<FK, NOT NULL>>
+        description : TEXT
+        issuing_doctor_id : INTEGER <<nullable>>
+        issuing_doctor_name : TEXT <<nullable>>
+        is_active : INTEGER <<NOT NULL, default 1>>
+    }
+
+    entity "exclusive_lab_rules" as ex_lab {
+        * id : INTEGER <<PK, autoincrement>>
+        --
+        diagnostician_id : INTEGER <<FK, NOT NULL>>
+        lab_id : INTEGER <<NOT NULL>>
+        lab_name : TEXT
+        is_active : INTEGER <<NOT NULL, default 1>>
+    }
+
+    entity "modality_quotas" as mod_q {
+        * id : INTEGER <<PK, autoincrement>>
+        --
+        diagnostician_id : INTEGER <<FK, NOT NULL>>
+        modality : TEXT <<NOT NULL>> (CT|MRI)
+        max_count : INTEGER <<NOT NULL>>
+        is_active : INTEGER <<NOT NULL, default 1>>
+    }
+
+    entity "system_settings" as sys {
+        * key : TEXT <<PK>>
+        --
+        value : TEXT <<NOT NULL>>
+    }
+
+    entity "admin_users" as admin_users {
+        * id : INTEGER <<PK, autoincrement>>
+        --
+        username : TEXT <<UNIQUE, NOT NULL>>
+        password_hash : TEXT <<NOT NULL>>
+        role : TEXT <<NOT NULL, default 'admin'>>
+        is_active : INTEGER <<NOT NULL, default 1>>
     }
 }
 
@@ -130,13 +180,6 @@ package "mock_slis.db" as db2 #FFF3E0 {
         notes : TEXT
         category : TEXT
         slis_synced_at : TEXT <<nullable>>
-        ..
-        oldexam : INTEGER
-        oldvisit : INTEGER
-        oldorder : TEXT
-        oldpers : INTEGER
-        olddiagnostis : TEXT
-        aa : INTEGER
     }
 
     entity "diagnosticians\n(Slis personnel)" as slis_diag {
@@ -161,6 +204,9 @@ diag ||--o{ partners : "1:N\n(preferred_diagnostician_id)"
 diag ||--o{ pam : "1:N"
 diag ||--o{ local : "1:N\n(diagnostician_id)"
 diag ||--o{ log : "1:N\n(diagnostician_id)"
+diag ||--o{ route : "1:N\n(diagnostician_id)"
+diag ||--o{ ex_lab : "1:N\n(diagnostician_id)"
+diag ||--o{ mod_q : "1:N\n(diagnostician_id)"
 
 partners }o--|| docs : "N:1\n(issuing_doctor_id)"
 
@@ -170,10 +216,12 @@ partners }o--|| docs : "N:1\n(issuing_doctor_id)"
 exams }o--|| cats : "N:1\n(examnumcode)"
 
 ' ─────────────────────────────────────────────
-'  Cross-database references
+'  Cross-database references & Master Data Sync
 ' ─────────────────────────────────────────────
 local ..> exams : "references\nexammoreid"
 log ..> exams : "references\nexammoreid"
+slis_diag ..> diag : "syncs personnel\n(id, name)"
+slis_docs ..> docs : "syncs doctors\n(id, name)"
 
 note bottom of db2
     In **production**, mock_slis.db is replaced
@@ -182,9 +230,9 @@ note bottom of db2
 end note
 
 note bottom of db1
-    All tables use raw **sqlite3** (no ORM).
-    diagflow_db.py provides a CRUD layer
-    with context-managed connections.
+    All tables use raw **sqlite3** (no ORM in production).
+    diagflow_db.py provides a CRUD layer with
+    context-managed connections.
 end note
 
 @enduml

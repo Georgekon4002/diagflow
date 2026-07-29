@@ -111,7 +111,21 @@ class AssignmentPipeline:
                 exam_id=exam.exam_id,
                 diagnostician=exclusive_partner.name,
             )
-            return self._build_exclusive_assignment_suggestion(exam, exclusive_partner)
+            
+            # Generate alternatives so the user can override if needed
+            filtered_candidates, filter_results = apply_hard_filters(candidates, exam)
+            scored_candidates = []
+            if filtered_candidates:
+                scored_candidates = score_all_candidates(filtered_candidates, exam)
+                
+            alternatives = self._build_alternatives(
+                exclusive_partner.id,
+                scored_candidates,
+                candidates,
+                filter_results,
+            )
+            
+            return self._build_exclusive_assignment_suggestion(exam, exclusive_partner, alternatives, scored_candidates)
 
         # ── Step 1: Hard filters ──
         filtered_candidates, filter_results = apply_hard_filters(candidates, exam)
@@ -257,6 +271,8 @@ class AssignmentPipeline:
         self,
         exam: ExamContext,
         candidate: CandidateDiagnostician,
+        alternatives: list[dict] | None = None,
+        scored_candidates: list[CandidateScore] | None = None,
     ) -> AssignmentSuggestion:
         """Build a suggestion for an exclusive partnership assignment."""
         exam_summary = (
@@ -265,14 +281,29 @@ class AssignmentPipeline:
             f"Lab {exam.lab_name}"
         )
 
-        return AssignmentSuggestion(
-            exam_id=exam.exam_id,
-            patient_id=exam.patient_id,
-            exam_summary=exam_summary,
-            suggested_diagnostician_id=candidate.id,
-            suggested_diagnostician_name=candidate.name,
-            confidence_score=1.0,
-            score_breakdown=[
+        candidate_score = None
+        if scored_candidates:
+            candidate_score = next((s for s in scored_candidates if s.diagnostician_id == candidate.id), None)
+
+        if candidate_score:
+            confidence_score = round(candidate_score.total_score, 3)
+            score_breakdown = [
+                {
+                    "rule": comp.rule_name,
+                    "display_name": comp.display_name,
+                    "raw_score": round(comp.raw_score, 3),
+                    "weight": comp.weight,
+                    "weighted_score": round(comp.weighted_score, 3),
+                    "explanation": comp.explanation,
+                }
+                for comp in candidate_score.components
+            ]
+            rules_fired = [comp.rule_name for comp in candidate_score.components if comp.weighted_score > 0]
+            if "exclusive_partnership" not in rules_fired:
+                rules_fired.append("exclusive_partnership")
+        else:
+            confidence_score = 1.0
+            score_breakdown = [
                 {
                     "rule": "exclusive_partnership",
                     "display_name": "Αποκλειστική Συνεργασία",
@@ -281,9 +312,19 @@ class AssignmentPipeline:
                     "weighted_score": 1.0,
                     "explanation": f"Απευθείας ανάθεση λόγω αποκλειστικής συνεργασίας με τον ιατρό {exam.issuing_doctor_name}.",
                 }
-            ],
-            alternatives=[],
-            rules_fired=["exclusive_partnership"],
+            ]
+            rules_fired = ["exclusive_partnership"]
+
+        return AssignmentSuggestion(
+            exam_id=exam.exam_id,
+            patient_id=exam.patient_id,
+            exam_summary=exam_summary,
+            suggested_diagnostician_id=candidate.id,
+            suggested_diagnostician_name=candidate.name,
+            confidence_score=confidence_score,
+            score_breakdown=score_breakdown,
+            alternatives=alternatives or [],
+            rules_fired=rules_fired,
             filter_results={},
             solver_status="EXCLUSIVE_ASSIGNMENT",
             pipeline_timestamp=datetime.now().isoformat(),

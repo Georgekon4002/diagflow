@@ -7,6 +7,10 @@ dist/
 build/
 venv/
 .venv/
+*.spec
+.pytest_cache/
+.coverage
+htmlcov/
 
 ## IDE
 .vs/
@@ -20,15 +24,22 @@ venv/
 
 ## Environment
 .env
+.env.local
+.env.*.local
 
 ## Database migrations
 alembic/versions/*.py
 !alembic/versions/__init__.py
 
-## OS
-Thumbs.db
-Desktop.ini
-.DS_Store
+## SQLite Databases (Keep SQL schema scripts, ignore binary databases)
+db/*.db
+*.sqlite
+*.sqlite3
+
+## Office Temporary Lock Files
+~$*
+~$*.xlsx
+~$*.docx
 
 ## Logs
 *.log
@@ -36,7 +47,3 @@ logs/
 
 ## Scratch
 scratch*
-
-## Office temporary files
-~$*
-~$*.xlsx

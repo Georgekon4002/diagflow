@@ -1,4 +1,4 @@
-@startuml
+@startuml data_model
 
 title DiagFlow — Data Model Overview
 skinparam backgroundColor #FEFEFE
@@ -33,7 +33,7 @@ package "diagflow.db — Config & State" as diagflow_db #E3F2FD {
     entity "partnerships" as partners {
         * **id** : INTEGER <<PK>>
         --
-        * issuing_doctor_id : TEXT
+        * issuing_doctor_id : TEXT <<FK>>
         * issuing_doctor_name : TEXT
         * preferred_diagnostician_id : INTEGER <<FK>>
         priority : INTEGER
@@ -66,6 +66,8 @@ package "diagflow.db — Config & State" as diagflow_db #E3F2FD {
         * diagnostician_id : INTEGER
         * diagnostician_name : TEXT
         * assigned_at : TEXT (ISO-8601)
+        is_auto : INTEGER (0/1)
+        rule_desc : TEXT
     }
 
     entity "assignment_log" as assign_log {
@@ -73,12 +75,60 @@ package "diagflow.db — Config & State" as diagflow_db #E3F2FD {
         --
         * diagnostician_id : INTEGER
         * assigned_at : TEXT (ISO-8601)
+        modality : TEXT
+        extracode : TEXT
     }
 
     entity "pamakristos_schedule" as pam_sched {
         * **weekday** : INTEGER <<PK>> (0–6)
         --
         * diagnostician_id : INTEGER <<FK>>
+    }
+
+    entity "exam_routing_rules" as route_rules {
+        * **id** : INTEGER <<PK>>
+        --
+        lab_id : INTEGER
+        is_pamakristos : INTEGER (0/1)
+        * exam_codes : TEXT
+        * diagnostician_id : INTEGER <<FK>>
+        description : TEXT
+        issuing_doctor_id : INTEGER
+        issuing_doctor_name : TEXT
+        is_active : INTEGER (0/1)
+    }
+
+    entity "exclusive_lab_rules" as ex_labs {
+        * **id** : INTEGER <<PK>>
+        --
+        * diagnostician_id : INTEGER <<FK>>
+        * lab_id : INTEGER
+        lab_name : TEXT
+        is_active : INTEGER (0/1)
+    }
+
+    entity "modality_quotas" as mod_quotas {
+        * **id** : INTEGER <<PK>>
+        --
+        * diagnostician_id : INTEGER <<FK>>
+        * modality : TEXT (CT/MRI)
+        * max_count : INTEGER
+        is_active : INTEGER (0/1)
+    }
+
+    entity "system_settings" as sys_settings {
+        * **key** : TEXT <<PK>>
+        --
+        * value : TEXT
+    }
+
+    entity "admin_users" as admin_users {
+        * **id** : INTEGER <<PK>>
+        --
+        * username : TEXT
+        * password_hash : TEXT
+        * role : TEXT
+        * is_active : INTEGER
     }
 }
 
@@ -105,11 +155,6 @@ package "mock_slis.db — Exam Data" as slis_db #FFF3E0 {
         notes : TEXT
         category : TEXT
         slis_synced_at : TEXT
-        --
-        oldvisit : INTEGER
-        oldorder : TEXT
-        olddiagnostis : TEXT
-        oldpers : INTEGER
     }
 
     entity "exam_categories" as exam_cats {
@@ -118,6 +163,18 @@ package "mock_slis.db — Exam Data" as slis_db #FFF3E0 {
         * name : TEXT
         * category : TEXT (CT/MRI/MRA)
     }
+
+    entity "diagnosticians\n(Slis personnel)" as slis_diag {
+        * **PERSONELID** : INTEGER <<PK>>
+        --
+        DOCNAME : TEXT
+    }
+
+    entity "doctors\n(Slis doctors)" as slis_docs {
+        * **CODE** : INTEGER <<PK>>
+        --
+        DOCNAME : TEXT
+    }
 }
 
 ' ─── Relationships ───
@@ -125,6 +182,9 @@ diag ||--o{ skills : "has skills"
 diag ||--o{ partners : "preferred by"
 diag ||--o{ avail : "availability\ncalendar"
 diag ||--o{ pam_sched : "on-call\nrotation"
+diag ||--o{ route_rules : "target diagnostician"
+diag ||--o{ ex_labs : "bound lab"
+diag ||--o{ mod_quotas : "modality limit"
 
 partners }o--|| docs : "references\ndoctor"
 
@@ -133,5 +193,7 @@ slis_exam }o--|| exam_cats : "exam type\nlookup"
 local_assign ..> slis_exam : "references\nexammoreid"
 local_assign ..> diag : "references\ndiagnostician"
 assign_log ..> diag : "tracks\nassignments"
+slis_diag ..> diag : "syncs personnel\n(id, name)"
+slis_docs ..> docs : "syncs doctors\n(id, name)"
 
 @enduml

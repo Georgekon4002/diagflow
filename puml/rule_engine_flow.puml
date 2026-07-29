@@ -9,10 +9,10 @@ start
 
 :Receive pending exam\n(ExamContext);
 
-partition "**Stage 0: Exclusive Partnership Check**" #F3E5F5 {
-    if (Issuing doctor has\nexclusive partnership?) then (yes)
-        :Assign directly to\nexclusive partner;
-        :Return AssignmentSuggestion\nwith confidence=1.0;
+partition "**Stage 0: Exclusive Partnership & Routing Check**" #F3E5F5 {
+    if (Doctor has exclusive partner OR\nmatches dynamic exam routing rule?) then (yes)
+        :Auto-assign directly to\ndesignated diagnostician;
+        :Return AssignmentSuggestion\nwith rule explanation;
         stop
     else (no)
     endif
@@ -23,10 +23,17 @@ partition "**Stage 1: Hard Filters**" #E8EAF6 {
     note right
         DiagnosticianService loads:
         • Availability (absent IDs)
-        • Skills (batch query)
-        • Partnerships (for doctor)
+        • Skills & Lab preferences
+        • Partnerships for doctor
         • Daily counts (assignment_log)
         • Per-weekday quotas
+        • Dynamic routing & quota rules
+    end note
+
+    :Apply **filter_by_exclusive_lab_dynamic()**;
+    note right
+        Check if diagnostician is bound
+        exclusively to a specific lab.
     end note
 
     :Apply **filter_by_availability()**;
@@ -39,6 +46,12 @@ partition "**Stage 1: Hard Filters**" #E8EAF6 {
     note right
         current_day_count ≥ daily_quota?
         (weekday-specific quotas)
+    end note
+
+    :Apply **filter_by_modality_quotas_dynamic()**;
+    note right
+        Reached specific CT/MRI
+        modality daily max count?
     end note
 
     :Apply **filter_by_modality()**;
@@ -69,35 +82,34 @@ partition "**Stage 1: Hard Filters**" #E8EAF6 {
 }
 
 partition "**Stage 2: Weighted Scoring**" #E3F2FD {
-    :Compute **score_skills_weighted()**\nweight=0.20;
+    :Fetch dynamic weights from **system_settings**;
+
+    :Compute **score_skills_weighted()**;
     note right
-        Preferred exam code → 1.0
-        Neutral match → 0.5
-        No data → 0.3
+        Preferred exam code → max bonus
+        Neutral match → mid bonus
+        No data → min bonus
     end note
 
-    :Compute **score_patient_history()**\nweight=0.20;
+    :Compute **score_patient_history()**;
     note right
         Same diagnostician for same
         patient's past similar exams.
-        Score = min(1.0, count × 0.3)
     end note
 
-    :Compute **score_partnership()**\nweight=0.35;
+    :Compute **score_partnership()**;
     note right
-        Exclusive → 1.0
-        Normal match → 1.0
-        No match → 0.0
+        Doctor partnership match → max score
     end note
 
-    :Compute **score_lab_preference()**\nweight=0.15;
+    :Compute **score_lab_preference()**;
     note right
-        Preferred lab matches → 1.0
-        Different preference → 0.1
-        No preference → 0.5
+        Preferred lab matches → max score
+        Different preference → min score
+        No preference → neutral score
     end note
 
-    :Compute **score_capacity()**\nweight=0.10;
+    :Compute **score_capacity()**;
     note right
         remaining / daily_quota
         At quota → 0.0
@@ -112,13 +124,13 @@ partition "**Stage 3: Near-Tie Load Balancing**" #E8F5E9 {
 
     :Identify near-tie group:\n|top_score − candidate_score| ≤ tolerance (5%);
     note right
-        Prevents the same diagnostician
-        from receiving all proposals when
-        equally-good candidates exist.
+        Includes session workload offset
+        (_session_suggestion_counts) to balance
+        sequential proposals in real-time.
     end note
 
     if (Multiple near-tied candidates?) then (yes)
-        :Sort near-tie group by:\n1. Fewest exams today\n2. Largest daily quota\n3. Random jitter;
+        :Sort near-tie group by:\n1. Fewest exams today (+ session offset)\n2. Largest daily quota\n3. Random jitter;
     else (no)
         :Keep strict score ordering;
     endif
@@ -128,7 +140,7 @@ partition "**Stage 3: Near-Tie Load Balancing**" #E8F5E9 {
 
 partition "**Stage 4: Solver**" #FFF8E1 {
     if (Single exam?) then (yes)
-        :Greedy: pick rank #1\ncandidateafter tie-breaking;
+        :Greedy: pick rank #1 candidate\nafter tie-breaking;
     else (batch)
         :OR-Tools CP-SAT:\nMaximise total score\nacross all exams\nrespecting quota constraints;
     endif

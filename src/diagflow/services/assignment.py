@@ -308,8 +308,8 @@ def _get_pending_exams_from_db() -> list[dict]:
                     ex_part["preferred_diagnostician_id"],
                     ex_part["preferred_diagnostician_name"],
                     now_iso,
-                    modality=r["category"],
-                    extracode=str(r["extracode"]) if r["extracode"] else None,
+                    modality=r["category"] if "category" in r.keys() else None,
+                    extracode=str(r["extracode"]) if ("extracode" in r.keys() and r["extracode"]) else None,
                     is_auto=True,
                     rule_desc="Συνεργάτης (Αποκλειστικότητα)"
                 )
@@ -322,9 +322,9 @@ def _get_pending_exams_from_db() -> list[dict]:
                 continue
 
             # Check 2: Dynamic Exam Routing Rules (Replaces hardcoded lab & exam rules)
-            exam_code_str = str(r["examnumcode"]).strip() if r["examnumcode"] else ""
-            lab_id_val = r["labcodeid"]
-            is_pam = "ΠΑΜΜΑΚΑΡΙΣΤΟΣ" in (r["wname"] or "").upper()
+            exam_code_str = str(r["examnumcode"]).strip() if ("examnumcode" in r.keys() and r["examnumcode"]) else ""
+            lab_id_val = r["labcodeid"] if "labcodeid" in r.keys() else None
+            is_pam = "ΠΑΜΜΑΚΑΡΙΣΤΟΣ" in (r.get("wname") or "").upper() if hasattr(r, "get") else "ΠΑΜΜΑΚΑΡΙΣΤΟΣ" in (r["wname"] or "").upper() if "wname" in r.keys() else False
             
             routed = False
             for rule in routing_rules:
@@ -344,8 +344,8 @@ def _get_pending_exams_from_db() -> list[dict]:
                         d_name = d_info["name"] if d_info else rule["diagnostician_name"]
                         cfg_db.upsert_local_assignment(
                             exam_id, target_id, d_name, now_iso,
-                            modality=r["category"],
-                            extracode=str(r["extracode"]) if r["extracode"] else None,
+                            modality=r["category"] if "category" in r.keys() else None,
+                            extracode=str(r["extracode"]) if ("extracode" in r.keys() and r["extracode"]) else None,
                             is_auto=True,
                             rule_desc=rule["description"]
                         )
@@ -363,8 +363,8 @@ def _get_pending_exams_from_db() -> list[dict]:
                     pam_oncall["diagnostician_id"],
                     pam_oncall["diagnostician_name"],
                     now_iso,
-                    modality=r["category"],
-                    extracode=str(r["extracode"]) if r["extracode"] else None,
+                    modality=r["category"] if "category" in r.keys() else None,
+                    extracode=str(r["extracode"]) if ("extracode" in r.keys() and r["extracode"]) else None,
                     is_auto=True,
                     rule_desc="Παμμακάριστος Εφημερία"
                 )

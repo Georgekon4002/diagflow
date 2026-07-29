@@ -23,8 +23,8 @@
         <!-- ─── Sidebar ─── -->
         <aside class="admin-sidebar">
             <div class="admin-sidebar-header">
-                <button class="btn btn-secondary"
-                    style="width:100%; margin-bottom:var(--space-md); padding:6px 12px; font-size:var(--font-size-sm); display:flex; justify-content:center; gap:6px; align-items:center;"
+                <button class="btn btn-primary"
+                    style="width:100%; margin-bottom:var(--space-md); padding:6px 12px; font-size:var(--font-size-sm); display:flex; justify-content:center; gap:6px; align-items:center; background-color:#8122FF; color:#ffffff; border:none;"
                     onclick="goBack()">
                     <span style="font-size: 14px;">←</span> Αρχική
                 </button>
@@ -63,6 +63,10 @@
                     Συνεργασίες
                 </button>
                 <div style="height: 1px; background: var(--border-color); margin: 8px 16px;"></div>
+                <button class="admin-nav-item" id="nav-users" onclick="showSection('users')" style="display:none;">
+                    <span class="admin-nav-icon">👥</span>
+                    Χρήστες
+                </button>
                 <button class="admin-nav-item" id="nav-advanced" onclick="showSection('advanced')">
                     <span class="admin-nav-icon">⚙️</span>
                     Για Προχωρημένους
@@ -83,6 +87,7 @@
                         </svg>
                         Admin
                     </span>
+                    <button class="btn btn-secondary btn-sm" onclick="openChangeCredsModal()">🔐 Αλλαγή username/password</button>
                     <button class="btn btn-secondary btn-sm" onclick="adminLogout()">Έξοδος</button>
                 </div>
             </div>
@@ -224,6 +229,7 @@
                                     <th>Ημερομηνία</th>
                                     <th>Κατάσταση</th>
                                     <th>Σημειώσεις</th>
+                                    <th style="text-align:right;">Ενέργειες</th>
                                 </tr>
                             </thead>
                             <tbody id="avail-tbody"></tbody>
@@ -400,6 +406,47 @@
                                     onclick="changeDoctorPage(1)">Επόμενο</button>
                             </div>
                         </div>
+                    </div>
+                </div>
+
+                <!-- ════════════ SECTION: Χρήστες (Users) ════════════ -->
+                <div id="section-users" class="admin-section" style="display:none;">
+                    <div class="admin-card">
+                        <div class="admin-card-title">Διαχείριση Χρηστών</div>
+                        <p style="color:var(--text-secondary);font-size:var(--font-size-sm);margin-bottom:16px;">
+                            Διαχειριστείτε τους λογαριασμούς διαχειριστών του συστήματος.
+                        </p>
+                        <div class="admin-form" style="grid-template-columns:1fr 1fr 1fr auto; align-items:end;">
+                            <div class="form-group" style="margin:0;">
+                                <label class="form-label">Username</label>
+                                <input type="text" id="new-user-username" class="form-input" placeholder="Όνομα χρήστη">
+                            </div>
+                            <div class="form-group" style="margin:0;">
+                                <label class="form-label">Password</label>
+                                <input type="password" id="new-user-password" class="form-input" placeholder="Κωδικός πρόσβασης">
+                            </div>
+                            <div class="form-group" style="margin:0;">
+                                <label class="form-label">Ρόλος</label>
+                                <select id="new-user-role" class="form-input filter-select">
+                                    <option value="admin">Admin</option>
+                                    <option value="super_admin">Super Admin</option>
+                                    <option value="it_support">IT Support</option>
+                                </select>
+                            </div>
+                            <button class="btn btn-primary" onclick="createAdminUser()">Προσθήκη</button>
+                        </div>
+                        
+                        <table class="admin-table" style="margin-top: 24px;">
+                            <thead>
+                                <tr>
+                                    <th>Username</th>
+                                    <th>Ρόλος</th>
+                                    <th>Κατάσταση</th>
+                                    <th>Ενέργειες</th>
+                                </tr>
+                            </thead>
+                            <tbody id="users-tbody"></tbody>
+                        </table>
                     </div>
                 </div>
 
@@ -600,14 +647,14 @@
                             <div class="form-group" style="margin:0;">
                                 <label class="form-label" style="font-weight:600; color:#3b82f6;">Συνεργασία Ιατρού (Max
                                     %)</label>
-                                <input type="number" id="pts-partnership" class="form-input weight-input" value="35"
+                                <input type="number" id="pts-partnership" class="form-input weight-input" value="20"
                                     min="0" max="100" step="0.1" oninput="updateWeightsTotal()">
                             </div>
 
                             <div class="form-group" style="margin:0;">
                                 <label class="form-label" style="font-weight:600; color:#3b82f6;">Ιστορικό Ασθενή (Max
                                     %)</label>
-                                <input type="number" id="pts-history" class="form-input weight-input" value="20" min="0"
+                                <input type="number" id="pts-history" class="form-input weight-input" value="35" min="0"
                                     max="100" step="0.1" oninput="updateWeightsTotal()">
                             </div>
 
@@ -635,7 +682,7 @@
                                             style="font-size:12px; color:var(--text-secondary);">Χωρίς Δεδομένα
                                             (%)</label>
                                         <input type="number" id="pts-skills-none" class="form-input weight-input"
-                                            value="6" min="0" max="100" step="0.1" oninput="updateWeightsTotal()">
+                                            value="0" min="0" max="100" step="0.1" oninput="updateWeightsTotal()">
                                     </div>
                                 </div>
                             </div>
@@ -657,14 +704,14 @@
                                         <label class="form-label"
                                             style="font-size:12px; color:var(--text-secondary);">Ουδέτερο (%)</label>
                                         <input type="number" id="pts-lab-neut" class="form-input weight-input"
-                                            value="7.5" min="0" max="100" step="0.1" oninput="updateWeightsTotal()">
+                                            value="10" min="0" max="100" step="0.1" oninput="updateWeightsTotal()">
                                     </div>
                                     <div>
                                         <label class="form-label"
                                             style="font-size:12px; color:var(--text-secondary);">Προτιμά Άλλο
                                             (%)</label>
                                         <input type="number" id="pts-lab-other" class="form-input weight-input"
-                                            value="1.5" min="0" max="100" step="0.1" oninput="updateWeightsTotal()">
+                                            value="2" min="0" max="100" step="0.1" oninput="updateWeightsTotal()">
                                     </div>
                                 </div>
                             </div>
@@ -772,64 +819,50 @@
                                 έχουν τις περισσότερες κενές θέσεις.</li>
                         </ul>
 
-                        <h5 style="margin-top: 24px; margin-bottom: 12px; font-size: 14px; color: #10b981;">Αναλυτικός
-                            Πίνακας Βαθμολόγησης (Max 1.0 ή 100%)</h5>
+                        <h5 style="margin-top: 24px; margin-bottom: 12px; font-size: 14px; color: #10b981; font-weight: 600;">Αναλυτικός Πίνακας Βαθμολόγησης (Προτεινόμενος)</h5>
                         <div style="overflow-x:auto;">
                             <table id="scoring-guide-table" class="admin-table"
                                 style="font-size:13px; line-height:1.4; background: rgba(255, 255, 255, 0.05);">
                                 <thead>
                                     <tr>
-                                        <th style="width:25%;">Κριτήριο</th>
-                                        <th style="width:15%;">Βαρύτητα</th>
-                                        <th style="width:60%;">Πόντοι (Βαθμολογία)</th>
+                                        <th style="width:25%; color: #6b7280; font-weight: 600;">ΚΡΙΤΗΡΙΟ</th>
+                                        <th style="width:15%; color: #6b7280; font-weight: 600;">MAX BONUS</th>
+                                        <th style="width:60%; color: #6b7280; font-weight: 600;">ΕΠΕΞΗΓΗΣΗ & ΥΠΟ-ΒΑΘΜΟΛΟΓΙΕΣ</th>
                                     </tr>
                                 </thead>
                                 <tbody>
                                     <tr>
                                         <td><b>1. Συνεργασία Ιατρού</b></td>
-                                        <td>35% (+0.35)</td>
-                                        <td>
-                                            <b>+0.35</b>: Αν υπάρχει συνεργασία (απλή ή αποκλειστική) με τον
-                                            παραπέμποντα ιατρό.<br>
-                                            <b>+0.00</b>: Αν δεν υπάρχει συνεργασία.
-                                        </td>
+                                        <td style="color: #064e3b; font-weight: 600;">+20%</td>
+                                        <td>Αν ο παραπέμπων ιατρός έχει "Προτιμώμενο Διαγνώστη" αυτόν τον ιατρό.</td>
                                     </tr>
                                     <tr>
                                         <td><b>2. Ιστορικό Ασθενή</b></td>
-                                        <td>20% (+0.20)</td>
-                                        <td>
-                                            <b>+0.06</b> ανά προηγούμενη εξέταση του ίδιου ασθενή στον ίδιο ιατρό.<br>
-                                            <i>(π.χ. 1 εξέταση = +0.06, 2 = +0.12, 3+ = +0.20 max)</i>
-                                        </td>
+                                        <td style="color: #064e3b; font-weight: 600;">+35%</td>
+                                        <td>Αν ο διαγνώστης έχει διαβάσει στο παρελθόν εξετάσεις του ίδιου ασθενή.</td>
                                     </tr>
                                     <tr>
                                         <td><b>3. Εξειδίκευση (Skills)</b></td>
-                                        <td>20% (+0.20)</td>
+                                        <td style="color: #064e3b; font-weight: 600;">+20%</td>
                                         <td>
-                                            <b>+0.20</b>: Προτιμά να διαβάζει τη συγκεκριμένη κατηγορία (π.χ.
-                                            Μαστούς).<br>
-                                            <b>+0.10</b>: Διαβάζει κανονικά την κατηγορία (ουδέτερος).<br>
-                                            <b>+0.06</b>: Δεν υπάρχουν επαρκή δεδομένα στο προφίλ του (ουδέτερος).
+                                            <div style="display: flex; justify-content: space-between; max-width: 200px;"><span>Προτιμά να διαβάζει:</span> <span style="color: #064e3b; font-weight: 600;">+20%</span></div>
+                                            <div style="display: flex; justify-content: space-between; max-width: 200px;"><span>Διαβάζει κανονικά:</span> <span style="color: #3b82f6; font-weight: 600;">+10%</span></div>
+                                            <div style="display: flex; justify-content: space-between; max-width: 200px;"><span>Χωρίς δεδομένα:</span> <span style="color: #8b5cf6; font-weight: 600;">+0%</span></div>
                                         </td>
                                     </tr>
                                     <tr>
                                         <td><b>4. Προτίμηση Εργαστηρίου</b></td>
-                                        <td>15% (+0.15)</td>
+                                        <td style="color: #064e3b; font-weight: 600;">+15%</td>
                                         <td>
-                                            <b>+0.15</b>: Αν είναι το προτιμώμενο εργαστήριο του διαγνώστη.<br>
-                                            <b>+0.075</b>: Αν δεν έχει δηλώσει συγκεκριμένη προτίμηση (ουδέτερος).<br>
-                                            <b>+0.015</b>: Αν προτιμά άλλο εργαστήριο (χαμηλή βαθμολογία, αλλά δεν
-                                            αποκλείεται).
+                                            <div style="display: flex; justify-content: space-between; max-width: 200px;"><span>Προτιμά το Εργαστήριο:</span> <span style="color: #064e3b; font-weight: 600;">+15%</span></div>
+                                            <div style="display: flex; justify-content: space-between; max-width: 200px;"><span>Χωρίς προτίμηση:</span> <span style="color: #3b82f6; font-weight: 600;">+10%</span></div>
+                                            <div style="display: flex; justify-content: space-between; max-width: 200px;"><span>Προτιμά άλλο:</span> <span style="color: #f59e0b; font-weight: 600;">+2%</span></div>
                                         </td>
                                     </tr>
                                     <tr>
                                         <td><b>5. Χωρητικότητα</b></td>
-                                        <td>10% (+0.10)</td>
-                                        <td>
-                                            Ανάλογα με το ποσοστό των κενών θέσεων (quota) που του απομένουν σήμερα.<br>
-                                            <i>(<b>+0.10</b> αν είναι 100% άδειος, <b>+0.00</b> αν έχει φτάσει το
-                                                όριο).</i>
-                                        </td>
+                                        <td style="color: #064e3b; font-weight: 600;">+10%</td>
+                                        <td>Υπολογίζεται αναλογικά (π.χ. διαθέσιμα 5/20 όριο &rarr; παίρνει το 25% του bonus).</td>
                                     </tr>
                                 </tbody>
                             </table>
@@ -840,6 +873,37 @@
             </div> <!-- end admin-content -->
         </div> <!-- end admin-main -->
     </div> <!-- end admin-layout -->
+
+    <!-- ─── Change Credentials Modal ─── -->
+    <div id="creds-modal" class="modal-overlay" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); z-index:10000; justify-content:center; align-items:center;">
+        <div class="modal-card" style="background:#fff; border-radius:12px; max-width:420px; width:90%; padding:24px; box-shadow:0 10px 25px rgba(0,0,0,0.2);">
+            <div class="modal-header" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
+                <h3 style="margin:0; font-size:18px;">🔐 Αλλαγή Στοιχείων Διαχειριστή</h3>
+                <button class="modal-close" onclick="closeChangeCredsModal()" style="background:none; border:none; font-size:24px; cursor:pointer;">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div id="creds-modal-msg" style="display:none; margin-bottom:14px; padding:10px 14px; border-radius:6px; font-size:13px; font-weight:500;"></div>
+                <form id="change-creds-form" onsubmit="submitChangeCreds(event)">
+                    <div style="margin-bottom:12px;">
+                        <label style="display:block; font-size:13px; font-weight:600; margin-bottom:4px;">Τρέχων Κωδικός Πρόσβασης *</label>
+                        <input type="password" id="creds-old-pass" required style="width:100%; padding:8px 12px; border:1px solid var(--border-color); border-radius:6px; box-sizing:border-box;">
+                    </div>
+                    <div style="margin-bottom:12px;">
+                        <label style="display:block; font-size:13px; font-weight:600; margin-bottom:4px;">Νέο Username (προαιρετικό)</label>
+                        <input type="text" id="creds-new-user" placeholder="π.χ. admin" style="width:100%; padding:8px 12px; border:1px solid var(--border-color); border-radius:6px; box-sizing:border-box;">
+                    </div>
+                    <div style="margin-bottom:20px;">
+                        <label style="display:block; font-size:13px; font-weight:600; margin-bottom:4px;">Νέος Κωδικός Πρόσβασης (προαιρετικό)</label>
+                        <input type="password" id="creds-new-pass" placeholder="Νέος κωδικός" style="width:100%; padding:8px 12px; border:1px solid var(--border-color); border-radius:6px; box-sizing:border-box;">
+                    </div>
+                    <div style="display:flex; justify-content:flex-end; gap:8px;">
+                        <button type="button" class="btn btn-secondary" onclick="closeChangeCredsModal()">Ακύρωση</button>
+                        <button type="submit" class="btn btn-primary">Αποθήκευση</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
 
     <div class="toast-container" id="toast-container"></div>
 

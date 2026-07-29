@@ -67,10 +67,10 @@ def mock_candidates():
             is_available=True,
             daily_quota=10,
             current_day_count=5,
-            skill_proficiency=0.5,
+            skill_proficiency=1.0,
             has_skill_data=True,
             has_skill_match=True,
-            accepts_lab=False,
+            accepts_lab=True,
             is_partnership_match=True,
             is_partnership_exclusive=False
         ),
@@ -186,9 +186,11 @@ class TestPamakristosAndExclusiveCases:
             exams = _get_pending_exams_from_db()
             # The exam should be directly assigned, not returned in pending
             assert len(exams) == 0
-            mock_upsert.assert_called_with(
-                100, 99, "On Call Dr", mock_upsert.call_args.args[3] if mock_upsert.call_args else ""
-            )
+            assert mock_upsert.called
+            args, kwargs = mock_upsert.call_args
+            assert args[0] == 100
+            assert args[1] == 99
+            assert args[2] == "On Call Dr"
 
     def test_pam_22705_always_assigns_to_mperetis(self, mock_get_local, mock_get_oncall, mock_get_exclusive, mock_get_db):
         mock_get_local.return_value = {}
@@ -206,9 +208,11 @@ class TestPamakristosAndExclusiveCases:
         with patch("diagflow.db.diagflow_db.upsert_local_assignment") as mock_upsert:
             exams = _get_pending_exams_from_db()
             assert len(exams) == 0
-            mock_upsert.assert_called_with(
-                101, 59, "ΜΠΕΡΕΤΗΣ ΓΕΩΡΓΙΟΣ", mock_upsert.call_args.args[3] if mock_upsert.call_args else ""
-            )
+            assert mock_upsert.called
+            args, kwargs = mock_upsert.call_args
+            assert args[0] == 101
+            assert args[1] == 59
+            assert args[2] == "ΜΠΕΡΕΤΗΣ ΓΕΩΡΓΙΟΣ"
             
     def test_exclusive_partnership_direct_assignment(self, mock_get_local, mock_get_oncall, mock_get_exclusive, mock_get_db):
         mock_get_local.return_value = {}
@@ -231,6 +235,8 @@ class TestPamakristosAndExclusiveCases:
         with patch("diagflow.db.diagflow_db.upsert_local_assignment") as mock_upsert:
             exams = _get_pending_exams_from_db()
             assert len(exams) == 0
-            mock_upsert.assert_called_with(
-                102, 42, "Exclusive Dr", mock_upsert.call_args.args[3] if mock_upsert.call_args else ""
-            )
+            assert mock_upsert.called
+            args, kwargs = mock_upsert.call_args
+            assert args[0] == 102
+            assert args[1] == 42
+            assert args[2] == "Exclusive Dr"

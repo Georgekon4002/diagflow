@@ -63,6 +63,21 @@ class SetOncallRequest(BaseModel):
     quota_sunday: int = 0
 
 
+class AdminChangeCredentialsRequest(BaseModel):
+    """Request body for updating admin credentials."""
+
+    old_password: str = Field(..., description="Current admin password")
+    new_username: Optional[str] = Field(default=None, description="New admin username")
+    new_password: Optional[str] = Field(default=None, description="New admin password")
+
+
+class AdminChangeCredentialsResponse(BaseModel):
+    """Response after updating admin credentials."""
+
+    message: str
+    username: str
+
+
 # ── Response schemas ──
 
 

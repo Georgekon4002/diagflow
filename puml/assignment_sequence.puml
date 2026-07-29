@@ -1,6 +1,7 @@
 @startuml
 
 title DiagFlow — Assignment Sequence
+
 skinparam backgroundColor #FEFEFE
 skinparam defaultFontName Inter
 skinparam shadowing false
@@ -21,9 +22,10 @@ api -> assign : pull_from_slis()
 assign -> mockdb : SELECT pending exams\n(last 3 days, no diagnostician)
 mockdb --> assign : Raw exam rows
 assign -> configdb : Get exclusive partnerships
+assign -> configdb : Get exam_routing_rules
 assign -> configdb : Get Παμμακάριστος on-call
-assign -> assign : Auto-assign:\n1. Exclusive partners\n2. Παμμακάριστος 22705 → ΜΠΕΡΕΤΗΣ\n3. Παμμακάριστος general → on-call
-assign -> configdb : upsert_local_assignment\n(auto-assigned)
+assign -> assign : Auto-assign:\n1. Exclusive doctor partnerships\n2. Dynamic exam routing rules\n   (e.g., Arthrografies, TMJ, Spectroscopies)\n3. Παμμακάριστος general → on-call
+assign -> configdb : upsert_local_assignment()\n(is_auto=True, rule_desc)
 assign --> api : Remaining pending exams
 
 == Fetch Pending Exams ==
@@ -34,8 +36,8 @@ api -> assign : get_pending_exams()
 assign -> mockdb : Query unassigned exams
 assign -> configdb : Check local_assignments\n(exclude already assigned)
 assign --> api : Filtered pending list
-api --> ui : Pending exams
-ui --> operator : Display exam table
+api --> ui : Pending exams table
+ui --> operator : Display pending exams
 
 == Generate Suggestion ==
 
@@ -47,25 +49,32 @@ diag_svc -> configdb : Batch load:\n• All diagnosticians\n• All skills (grou
 configdb --> diag_svc : Enriched candidate list
 diag_svc --> api : List<CandidateDiagnostician>
 
-note over api : Apply session suggestion\ncounts as virtual workload\nfor load-balancing
+note over api
+    Apply session suggestion count (_session_suggestion_counts)
+    as virtual workload offset for sequential load-balancing
+end note
+
+api -> configdb : get_system_weights()
+configdb --> api : Dynamic weights dict
 
 api -> engine : pipeline.run(exam, candidates)
 
-group Stage 0: Exclusive Partnership Check
-    engine -> engine : Any exclusive partner?
-    note right : If yes → skip all stages,\nreturn direct assignment
+group Stage 0: Exclusive Partnership & Routing Check
+    engine -> engine : Any exclusive partner or dynamic routing rule?
+    note right : If matched → skip pipeline,\nreturn direct auto-assignment suggestion
 end
 
 group Stage 1: Hard Filters
+    engine -> engine : filter_by_exclusive_lab_dynamic()
     engine -> engine : filter_by_availability()
     engine -> engine : filter_by_capacity()
+    engine -> engine : filter_by_modality_quotas_dynamic()
     engine -> engine : filter_by_modality()
     engine -> engine : filter_by_skills_hard()
     note right
-        Eliminated candidates are
-        NOT hidden — they appear in
-        alternatives with red indicator
-        and elimination reason
+        Eliminated candidates are NOT hidden.
+        They appear in alternatives with a red box
+        and elimination reason for operator override.
     end note
 end
 
@@ -81,9 +90,9 @@ group Stage 2: Weighted Scoring
 end
 
 group Stage 3: Near-Tie Load Balancing
-    engine -> engine : Find top score
-    engine -> engine : Group candidates within\nscore_tie_tolerance (5%)
-    engine -> engine : Near-tie group:\nsort by workload → quota → random
+    engine -> engine : Find top_score
+    engine -> engine : Identify near-tie group:\n|top_score − candidate_score| ≤ 5%
+    engine -> engine : Sort near-tie group:\nfewest exams today → quota → random
 end
 
 group Stage 4: Solver
@@ -92,10 +101,10 @@ end
 
 engine --> api : AssignmentSuggestion:\n{ diagnostician, score,\nbreakdown, alternatives }
 
-note over api : Cache suggestion\nIncrement session counter
+note over api : Cache suggestion in _suggestion_cache\nIncrement session workload counter
 
 api --> ui : SuggestionResponse
-ui --> operator : Show suggestion:\n"ΠΑΠΑΔΟΠΟΥΛΟΣ (87%)\n✓ Συνεργασία Ιατρού\n✓ Χωρητικότητα: 8/15\n✓ Εξειδίκευση"
+ui --> operator : Display suggestion:\n"ΠΑΠΑΔΟΠΟΥΛΟΣ (87%)\n✓ Συνεργασία Ιατρού\n✓ Χωρητικότητα: 8/15\n✓ Εξειδίκευση"
 
 == Operator Decision ==
 
@@ -107,7 +116,7 @@ alt Confirm suggestion
     ui --> operator : ✅ Ανατέθηκε
 
 else Override suggestion
-    operator -> ui : Select different diagnostician
+    operator -> ui : Select different diagnostician\n(from alternatives or eliminated)
     ui -> api : POST /api/assignments/override\n{ exam_id, override_id, reason }
     api -> configdb : upsert_local_assignment()
     api --> ui : AssignmentConfirmation\n(was_overridden=true)
@@ -117,7 +126,7 @@ end
 == Push to Slis ==
 
 operator -> ui : Click "Αποστολή στο Slis"
-ui -> api : POST /api/slis/push-all
+ui -> api : POST /api/slis/push-all (or push-selected)
 api -> assign : push_all_to_slis()
 assign -> mockdb : UPDATE slis_exams\nSET slis_synced_at, diagnostis
 assign -> configdb : DELETE from local_assignments

@@ -17,7 +17,7 @@ Lab preference is now a WEIGHTED score, not a hard filter.
 
 from dataclasses import dataclass
 from datetime import date
-from typing import Optional
+from typing import Any, Optional
 
 import structlog
 
@@ -72,6 +72,7 @@ class CandidateDiagnostician:
 
     # Lab preference
     accepts_lab: bool = True
+    preferred_lab_id: Optional[Any] = None
 
     # Partnership
     is_partnership_match: bool = False

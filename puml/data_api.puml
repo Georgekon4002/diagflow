@@ -37,16 +37,25 @@ package "diagflow.db" as db_pkg #B2EBF2 {
         + get_all_availability(): list[dict]
         + upsert_availability(...): dict
         + get_absent_diagnostician_ids(date): set[int]
-        __ Παμμακάριστος __
-        + init_pamakristos_schedule(): void
-        + get_pamakristos_weekly_schedule_db(): list[dict]
-        + update_pamakristos_weekly_schedule_db(items): void
-        + get_oncall_diagnostician(date): dict | None
-        __ Doctors __
-        + get_all_doctors(q, skip, limit): dict
-        + upsert_doctor(id, name, specialty): dict
-        + delete_doctor(id): bool
-        __ Local Assignments __
+        __ Dynamic Exam Routing Rules __
+        + get_all_exam_routing_rules(): list[dict]
+        + create_exam_routing_rule(...): dict
+        + update_exam_routing_rule(rule_id, ...): dict
+        + delete_exam_routing_rule(rule_id): bool
+        __ Exclusive Lab Rules __
+        + get_all_exclusive_lab_rules(): list[dict]
+        + create_exclusive_lab_rule(...): dict
+        + update_exclusive_lab_rule(rule_id, ...): dict
+        + delete_exclusive_lab_rule(rule_id): bool
+        __ Modality Quotas __
+        + get_all_modality_quotas(): list[dict]
+        + create_modality_quota(...): dict
+        + update_modality_quota(quota_id, ...): dict
+        + delete_modality_quota(quota_id): bool
+        __ System Settings & Weights __
+        + get_system_weights(): dict
+        + update_system_weights(weights): dict
+        __ Local Assignments & Audit __
         + upsert_local_assignment(exammoreid, ...): dict
         + get_all_local_assignments(): dict[int, dict]
         + get_daily_assignment_counts(): dict[int, int]
@@ -143,16 +152,17 @@ package "diagflow.engine" as engine_pkg #BBDEFB {
         + is_available: bool
         + daily_quota: int
         + current_day_count: int
+        + current_day_ct_count: int
+        + current_day_mri_count: int
         + skill_proficiency: float
         + has_skill_match: bool
         + has_skill_data: bool
         + accepts_lab: bool
+        + preferred_lab_id: int | None
         + is_partnership_match: bool
         + is_partnership_exclusive: bool
         + has_patient_history: bool
         + patient_history_count: int
-        + is_excluded_by_comment: bool
-        + is_directly_assigned_by_comment: bool
     }
 
     class "FilterResult" as filter_result <<dataclass>> {
@@ -162,12 +172,12 @@ package "diagflow.engine" as engine_pkg #BBDEFB {
     }
 
     class "filters.py" as filters <<module>> {
+        + filter_by_exclusive_lab_dynamic(candidate, exam): FilterResult
         + filter_by_availability(candidate, exam): FilterResult
         + filter_by_capacity(candidate, exam): FilterResult
+        + filter_by_modality_quotas_dynamic(candidate, exam): FilterResult
         + filter_by_modality(candidate, exam): FilterResult
         + filter_by_skills_hard(candidate, exam): FilterResult
-        + filter_by_lab_preference(candidate, exam): FilterResult
-        + filter_by_comment_exclusion(candidate, exam): FilterResult
         --
         + apply_hard_filters(candidates, exam): (list, dict)
         + get_elimination_reason(id, results): str | None
@@ -191,13 +201,13 @@ package "diagflow.engine" as engine_pkg #BBDEFB {
     }
 
     class "scoring.py" as scoring <<module>> {
-        + score_skills_weighted(candidate, exam): ScoreComponent
-        + score_patient_history(candidate, exam): ScoreComponent
-        + score_partnership(candidate, exam): ScoreComponent
-        + score_lab_preference(candidate, exam): ScoreComponent
-        + score_capacity(candidate): ScoreComponent
+        + score_skills_weighted(candidate, exam, weights): ScoreComponent
+        + score_patient_history(candidate, exam, weights): ScoreComponent
+        + score_partnership(candidate, exam, weights): ScoreComponent
+        + score_lab_preference(candidate, exam, weights): ScoreComponent
+        + score_capacity(candidate, weights): ScoreComponent
         --
-        + compute_candidate_score(candidate, exam): CandidateScore
+        + compute_candidate_score(candidate, exam, weights): CandidateScore
         + score_all_candidates(candidates, exam): list[CandidateScore]
     }
 
@@ -237,7 +247,6 @@ package "diagflow.engine" as engine_pkg #BBDEFB {
     }
 
     class "AssignmentPipeline" as pipeline {
-        - _comment_parser: None
         --
         + run(exam, candidates): AssignmentSuggestion | None
         - _build_alternatives(...): list[dict]
@@ -261,6 +270,7 @@ filters --> filter_result : produces
 scoring ..> exam_ctx : uses
 scoring ..> candidate : scores
 scoring --> cand_score : produces
+scoring --> cfg_db : "reads system weights\n(get_system_weights)"
 cand_score *-- score_comp : contains
 
 solver ..> cand_score : takes

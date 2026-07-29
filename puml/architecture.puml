@@ -22,6 +22,12 @@ package "External Systems" as ext #E8EAF6 {
     }
 }
 
+' ─── Desktop Packaging ───
+package "Desktop Executable (Standalone EXE)" as desktop #FFF3E0 {
+    component "PyInstaller Package\n(scripts/build_exe.py)" as pyinst
+    component "pywebview App Launcher\n(src/diagflow/launcher.py)" as launcher
+}
+
 ' ─── DiagFlow Core ───
 package "DiagFlow FastAPI Server" as core #E3F2FD {
     component "FastAPI\nApplication" as api
@@ -34,15 +40,16 @@ package "DiagFlow FastAPI Server" as core #E3F2FD {
         component "Slis Sync\nService" as sync_svc
     }
 
-    package "Rule Engine" as engine #BBDEFB {
-        component "Hard Filters" as filters
-        component "Weighted\nScoring" as scoring
-        component "Near-Tie\nLoad Balancer" as balancer
-        component "OR-Tools\nCP-SAT Solver" as solver
+    package "Rule Engine Pipeline" as engine #BBDEFB {
+        component "Stage 0: Exclusive &\nRouting Rules" as stage0
+        component "Stage 1: Hard Filters\n(Availability, Quotas, Skills, Labs)" as filters
+        component "Stage 2: Weighted Scoring\n(Dynamic System Weights)" as scoring
+        component "Stage 3: Near-Tie Balancer\n(& Session Virtual Workload)" as balancer
+        component "Stage 4: OR-Tools\nCP-SAT Solver" as solver
     }
 
-    package "Data Layer" as data #B2EBF2 {
-        component "diagflow_db.py\n(raw sqlite3)" as cfg_layer
+    package "Data Access Layer" as data #B2EBF2 {
+        component "diagflow_db.py\n(raw sqlite3 CRUD)" as cfg_layer
         component "engines.py\n(SQLAlchemy — prod)" as sa_engines
     }
 
@@ -55,6 +62,11 @@ package "DiagFlow FastAPI Server" as core #E3F2FD {
         collections "local_assignments"
         collections "assignment_log"
         collections "pamakristos_schedule"
+        collections "exam_routing_rules"
+        collections "exclusive_lab_rules"
+        collections "modality_quotas"
+        collections "system_settings"
+        collections "admin_users"
     }
 }
 
@@ -70,29 +82,33 @@ slisdb <..> sa_engines : "pyodbc\n(production)"
 mockdb <--> sync_svc : "SQLite read/write\n(development)"
 
 cfg_layer --> configdb : "sqlite3\nCRUD"
-sa_engines ..> services : "(future)"
+sa_engines ..> services : "(future MSSQL)"
 
 sync_svc --> cfg_layer : "sync diagnosticians\n& doctors"
 cron --> sync_svc : "trigger daily\nsync_diagnosticians()\nsync_doctors()"
 
-services --> engine : "run pipeline"
-assign_svc --> cfg_layer : "upsert_local_assignment\nget_daily_counts"
-diag_svc --> cfg_layer : "get candidates\nskills, partnerships"
-pam_svc --> cfg_layer : "get/set on-call"
+services --> engine : "run 4-stage pipeline"
+assign_svc --> cfg_layer : "upsert_local_assignment\nauto-assign routing rules"
+diag_svc --> cfg_layer : "get candidates, skills,\npartnerships, availability"
+pam_svc --> cfg_layer : "get/set on-call schedule"
 
-filters --> scoring : "passed\ncandidates"
-scoring --> balancer : "scored list"
-balancer --> solver : "tie-broken list"
+stage0 --> filters : "unrouted candidates"
+filters --> scoring : "passed candidates"
+scoring --> balancer : "scored candidate list"
+balancer --> solver : "tie-broken candidate list"
 
 api --> services : "orchestrate"
 api --> dashboard : "serve /\n+ REST /api/*"
-api --> admin : "serve\n/admin.html"
-dashboard --> operator : "show suggestions\n+ reasons"
-operator --> dashboard : "confirm /\noverride"
-dashboard --> api : "POST decisions"
-admin --> api : "admin CRUD"
+api --> admin : "serve /admin.html\n+ REST /api/admin/*"
+dashboard --> operator : "suggestions, breakdowns,\neliminations, alternatives"
+operator --> dashboard : "confirm / override / push"
+admin --> api : "admin configuration CRUD"
 
-assign_svc --> sync_svc : "push to Slis"
-assign_svc --> cfg_layer : "log decision"
+assign_svc --> sync_svc : "push assignments to Slis"
+assign_svc --> cfg_layer : "log decision to audit trail"
+
+pyinst --> launcher : "bundles into DiagFlow.exe"
+launcher --> api : "spawns FastAPI in thread\n(port 8080)"
+launcher --> dashboard : "opens in native window\n(pywebview)"
 
 @enduml

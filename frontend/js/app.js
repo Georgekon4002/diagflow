@@ -1265,13 +1265,19 @@ function goToAdmin() {
 // ══════════════════════════════════════════════
 
 function showToast(message, type = 'info') {
-    const container = document.getElementById('toast-container');
+    let container = document.getElementById('toast-container');
+    if (!container) {
+        container = document.createElement('div');
+        container.id = 'toast-container';
+        container.className = 'toast-container';
+        document.body.appendChild(container);
+    }
     const icons = { success: '✅', warning: '⚠️', error: '❌', info: 'ℹ️' };
 
     const toast = document.createElement('div');
     toast.className = `toast ${type}`;
     toast.innerHTML = `
-        <span class="toast-icon">${icons[type]}</span>
+        <span class="toast-icon">${icons[type] || 'ℹ️'}</span>
         <span class="toast-message">${message}</span>
     `;
 
@@ -2077,15 +2083,6 @@ function updateAssignedPagination(total) {
 //  Slis Sync Functions
 // ══════════════════════════════════════════════
 
-function showSqlPopup(queries) {
-    const modal = document.getElementById('slis-sql-modal');
-    const content = document.getElementById('slis-sql-content');
-    if (modal && content) {
-        content.textContent = queries.join('\n');
-        modal.style.display = 'flex';
-    }
-}
-
 /**
  * Called by the Ανανέωση button.
  * On the assigned tab it also triggers a Slis pull (expire + refresh).
@@ -2132,9 +2129,6 @@ async function updateExamOnSlis(examId, exammoreid) {
             renderAssignedTable();
             updateTabCounts();
             showToast(`✅ Εξέταση ${examId} ενημερώθηκε στο Slis`, 'success');
-            if (result.queries && result.queries.length > 0) {
-                showSqlPopup(result.queries);
-            }
         } else {
             const err = result?.failed?.[0]?.error || 'Άγνωστο σφάλμα';
             showToast(`❌ Αποτυχία ενημέρωσης: ${err}`, 'error');
@@ -2166,9 +2160,6 @@ async function updateAllToSlis() {
         if (ok > 0) {
             await loadAssignedExams();
             showToast(`✅ ${ok} εξετάσεις ενημερώθηκαν στο Slis${fail > 0 ? ` (${fail} αποτυχίες)` : ''}`, 'success');
-            if (result.queries && result.queries.length > 0) {
-                showSqlPopup(result.queries);
-            }
         } else if (fail > 0) {
             showToast(`❌ Αποτυχία ενημέρωσης ${fail} εξετάσεων`, 'error');
         } else {
@@ -2219,9 +2210,6 @@ async function updateSelectedToSlis() {
             renderAssignedTable();
             updateTabCounts();
             showToast(`✅ ${ok} εξετάσεις ενημερώθηκαν στο Slis${fail > 0 ? ` (${fail} αποτυχίες)` : ''}`, 'success');
-            if (result.queries && result.queries.length > 0) {
-                showSqlPopup(result.queries);
-            }
         } else {
             showToast(`❌ Αποτυχία ενημέρωσης`, 'error');
         }

@@ -27730,13 +27730,9 @@ INSERT INTO exclusive_lab_rules (diagnostician_id, lab_id, lab_name) VALUES (222
 INSERT INTO modality_quotas (diagnostician_id, modality, max_count) VALUES (89, 'CT', 20);
 INSERT INTO modality_quotas (diagnostician_id, modality, max_count) VALUES (89, 'MRI', 2);
 
-CREATE TABLE system_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-
-INSERT INTO system_settings (key, value) VALUES ('weight_partnership', '0.35'), ('weight_patient_history', '0.20'), ('weight_skills', '0.20'), ('weight_lab', '0.15'), ('weight_capacity', '0.10');
-
-
 CREATE TABLE IF NOT EXISTS system_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-INSERT INTO system_settings (key, value) VALUES
+
+INSERT OR REPLACE INTO system_settings (key, value) VALUES
 ('pts_partnership', '0.35'),
 ('pts_history', '0.20'),
 ('pts_skills_pref', '0.20'),
@@ -27745,4 +27741,6 @@ INSERT INTO system_settings (key, value) VALUES
 ('pts_lab_pref', '0.15'),
 ('pts_lab_neut', '0.075'),
 ('pts_lab_other', '0.015'),
-('pts_capacity', '0.10');
+('pts_capacity', '0.10'),
+('admin_username', 'admin'),
+('admin_password_hash', '8c6976e5b5410415bde908bd4dee15dfb167a9c873fc4bb8a81f6f2ab448a918');

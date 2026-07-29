@@ -48,7 +48,7 @@ class CandidateScore:
     rank: int = 0  # Populated after sorting
 
 
-def score_capacity(candidate: CandidateDiagnostician, weights: dict) -> ScoreComponent:
+def score_capacity(candidate: CandidateDiagnostician, weights: dict | None = None) -> ScoreComponent:
     """
     Priority b: Score based on remaining daily quota.
 
@@ -56,6 +56,8 @@ def score_capacity(candidate: CandidateDiagnostician, weights: dict) -> ScoreCom
     At quota → 0.0, fully available → 1.0
     Over quota → 0.0 (should have been filtered, but defensive)
     """
+    if weights is None:
+        weights = {}
     pts_max = float(weights.get("pts_capacity", 0.1))
     
     if candidate.daily_quota <= 0:
@@ -79,13 +81,15 @@ def score_capacity(candidate: CandidateDiagnostician, weights: dict) -> ScoreCom
     )
 
 
-def score_partnership(candidate: CandidateDiagnostician, exam: ExamContext, weights: dict) -> ScoreComponent:
+def score_partnership(candidate: CandidateDiagnostician, exam: ExamContext, weights: dict | None = None) -> ScoreComponent:
     """
     Priority c: Score based on issuing doctor partnership.
 
     If the issuing doctor has a preferred diagnostician and this candidate matches,
     they get a full score.
     """
+    if weights is None:
+        weights = {}
     pts_max = float(weights.get("pts_partnership", 0.35))
     
     if candidate.is_partnership_exclusive:
@@ -116,7 +120,7 @@ def score_partnership(candidate: CandidateDiagnostician, exam: ExamContext, weig
     )
 
 
-def score_skills_weighted(candidate: CandidateDiagnostician, exam: ExamContext, weights: dict) -> ScoreComponent:
+def score_skills_weighted(candidate: CandidateDiagnostician, exam: ExamContext, weights: dict | None = None) -> ScoreComponent:
     """
     Skills weighted bonus (after passing the hard skills filter).
 
@@ -124,6 +128,8 @@ def score_skills_weighted(candidate: CandidateDiagnostician, exam: ExamContext, 
     Candidates with no skill data (who passed the hard filter) get a neutral 0.3.
     This is separate from the hard skills filter — it rewards expertise.
     """
+    if weights is None:
+        weights = {}
     exam_type = exam.exam_name if exam.exam_name else (f"{exam.body_part} ({exam.modality})" if exam.body_part else exam.modality)
     
     pts_max = float(weights.get("pts_skills_pref", 0.20))
@@ -153,7 +159,7 @@ def score_skills_weighted(candidate: CandidateDiagnostician, exam: ExamContext, 
     )
 
 
-def score_lab_preference(candidate: CandidateDiagnostician, exam: ExamContext, weights: dict) -> ScoreComponent:
+def score_lab_preference(candidate: CandidateDiagnostician, exam: ExamContext, weights: dict | None = None) -> ScoreComponent:
     """
     Priority e: Weighted score for lab preference (NOT a hard filter).
 
@@ -161,6 +167,8 @@ def score_lab_preference(candidate: CandidateDiagnostician, exam: ExamContext, w
     If they have no preference or it doesn't match, they get a neutral/low score,
     so they are not excluded but ranked lower if someone else prefers this lab.
     """
+    if weights is None:
+        weights = {}
     pts_max = float(weights.get("pts_lab_pref", 0.15))
     pts_neut = float(weights.get("pts_lab_neut", 0.075))
     pts_other = float(weights.get("pts_lab_other", 0.015))
@@ -190,7 +198,7 @@ def score_lab_preference(candidate: CandidateDiagnostician, exam: ExamContext, w
 
 
 def score_patient_history(
-    candidate: CandidateDiagnostician, exam: ExamContext, weights: dict
+    candidate: CandidateDiagnostician, exam: ExamContext, weights: dict | None = None
 ) -> ScoreComponent:
     """
     Priority f: Score based on continuity of care.
@@ -198,6 +206,8 @@ def score_patient_history(
     If this diagnostician has handled this patient's past similar exams,
     they get a bonus for consistency.
     """
+    if weights is None:
+        weights = {}
     pts_max = float(weights.get("pts_history", 0.20))
     
     if candidate.has_patient_history:
@@ -222,11 +232,10 @@ def score_patient_history(
     )
 
 
-
 def compute_candidate_score(
     candidate: CandidateDiagnostician,
     exam: ExamContext,
-    weights: dict,
+    weights: dict | None = None,
 ) -> CandidateScore:
     """
     Compute the complete composite score for a single candidate.
@@ -238,6 +247,8 @@ def compute_candidate_score(
       e. Lab preference (weighted)
       f. Patient history
     """
+    if weights is None:
+        weights = {}
     components = [
         score_skills_weighted(candidate, exam, weights),
         score_patient_history(candidate, exam, weights),

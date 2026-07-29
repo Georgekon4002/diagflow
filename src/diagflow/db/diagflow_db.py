@@ -307,6 +307,16 @@ def upsert_availability(diagnostician_id: int, date: str, status: str = "availab
     return _row_to_dict(row)
 
 
+def delete_availability(diagnostician_id: int, date: str) -> bool:
+    """Delete availability record for a given diagnostician and date."""
+    with _conn() as con:
+        res = con.execute(
+            "DELETE FROM availability WHERE diagnostician_id = ? AND date = ?",
+            (diagnostician_id, date),
+        )
+        return res.rowcount > 0
+
+
 def get_absent_diagnostician_ids(date: str) -> set[int]:
     """Return IDs of diagnosticians who are on leave on the given date."""
     with _conn() as con:
@@ -596,20 +606,36 @@ def create_exam_routing_rule(lab_id: int | None, issuing_doctor_id: str | None, 
         ).fetchone()
     return _row_to_dict(row)
 
+ALLOWED_EXAM_ROUTING_FIELDS = {
+    'lab_id', 'issuing_doctor_id', 'issuing_doctor_name',
+    'is_pamakristos', 'exam_codes', 'diagnostician_id', 'description', 'is_active'
+}
+ALLOWED_EXCLUSIVE_LAB_FIELDS = {'diagnostician_id', 'lab_id', 'lab_name', 'is_active'}
+ALLOWED_MODALITY_QUOTA_FIELDS = {'diagnostician_id', 'modality', 'max_count', 'is_active'}
+
+DEFAULT_ADMIN_USERNAME = "admin"
+# bcrypt hash of "admin1234" (cost=12). Change via the Admin Panel UI.
+DEFAULT_ADMIN_PASSWORD_HASH = "$2b$12$0qxEPV2WtZ00AhsmOgAbJOQuiessOk/m5jq4x55CB/c680fNiW13i"
+
+DEFAULT_IT_SUPPORT_USERNAME = "it_support"
+# Generated with bcrypt.hashpw(b"it_support", bcrypt.gensalt(12))
+DEFAULT_IT_SUPPORT_PASSWORD_HASH = "$2b$12$EZsWHGua1Wmf6lk0LBS1J.WMmepfsugJDJzqTSv.f1azf8R03CJJy"
+
 def update_exam_routing_rule(rule_id: int, update_data: dict) -> dict | None:
-    if not update_data:
-        pass
-    else:
+    if update_data:
         with _conn() as con:
             sets = []
             vals = []
             for k, v in update_data.items():
+                if k not in ALLOWED_EXAM_ROUTING_FIELDS:
+                    continue
                 if k == 'is_pamakristos' or k == 'is_active':
                     v = int(v)
                 sets.append(f"{k} = ?")
                 vals.append(v)
-            vals.append(rule_id)
-            con.execute(f"UPDATE exam_routing_rules SET {', '.join(sets)} WHERE id = ?", tuple(vals))
+            if sets:
+                vals.append(rule_id)
+                con.execute(f"UPDATE exam_routing_rules SET {', '.join(sets)} WHERE id = ?", tuple(vals))
             
     with _conn() as con:
         row = con.execute(
@@ -661,12 +687,15 @@ def update_exclusive_lab_rule(rule_id: int, update_data: dict) -> dict | None:
             sets = []
             vals = []
             for k, v in update_data.items():
+                if k not in ALLOWED_EXCLUSIVE_LAB_FIELDS:
+                    continue
                 if k == 'is_active':
                     v = int(v)
                 sets.append(f"{k} = ?")
                 vals.append(v)
-            vals.append(rule_id)
-            con.execute(f"UPDATE exclusive_lab_rules SET {', '.join(sets)} WHERE id = ?", tuple(vals))
+            if sets:
+                vals.append(rule_id)
+                con.execute(f"UPDATE exclusive_lab_rules SET {', '.join(sets)} WHERE id = ?", tuple(vals))
             
     with _conn() as con:
         row = con.execute(
@@ -718,12 +747,15 @@ def update_modality_quota(rule_id: int, update_data: dict) -> dict | None:
             sets = []
             vals = []
             for k, v in update_data.items():
+                if k not in ALLOWED_MODALITY_QUOTA_FIELDS:
+                    continue
                 if k == 'is_active':
                     v = int(v)
                 sets.append(f"{k} = ?")
                 vals.append(v)
-            vals.append(rule_id)
-            con.execute(f"UPDATE modality_quotas SET {', '.join(sets)} WHERE id = ?", tuple(vals))
+            if sets:
+                vals.append(rule_id)
+                con.execute(f"UPDATE modality_quotas SET {', '.join(sets)} WHERE id = ?", tuple(vals))
             
     with _conn() as con:
         row = con.execute(
@@ -740,7 +772,98 @@ def delete_modality_quota(quota_id: int) -> bool:
         cur = con.execute('DELETE FROM modality_quotas WHERE id = ?', (quota_id,))
     return cur.rowcount > 0
 
-# ── System Settings (Scoring Weights) ──────────────────────────────────────────
+# ── System Settings (Scoring Weights & Admin Credentials) ─────────────────────
+
+def _ensure_admin_users_table(con):
+    con.execute(
+        "CREATE TABLE IF NOT EXISTS admin_users ("
+        "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+        "username TEXT UNIQUE NOT NULL, "
+        "password_hash TEXT NOT NULL, "
+        "role TEXT NOT NULL DEFAULT 'admin', "
+        "is_active INTEGER NOT NULL DEFAULT 1)"
+    )
+    # Perform migration if needed
+    con.execute(
+        "CREATE TABLE IF NOT EXISTS system_settings ("
+        "key TEXT PRIMARY KEY, value TEXT NOT NULL)"
+    )
+    count = con.execute("SELECT COUNT(*) as c FROM admin_users").fetchone()["c"]
+    if count == 0:
+        # Migrate from system_settings
+        u_row = con.execute("SELECT value FROM system_settings WHERE key = 'admin_username'").fetchone()
+        p_row = con.execute("SELECT value FROM system_settings WHERE key = 'admin_password_hash'").fetchone()
+        username = u_row["value"] if u_row else DEFAULT_ADMIN_USERNAME
+        password_hash = p_row["value"] if p_row else DEFAULT_ADMIN_PASSWORD_HASH
+        
+        con.execute(
+            "INSERT INTO admin_users (username, password_hash, role) VALUES (?, ?, 'super_admin')",
+            (username, password_hash)
+        )
+        # Seed it_support account automatically as requested
+        con.execute(
+            "INSERT INTO admin_users (username, password_hash, role) VALUES (?, ?, 'it_support')",
+            (DEFAULT_IT_SUPPORT_USERNAME, DEFAULT_IT_SUPPORT_PASSWORD_HASH)
+        )
+
+def get_admin_user_by_username(username: str) -> dict | None:
+    with _conn() as con:
+        _ensure_admin_users_table(con)
+        row = con.execute("SELECT * FROM admin_users WHERE username = ?", (username,)).fetchone()
+    return _row_to_dict(row) if row else None
+
+def get_admin_user_by_id(user_id: int) -> dict | None:
+    with _conn() as con:
+        _ensure_admin_users_table(con)
+        row = con.execute("SELECT * FROM admin_users WHERE id = ?", (user_id,)).fetchone()
+    return _row_to_dict(row) if row else None
+
+def get_all_admin_users() -> list[dict]:
+    with _conn() as con:
+        _ensure_admin_users_table(con)
+        rows = con.execute("SELECT id, username, role, is_active FROM admin_users ORDER BY id").fetchall()
+    return [_row_to_dict(r) for r in rows]
+
+def create_admin_user(username: str, password_hash: str, role: str) -> dict:
+    with _conn() as con:
+        _ensure_admin_users_table(con)
+        cur = con.execute(
+            "INSERT INTO admin_users (username, password_hash, role) VALUES (?, ?, ?)",
+            (username, password_hash, role)
+        )
+        row = con.execute("SELECT id, username, role, is_active FROM admin_users WHERE id = ?", (cur.lastrowid,)).fetchone()
+    return _row_to_dict(row)
+
+def update_admin_user(user_id: int, username: str | None = None, password_hash: str | None = None, role: str | None = None, is_active: bool | None = None) -> dict | None:
+    with _conn() as con:
+        _ensure_admin_users_table(con)
+        fields = []
+        params = []
+        if username is not None:
+            fields.append("username=?")
+            params.append(username)
+        if password_hash is not None:
+            fields.append("password_hash=?")
+            params.append(password_hash)
+        if role is not None:
+            fields.append("role=?")
+            params.append(role)
+        if is_active is not None:
+            fields.append("is_active=?")
+            params.append(int(is_active))
+        
+        if fields:
+            params.append(user_id)
+            con.execute(f"UPDATE admin_users SET {','.join(fields)} WHERE id=?", tuple(params))
+        row = con.execute("SELECT id, username, role, is_active FROM admin_users WHERE id = ?", (user_id,)).fetchone()
+    return _row_to_dict(row) if row else None
+
+def delete_admin_user(user_id: int) -> bool:
+    with _conn() as con:
+        _ensure_admin_users_table(con)
+        cur = con.execute("DELETE FROM admin_users WHERE id = ?", (user_id,))
+    return cur.rowcount > 0
+
 
 def get_system_weights() -> dict:
     """Returns the current AI scoring weights from the DB."""
@@ -752,13 +875,17 @@ def get_system_weights() -> dict:
         )
         rows = con.execute("SELECT key, value FROM system_settings").fetchall()
     
-    # Defaults
+    # Defaults matching scoring.py and frontend admin.js
     weights = {
-        "weight_partnership": 0.35,
-        "weight_patient_history": 0.20,
-        "weight_skills": 0.20,
-        "weight_lab": 0.15,
-        "weight_capacity": 0.10
+        "pts_partnership": 0.35,
+        "pts_history": 0.20,
+        "pts_skills_pref": 0.20,
+        "pts_skills_neut": 0.10,
+        "pts_skills_none": 0.06,
+        "pts_lab_pref": 0.15,
+        "pts_lab_neut": 0.075,
+        "pts_lab_other": 0.015,
+        "pts_capacity": 0.10
     }
     
     for r in rows:
