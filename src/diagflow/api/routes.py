@@ -101,13 +101,13 @@ class AdminLoginResponse(BaseModel):
 def _require_admin(x_admin_token: str = Header(default="")):
     """Dependency: require a valid admin token."""
     if not x_admin_token or x_admin_token not in _admin_sessions:
-        raise HTTPException(status_code=403, detail="Απαιτείται σύνδεση διαχειριστή")
+        raise HTTPException(status_code=401, detail="Απαιτείται σύνδεση διαχειριστή")
     return _admin_sessions[x_admin_token]
 
-def _require_super_admin(session: dict = Depends(_require_admin)):
-    """Dependency: require super_admin or it_support role."""
-    if session.get("role") not in ("super_admin", "it_support"):
-        raise HTTPException(status_code=403, detail="Απαιτούνται δικαιώματα διαχείρισης χρηστών")
+def _require_it_support(session: dict = Depends(_require_admin)):
+    """Dependency: require it_support role."""
+    if session.get("role") != "it_support":
+        raise HTTPException(status_code=403, detail="Απαιτούνται δικαιώματα IT support")
     return session
 
 @router.post("/admin/auth/login", response_model=AdminLoginResponse)
@@ -163,6 +163,9 @@ async def admin_login(request: AdminLoginRequest, raw_request: Request):
         _failed_login_attempts.setdefault(client_ip, []).append(now)
         await asyncio.sleep(1.0)  # Throttling delay against automated brute-force attacks
         raise HTTPException(status_code=401, detail="Λάθος στοιχεία σύνδεσης")
+
+    if user and not user.get("is_active", 1):
+        raise HTTPException(status_code=403, detail="Ο λογαριασμός σας έχει απενεργοποιηθεί")
 
     # Clear failed attempts on success
     _failed_login_attempts.pop(client_ip, None)
@@ -237,7 +240,7 @@ class AdminUserUpdateRequest(BaseModel):
     is_active: bool | None = None
 
 @router.get("/admin/users")
-async def get_admin_users(session: dict = Depends(_require_super_admin)):
+async def get_admin_users(session: dict = Depends(_require_it_support)):
     users = cfg_db.get_all_admin_users()
     # Don't expose password hashes
     for u in users:
@@ -245,7 +248,7 @@ async def get_admin_users(session: dict = Depends(_require_super_admin)):
     return users
 
 @router.post("/admin/users")
-async def create_admin_user(req: AdminUserCreateRequest, session: dict = Depends(_require_super_admin)):
+async def create_admin_user(req: AdminUserCreateRequest, session: dict = Depends(_require_it_support)):
     existing = cfg_db.get_admin_user_by_username(req.username.strip())
     if existing:
         raise HTTPException(status_code=400, detail="Το όνομα χρήστη υπάρχει ήδη")
@@ -255,7 +258,7 @@ async def create_admin_user(req: AdminUserCreateRequest, session: dict = Depends
     return user
 
 @router.put("/admin/users/{user_id}")
-async def update_admin_user(user_id: int, req: AdminUserUpdateRequest, session: dict = Depends(_require_super_admin)):
+async def update_admin_user(user_id: int, req: AdminUserUpdateRequest, session: dict = Depends(_require_it_support)):
     new_hash = None
     if req.password and req.password.strip():
         new_hash = bcrypt.hashpw(req.password.encode("utf-8"), bcrypt.gensalt(rounds=12)).decode()
@@ -273,7 +276,7 @@ async def update_admin_user(user_id: int, req: AdminUserUpdateRequest, session: 
     return updated
 
 @router.post("/admin/users/{user_id}/reset")
-async def reset_admin_user(user_id: int, session: dict = Depends(_require_super_admin)):
+async def reset_admin_user(user_id: int, session: dict = Depends(_require_it_support)):
     target_user = cfg_db.get_admin_user_by_id(user_id)
     if not target_user:
         raise HTTPException(status_code=404, detail="Ο χρήστης δεν βρέθηκε")
@@ -286,8 +289,23 @@ async def reset_admin_user(user_id: int, session: dict = Depends(_require_super_
         raise HTTPException(status_code=500, detail="Αποτυχία επαναφοράς")
     return {"message": "Τα στοιχεία επαναφέρθηκαν επιτυχώς σε admin / admin1234"}
 
+
+@router.post("/admin/users/{user_id}/toggle")
+async def toggle_admin_user(user_id: int, session: dict = Depends(_require_it_support)):
+    target_user = cfg_db.get_admin_user_by_id(user_id)
+    if not target_user:
+        raise HTTPException(status_code=404, detail="Ο χρήστης δεν βρέθηκε")
+    if target_user["role"] == "it_support":
+        raise HTTPException(status_code=400, detail="Δεν επιτρέπεται η αλλαγή του it_support")
+    
+    new_active = not bool(target_user["is_active"])
+    updated = cfg_db.update_admin_user(user_id, is_active=new_active)
+    if not updated:
+        raise HTTPException(status_code=500, detail="Αποτυχία ενημέρωσης")
+    return {"message": "Η κατάσταση του χρήστη ενημερώθηκε", "is_active": updated["is_active"]}
+
 @router.delete("/admin/users/{user_id}")
-async def delete_admin_user(user_id: int, session: dict = Depends(_require_super_admin)):
+async def delete_admin_user(user_id: int, session: dict = Depends(_require_it_support)):
     if user_id == session["id"]:
         raise HTTPException(status_code=400, detail="Δεν μπορείτε να διαγράψετε τον εαυτό σας")
     if not cfg_db.delete_admin_user(user_id):

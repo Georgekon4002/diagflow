@@ -1212,6 +1212,7 @@ async function doLogin() {
         if (data && data.token) {
             adminToken = data.token;
             sessionStorage.setItem('adminToken', adminToken);
+            if(data.role) sessionStorage.setItem('adminRole', data.role);
             showAdminLoggedIn();
             closeLoginModal();
             showToast('✅ Συνδεθήκατε ως Διαχειριστής', 'success');
@@ -1221,6 +1222,7 @@ async function doLogin() {
             if (username === 'admin' && password === 'admin1234') {
                 adminToken = 'mock-token-' + Date.now();
                 sessionStorage.setItem('adminToken', adminToken);
+            if(data.role) sessionStorage.setItem('adminRole', data.role);
                 showAdminLoggedIn();
                 closeLoginModal();
                 showToast('✅ Συνδεθήκατε ως Διαχειριστής (mock)', 'success');
@@ -1944,7 +1946,10 @@ function getEligibleFabDiagnosticians() {
         }
 
         const quota = getTodayQuota(d);
-        if (quota > 0 && quota !== 999 && d.current_day_count >= quota) {
+        if (quota === 0) {
+            isEligible = false;
+            rejectReason = 'Μη διαθέσιμος';
+        } else if (quota !== 999 && d.current_day_count >= quota) {
             isEligible = false;
             rejectReason = 'Όριο γεμάτο';
         }

@@ -13,7 +13,7 @@
 **DiagFlow** is an intelligent diagnostic assignment and decision-support engine developed for **Kosmoiatriki**. It automates the complex process of assigning CT and MRI medical imaging reports from Infomed's Slis system to diagnosticians using a 4-stage rule engine, dynamic routing rules, weighted multi-factor scoring, near-tie load balancing, and Google OR-Tools CP-SAT batch optimization.
 
 > 💡 **Design Philosophy:** *Suggest, don't decide.*  
-> Every assignment suggestion comes with complete transparency—displaying exactly which rules fired, score breakdowns per factor, and full visibility into eliminated candidates with human-readable rejection reasons. Secretariat operators retain full authority to confirm suggestions or manually override them with one click. Every decision and human override is logged for auditing and future weight tuning.
+> Every assignment suggestion comes with complete transparency, displaying exactly which rules fired, score breakdowns per factor and full visibility into eliminated candidates with human-readable rejection reasons. Secretariat operators retain full authority to confirm suggestions or manually override them with one click. Every decision and human override is logged for auditing and future weight tuning.
 
 ---
 
@@ -37,6 +37,7 @@
 - [📡 API Reference](#-api-reference)
 - [📁 Project Structure](#-project-structure)
 - [📐 PlantUML Architecture Diagrams](#-plantuml-architecture-diagrams)
+- [📸 Screenshots](#-screenshots)
 - [📄 License](#-license)
 
 ---
@@ -543,6 +544,76 @@ All PlantUML diagram source files are maintained in the [`puml/`](puml/) directo
 | **Data Model Overview** | [`data_model.puml`](puml/data_model.puml) | Overview of entities and cross-database references across `diagflow.db` and `mock_slis.db`. |
 | **Entity-Relationship Diagram** | [`er_diagram.puml`](puml/er_diagram.puml) | Detailed ER diagram with full column attributes, primary keys, foreign keys, unique constraints, and table relationships. |
 | **Rule Engine Pipeline Flow** | [`rule_engine_flow.puml`](puml/rule_engine_flow.puml) | Activity diagram showing decision paths through Stage 0 auto-assignment, Stage 1 hard filters, Stage 2 scoring, Stage 3 near-tie load balancing, and Stage 4 solver. |
+
+---
+
+## 📸 Screenshots
+
+### 🖥️ Secretariat Dashboard
+
+<div align="center">
+
+| Homescreen (Pending Tab) | Homescreen (Pending Tab — cont.) |
+|:---:|:---:|
+| ![Homescreen 1](media/screenshots/homescreen1.png) | ![Homescreen 2](media/screenshots/homescreen2.png) |
+
+| Dashboard Overview | Auto-Assignment (Assigned Tab) |
+|:---:|:---:|
+| ![Dashboard](media/screenshots/dashboard_blurred.png) | ![Auto-Assign](media/screenshots/auto-assign.png) |
+
+| Filtering & Search | Multiple Selection |
+|:---:|:---:|
+| ![Filtering](media/screenshots/filtering.png) | ![Multiple Select](media/screenshots/multipleselect.png) |
+
+</div>
+
+---
+
+### 🧮 Rule Engine & Scoring
+
+<div align="center">
+
+| Alternatives Modal | Scoring System Breakdown |
+|:---:|:---:|
+| ![Alternatives](media/screenshots/alternatives_blurred.png) | ![Scoring System](media/screenshots/scoring-system.png) |
+
+| Score Detail | Assignment Flow Diagram |
+|:---:|:---:|
+| ![Scoring](media/screenshots/scoring.png) | ![Flow](media/screenshots/flow.png) |
+
+| Auto-Assign Rule Tag |  |
+|:---:|:---:|
+| ![Auto-Assign Tag](media/screenshots/red-comment_auto-assign.png) |  |
+
+</div>
+
+---
+
+### 🔐 Admin Control Panel
+
+<div align="center">
+
+| Diagnosticians Management | Availability Calendar |
+|:---:|:---:|
+| ![Admin Diagnosticians](media/screenshots/admin_diagnosticians.png) | ![Admin Availability](media/screenshots/admin_availability.png) |
+
+| Capacity Matrix | Skills Matrix |
+|:---:|:---:|
+| ![Admin Skills 1](media/screenshots/admin_skills1_blurred.png) | ![Admin Skills 2](media/screenshots/admin_skills2.png) |
+
+| Partnerships | Παμμακάριστος Schedule |
+|:---:|:---:|
+| ![Admin Partners](media/screenshots/admin_partners.png) | ![Admin Pammakaristos](media/screenshots/admin_pammakaristos.png) |
+
+| Rules Editor | Exclusive Labs & Capacity per Modality |
+|:---:|:---:|
+| ![Admin Advanced 1](media/screenshots/admin_advanced1.png) | ![Admin Advanced 2](media/screenshots/admin_advanced2.png) |
+
+| Scoring Weights Editor |  |
+|:---:|:---:|
+| ![Admin Advanced 3](media/screenshots/admin_advanced3.png) |  |
+
+</div>
 
 ---
 

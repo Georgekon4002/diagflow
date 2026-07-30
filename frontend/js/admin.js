@@ -63,6 +63,17 @@ document.addEventListener('DOMContentLoaded', async () => {
         defaultDate: [today, today]
     });
 
+    
+    // Update top right role badge
+    const adminRole = sessionStorage.getItem('adminRole');
+    const roleBadgeNode = document.getElementById('header-role-text');
+    if (roleBadgeNode && adminRole === 'it_support') {
+        roleBadgeNode.innerText = 'IT Support';
+        roleBadgeNode.parentElement.style.backgroundColor = '#f3ebff';
+        roleBadgeNode.parentElement.style.color = '#8122FF';
+        roleBadgeNode.parentElement.style.borderColor = '#d8b4fe';
+    }
+
     await loadAll();
     showSection('oncall');
 
@@ -129,7 +140,7 @@ async function apiCall(endpoint, method = 'GET', body = null) {
 
     try {
         const response = await fetch(`${API_BASE}${endpoint}`, options);
-        if (response.status === 403) {
+        if (response.status === 401) {
             if (!isLoggedOut) {
                 isLoggedOut = true;
                 showToast('Η σύνδεση έχει λήξει. Παρακαλώ συνδεθείτε ξανά.', 'error');
@@ -1699,7 +1710,7 @@ async function loadSystemWeights() {
         
         // Populate inputs (API gives absolute points like 0.35, UI displays 35%)
         WEIGHT_KEYS.forEach(k => {
-            const el = document.getElementById(k.replace('_', '-').replace('_', '-')); // e.g. pts_skills_pref -> pts-skills-pref
+            const el = document.getElementById(k.replaceAll('_', '-')); // e.g. pts_skills_pref -> pts-skills-pref
             if (el && data[k] !== undefined) {
                 el.value = (parseFloat(data[k]) * 100).toFixed(1).replace(/\.0$/, '');
             }
@@ -1747,7 +1758,7 @@ function updateWeightsTotal() {
     // Live update the table
     const currentWeights = {};
     WEIGHT_KEYS.forEach(k => {
-        const id = k.replace('_', '-').replace('_', '-');
+        const id = k.replaceAll('_', '-');
         const el = document.getElementById(id);
         if (el) {
             currentWeights[k] = parseFloat(el.value || 0) / 100;
@@ -1758,7 +1769,7 @@ function updateWeightsTotal() {
 async function saveSystemWeights() {
     const payload = {};
     WEIGHT_KEYS.forEach(k => {
-        const id = k.replace('_', '-').replace('_', '-');
+        const id = k.replaceAll('_', '-');
         const el = document.getElementById(id);
         if (el) {
             // Convert back to absolute (0 to 1) for the DB
@@ -1961,18 +1972,30 @@ function renderAdminUsers() {
         const tr = document.createElement('tr');
         
         let actions = '';
-        if (u.role !== 'super_admin' && u.role !== 'it_support') {
-            actions += `<button class="btn btn-secondary btn-sm" onclick="deleteAdminUser(${u.id})">Διαγραφή</button>`;
+        if (u.role !== 'it_support') {
+            const trashSvg = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>';
+            actions += `<button class="btn btn-danger btn-sm" style="padding: 6px 10px; display: inline-flex; align-items: center;" onclick="deleteAdminUser(${u.id})">${trashSvg}</button>`;
         }
-        if (u.role === 'super_admin' || u.role === 'admin') {
+        if (u.role === 'admin') {
+            const toggleClass = u.is_active ? 'btn-danger' : 'btn-success';
+            const toggleText = u.is_active ? 'Απενεργοποίηση' : 'Ενεργοποίηση';
+            actions += ` <button class="btn ${toggleClass} btn-sm" onclick="toggleAdminUser(${u.id})">${toggleText}</button>`;
+            
             actions += ` <button class="btn btn-secondary btn-sm" onclick="resetAdminUser(${u.id})">Επαναφορά (admin/admin1234)</button>`;
+        }
+        
+        let roleBadge = '';
+        if (u.role === 'it_support') {
+            roleBadge = '<span class="admin-badge" style="background-color: #f3ebff; color: #8122FF; border: 1px solid #d8b4fe;">IT Support</span>';
+        } else {
+            roleBadge = '<span class="admin-badge">Admin</span>';
         }
             
         tr.innerHTML = `
             <td>${u.username}</td>
-            <td><span class="admin-badge">${u.role}</span></td>
+            <td>${roleBadge}</td>
             <td>${u.is_active ? '<span style="color:var(--success-color);">Ενεργός</span>' : '<span style="color:var(--error-color);">Ανενεργός</span>'}</td>
-            <td>${actions}</td>
+            <td style="display:flex; gap:6px;">${actions}</td>
         `;
         tbody.appendChild(tr);
     });
@@ -2024,5 +2047,17 @@ async function resetAdminUser(id) {
         }
     } catch (e) {
         showToast(e.message || 'Σφάλμα επαναφοράς', 'error');
+    }
+}
+
+async function toggleAdminUser(id) {
+    try {
+        const res = await apiCall(`/admin/users/${id}/toggle`, 'POST');
+        if (res) {
+            showToast(res.message, 'success');
+            loadAdminUsers();
+        }
+    } catch (e) {
+        showToast(e.message || 'Σφάλμα αλλαγής κατάστασης', 'error');
     }
 }

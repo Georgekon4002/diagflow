@@ -10,6 +10,7 @@ Handles the full lifecycle of assignments:
 
 import json
 import sqlite3
+import sys
 from datetime import datetime
 from pathlib import Path
 
@@ -22,7 +23,16 @@ from diagflow.engine.pipeline import AssignmentPipeline, AssignmentSuggestion
 logger = structlog.get_logger(__name__)
 
 # ── Resolve mock DB path relative to the project root ─────────────
-_PROJECT_ROOT = Path(__file__).parent.parent.parent.parent  # src/diagflow/services/ → project root
+if getattr(sys, "frozen", False):
+    _exe_dir = Path(sys.executable).parent
+    if (_exe_dir / "db").exists():
+        _PROJECT_ROOT = _exe_dir
+    elif (_exe_dir.parent / "db").exists():
+        _PROJECT_ROOT = _exe_dir.parent
+    else:
+        _PROJECT_ROOT = _exe_dir
+else:
+    _PROJECT_ROOT = Path(__file__).parent.parent.parent.parent
 _MOCK_DB_PATH = _PROJECT_ROOT / settings.mock_slis_db_path
 
 

@@ -147,21 +147,23 @@ def filter_by_capacity(
 ) -> FilterResult:
     """
     Priority 2: Capacity check.
-    Eliminates a candidate if they have reached or exceeded their daily quota.
+    Eliminates a candidate if they have reached or exceeded their daily quota,
+    or if their quota is 0 (meaning they have no capacity today at all).
     """
-    if candidate.daily_quota > 0 and candidate.daily_quota != 999 and candidate.current_day_count >= candidate.daily_quota:
+    # daily_quota == 0 means zero capacity for today — treat as unavailable
+    if candidate.daily_quota == 0:
+        return FilterResult(
+            passed=False,
+            rule_name="capacity",
+            reason="Δεν είναι διαθέσιμος/η σήμερα",
+        )
+    if candidate.daily_quota != 999 and candidate.current_day_count >= candidate.daily_quota:
         return FilterResult(
             passed=False,
             rule_name="capacity",
             reason="Έχει συμπληρώσει το ημερήσιο όριο",
         )
-    if candidate.daily_quota == 0 and candidate.current_day_count > 0:
-        return FilterResult(
-            passed=False,
-            rule_name="capacity",
-            reason="Έχει συμπληρώσει το ημερήσιο όριο",
-        )
-            
+
     return FilterResult(
         passed=True,
         rule_name="capacity",

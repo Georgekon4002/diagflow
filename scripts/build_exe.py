@@ -65,6 +65,11 @@ def build():
         "--hidden-import", "diagflow.services.assignment",
         "--hidden-import", "diagflow.services.diagnostician",
         "--hidden-import", "diagflow.services.pamakristos",
+        "--hidden-import", "diagflow.services.slis_sync",
+        "--hidden-import", "diagflow.db.diagflow_db",
+        "--hidden-import", "diagflow.db.engines",
+        "--hidden-import", "diagflow.db.models",
+        "--hidden-import", "diagflow.db.slis_models",
         "--hidden-import", "diagflow.engine.pipeline",
         "--hidden-import", "diagflow.engine.filters",
         "--hidden-import", "diagflow.engine.scoring",
@@ -74,6 +79,9 @@ def build():
         "--hidden-import", "diagflow.utils.logging",
         "--hidden-import", "structlog",
         "--hidden-import", "pydantic_settings",
+        "--hidden-import", "apscheduler",
+        "--hidden-import", "apscheduler.schedulers.asyncio",
+        "--hidden-import", "webview",
         # Entry point
         str(SRC / "diagflow" / "launcher.py"),
     ]
@@ -84,6 +92,13 @@ def build():
     result = subprocess.run(cmd, cwd=str(ROOT))
 
     if result.returncode == 0:
+        import shutil
+        db_src = ROOT / "db"
+        db_dst = ROOT / "dist" / "db"
+        if db_src.exists():
+            print(f"  Copying database files from {db_src} to {db_dst}...")
+            shutil.copytree(db_src, db_dst, dirs_exist_ok=True)
+
         print("\n" + "=" * 60)
         print("  BUILD SUCCESSFUL!")
         print(f"  EXE location: {ROOT / 'dist' / 'DiagFlow.exe'}")

@@ -108,6 +108,15 @@ class TestCapacityFilter:
         assert result.passed is False
         assert result.reason == "Έχει συμπληρώσει το ημερήσιο όριο"
 
+    def test_zero_quota_always_fails(self, sample_exam, sample_candidates):
+        """Candidate with daily_quota == 0 should always fail, even if count is 0."""
+        candidate = sample_candidates[0]
+        candidate.daily_quota = 0
+        candidate.current_day_count = 0
+        result = filter_by_capacity(candidate, sample_exam)
+        assert result.passed is False
+        assert result.reason == "Δεν είναι διαθέσιμος/η σήμερα"
+
 
 class TestApplyAllHardFilters:
     """Integration tests for the full hard filter pipeline."""

@@ -16,7 +16,13 @@ from typing import Generator
 # When running as a PyInstaller EXE, __file__ points inside a temp dir,
 # so we fall back to the directory containing the EXE.
 if getattr(sys, "frozen", False):
-    _PROJECT_ROOT = Path(sys.executable).parent
+    _exe_dir = Path(sys.executable).parent
+    if (_exe_dir / "db").exists():
+        _PROJECT_ROOT = _exe_dir
+    elif (_exe_dir.parent / "db").exists():
+        _PROJECT_ROOT = _exe_dir.parent
+    else:
+        _PROJECT_ROOT = _exe_dir
 else:
     _PROJECT_ROOT = Path(__file__).parent.parent.parent.parent
 
@@ -26,6 +32,7 @@ _DB_PATH = _PROJECT_ROOT / "db" / "diagflow.db"
 
 @contextmanager
 def _conn() -> Generator[sqlite3.Connection, None, None]:
+    _DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     con = sqlite3.connect(_DB_PATH)
     con.row_factory = sqlite3.Row
     con.execute("PRAGMA foreign_keys = ON")
@@ -797,7 +804,7 @@ def _ensure_admin_users_table(con):
         password_hash = p_row["value"] if p_row else DEFAULT_ADMIN_PASSWORD_HASH
         
         con.execute(
-            "INSERT INTO admin_users (username, password_hash, role) VALUES (?, ?, 'super_admin')",
+            "INSERT INTO admin_users (username, password_hash, role) VALUES (?, ?, 'admin')",
             (username, password_hash)
         )
         # Seed it_support account automatically as requested

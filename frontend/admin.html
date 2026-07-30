@@ -85,7 +85,7 @@
                             <path d="M6 1a2 2 0 1 1 0 4 2 2 0 0 1 0-4zm0 5.5c2.2 0 4 .9 4 2V9H2v-.5c0-1.1 1.8-2 4-2z"
                                 fill="currentColor" />
                         </svg>
-                        Admin
+                        <span id="header-role-text">Admin</span>
                     </span>
                     <button class="btn btn-secondary btn-sm" onclick="openChangeCredsModal()">🔐 Αλλαγή username/password</button>
                     <button class="btn btn-secondary btn-sm" onclick="adminLogout()">Έξοδος</button>
@@ -429,7 +429,6 @@
                                 <label class="form-label">Ρόλος</label>
                                 <select id="new-user-role" class="form-input filter-select">
                                     <option value="admin">Admin</option>
-                                    <option value="super_admin">Super Admin</option>
                                     <option value="it_support">IT Support</option>
                                 </select>
                             </div>

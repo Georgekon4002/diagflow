@@ -35,7 +35,13 @@ logger = structlog.get_logger(__name__)
 
 # ── Resolve project root and mock DB path ──────────────────────────
 if getattr(sys, "frozen", False):
-    _PROJECT_ROOT = Path(sys.executable).parent
+    _exe_dir = Path(sys.executable).parent
+    if (_exe_dir / "db").exists():
+        _PROJECT_ROOT = _exe_dir
+    elif (_exe_dir.parent / "db").exists():
+        _PROJECT_ROOT = _exe_dir.parent
+    else:
+        _PROJECT_ROOT = _exe_dir
 else:
     _PROJECT_ROOT = Path(__file__).parent.parent.parent.parent
 _MOCK_DB_PATH = _PROJECT_ROOT / settings.mock_slis_db_path
@@ -43,6 +49,7 @@ _MOCK_DB_PATH = _PROJECT_ROOT / settings.mock_slis_db_path
 
 def _get_db() -> sqlite3.Connection:
     """Open a read-write SQLite connection to the mock Slis DB."""
+    _MOCK_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     con = sqlite3.connect(str(_MOCK_DB_PATH))
     con.row_factory = sqlite3.Row
     return con
