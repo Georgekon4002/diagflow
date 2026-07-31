@@ -243,63 +243,133 @@ DiagFlow isolates operational Slis exam data from application configuration usin
 
 ---
 
-## 🚀 Installation & Setup Guide
+## 🚀 Installation & Localhost Running Guide
 
-### Option A: Running as a Web Application
+### 💻 Running DiagFlow Locally on Localhost
 
-#### 1. Clone & Setup Environment
+This section provides complete, step-by-step instructions for running DiagFlow on `localhost` (development & testing mode), detailing all required files, initialization commands, server options, and verification steps.
 
+#### 1. Prerequisites & System Requirements
+* **Python 3.10+** (Python 3.11, 3.12, 3.13, 3.14 fully supported)
+* **Git** (for repository cloning)
+* **Web Browser** (Edge, Chrome, Firefox, or Safari) or **Edge WebView2** (for desktop GUI mode)
+
+#### 2. Required Files & Key Components
+Before launching, verify that the following core files exist in the workspace:
+* `requirements.txt` — Python package dependencies
+* `.env.example` — Template environment configuration
+* `src/diagflow/main.py` — FastAPI web server entrypoint & REST API routes
+* `src/diagflow/launcher.py` — Native desktop GUI launcher (`pywebview`)
+* `db/create_diagflow_db.py` — Seeder script for application config database (`db/diagflow.db`)
+* `db/seed_mock_db.py` — Seeder script for mock SLIS exam database (`db/mock_slis.db`)
+* `db/seed_templates.py` — Seeder script for sanitized template copies (`db/templates/`)
+* `frontend/` — Secretariat dashboard & admin UI HTML/JS/CSS assets
+
+#### 3. Step-by-Step Terminal Commands
+
+##### Step 1: Clone Repository & Create Virtual Environment
 ```powershell
-# Clone repository
-git clone <repo-url>
+# Clone the repository
+git clone https://github.com/Georgekon4002/diagflow.git
 cd diagflow
 
-# Create and activate virtual environment
+# Create a Python virtual environment
 python -m venv .venv
-.venv\Scripts\activate          # Windows PowerShell / CMD
-# source .venv/bin/activate     # Linux / macOS
 
-# Install dependencies
+# Activate the virtual environment
+# Windows (PowerShell):
+.\.venv\Scripts\Activate.ps1
+# Windows (Command Prompt):
+.\.venv\Scripts\activate.bat
+# Linux / macOS:
+source .venv/bin/activate
+```
+
+##### Step 2: Install Package Dependencies
+```powershell
+python -m pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-#### 2. Configure Environment Variables
-
+##### Step 3: Configure Environment File (`.env`)
 ```powershell
-copy .env.example .env
+# Copy environment configuration template
+copy .env.example .env    # Windows CMD / PowerShell
+# cp .env.example .env     # Linux / macOS
 ```
 
-Edit `.env` to configure your environment:
+Configure `.env` settings according to your environment:
 ```ini
+# --- Database Configuration ---
 USE_MOCK_SLIS_DB=true
 MOCK_SLIS_DB_PATH=db/mock_slis.db
-SLIS_DB_CONNECTION_STRING=mssql+pyodbc://user:password@localhost/SlisDB?driver=ODBC+Driver+17+for+SQL+Server
-APP_HOST=0.0.0.0
+SLIS_DB_CONNECTION_STRING=mssql+pyodbc://diagflow_user:SecurePassword123!@192.168.1.100/SlisDB?driver=ODBC+Driver+17+for+SQL+Server
+CONFIG_DB_CONNECTION_STRING=sqlite:///db/diagflow.db
+
+# --- Rule Engine Weights ---
+WEIGHT_PARTNERSHIP=0.35
+WEIGHT_PATIENT_HISTORY=0.20
+WEIGHT_SKILLS=0.20
+WEIGHT_LAB=0.15
+WEIGHT_CAPACITY=0.10
+
+# --- Server Settings ---
+APP_HOST=127.0.0.1
 APP_PORT=8000
-LOG_LEVEL=DEBUG
+LOG_LEVEL=INFO
 ```
 
-#### 3. Initialize Databases
-
+##### Step 4: Initialize Databases & Seed Mock Exam Data
 ```powershell
-# Initialize diagflow.db and seed default tables
-sqlite3 db/diagflow.db < db/init_diagflow.sql
+# Set PYTHONPATH to include src/
+$env:PYTHONPATH="src"     # Windows PowerShell
+# set PYTHONPATH=src      # Windows CMD
+# export PYTHONPATH=src   # Linux / macOS
 
-# Initialize mock_slis.db (for development mode)
-sqlite3 db/mock_slis.db < db/init.sql
+# 1. Create & seed application config DB (db/diagflow.db)
+python db/create_diagflow_db.py
+
+# 2. Create & seed mock SLIS exam DB (db/mock_slis.db)
 python db/seed_mock_db.py
+
+# 3. (Optional) Create & refresh generic demo template databases (db/templates/*)
+python db/seed_templates.py
 ```
+> [!NOTE]
+> **Privacy & Security Note:** Raw database SQL dumps containing real medical facility data (`db/init_diagflow.sql` and `db/init_mock_slis.sql`) are explicitly ignored by `.gitignore` so sensitive data is never committed to public repositories. The seeder scripts (`create_diagflow_db.py` & `seed_mock_db.py`) automatically detect if raw dumps are missing and fall back to the sanitized, generic template data in `db/templates/`.
 
-#### 4. Launch Application Server
+##### Step 5: Launch Application
 
+###### Option A: Fast Development Web Server (Uvicorn + Hot Reloading)
+Runs FastAPI on `localhost` with automatic code reloading:
 ```powershell
-uvicorn src.diagflow.main:app --reload --port 8000
+$env:PYTHONPATH="src"
+uvicorn diagflow.main:app --reload --host 127.0.0.1 --port 8000
+```
+Access endpoints in your browser:
+* **Secretariat Dashboard:** [http://localhost:8000](http://localhost:8000)
+* **Admin Control Panel:** [http://localhost:8000/admin.html](http://localhost:8000/admin.html)
+* **Interactive API Documentation:** [http://localhost:8000/docs](http://localhost:8000/docs)
+
+###### Option B: Native Desktop Window GUI (pywebview Launcher)
+Launches the application inside a native Windows desktop window:
+```powershell
+$env:PYTHONPATH="src"
+python src/diagflow/launcher.py
 ```
 
-Access the application in your browser:
-- **Secretariat Dashboard:** [http://localhost:8000](http://localhost:8000)
-- **Admin Control Panel:** [http://localhost:8000/admin.html](http://localhost:8000/admin.html)
-- **Interactive API Documentation:** [http://localhost:8000/docs](http://localhost:8000/docs)
+###### Option C: Standalone Executable Build (`DiagFlow.exe`)
+Builds and runs a single binary executable:
+```powershell
+python scripts/build_exe.py
+.\dist\DiagFlow.exe
+```
+
+##### Step 6: Run Automated Tests
+```powershell
+$env:PYTHONPATH="src"
+python -m pytest
+```
 
 ---
 
@@ -627,4 +697,6 @@ Internal proprietary software — **Kosmoiatriki © 2026**. All rights reserved.
   <img src="media/logo_multiple.png" alt="DiagFlow Logo" height="50" />
   &nbsp;&nbsp;&nbsp;&nbsp;
   <img src="media/textbox.png" alt="DiagFlow Textbox" height="50" />
+  &nbsp;&nbsp;&nbsp;&nbsp;
+  <img src="media/logo_transparent_crop.png" alt="DiagFlow Transparent Logo" height="50" />
 </div>

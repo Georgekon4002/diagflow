@@ -46,7 +46,7 @@ class AssignmentSuggestion:
 
     exam_id: str
     patient_id: str
-    exam_summary: str  # e.g., "MRI Abdomen — Dr. Παπαδόπουλος — Lab Κηφισιάς"
+    exam_summary: str  # e.g., "MRI Abdomen — Dr. Smith — Lab Kifisia"
 
     # Suggestion
     suggested_diagnostician_id: int

@@ -269,8 +269,8 @@ def _get_pending_exams_from_db() -> list[dict]:
     Auto-assignments applied directly to local_assignments (bypassing filters):
     1. Exclusive partnerships: Exams issued by doctors with an active exclusive
        partnership are automatically assigned to that preferred diagnostician.
-    2. Παμμακάριστος 22705: Exams with code 22705 (ΜΑΓΝΗΤΙΚΗ ΦΑΣΜΑΤΟΣΚΟΠΙΑ) from
-       Παμμακάριστος are automatically assigned to ΜΠΕΡΕΤΗΣ ΓΕΩΡΓΙΟΣ (ID 59).
+    2. Dynamic exam routing rules: Exams matching defined lab, doctor, or exam code
+       routing rules are automatically assigned to the designated diagnostician.
     3. Παμμακάριστος general: Other Παμμακάριστος exams are automatically assigned
        to today's on-call diagnostician.
 

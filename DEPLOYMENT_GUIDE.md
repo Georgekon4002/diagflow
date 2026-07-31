@@ -65,6 +65,112 @@ LOG_LEVEL=INFO
 
 ---
 
+## 3.1 Running DiagFlow on Localhost (Local Development & Server Guide)
+
+This section provides complete, step-by-step instructions for setting up and running DiagFlow directly on `localhost` (127.0.0.1) for development, testing, and debugging purposes.
+
+### 1. System Requirements & Software Tools
+* **Python 3.10+** (Python 3.11, 3.12, 3.13, 3.14 fully supported)
+* **Git** (for code retrieval)
+* **Modern Web Browser** (Chrome, Edge, Firefox, Safari)
+
+### 2. Workspace File Structure Requirements
+Ensure the following core project files are available in your local repository:
+```text
+diagflow/
+├── .env                       # Environment configuration (copied from .env.example)
+├── requirements.txt           # Python library dependencies
+├── src/
+│   └── diagflow/
+│       ├── main.py            # FastAPI backend server & endpoints
+│       └── launcher.py        # Desktop window launcher (pywebview)
+├── frontend/                  # HTML/CSS/JS dashboard UI
+├── db/
+│   ├── create_diagflow_db.py  # Seeder for db/diagflow.db
+│   ├── seed_mock_db.py        # Seeder for db/mock_slis.db
+│   └── seed_templates.py      # Seeder for sanitized demo templates
+└── scripts/
+    └── build_exe.py           # PyInstaller build automation script
+```
+
+### 3. Step-by-Step Terminal Execution Commands
+
+#### Step 1: Environment Setup
+```powershell
+# Clone repository & navigate into project directory
+git clone https://github.com/Georgekon4002/diagflow.git
+cd diagflow
+
+# Create Python virtual environment
+python -m venv .venv
+
+# Activate virtual environment
+.\.venv\Scripts\Activate.ps1    # PowerShell (Windows)
+# .venv\Scripts\activate.bat   # CMD (Windows)
+# source .venv/bin/activate    # Linux / macOS
+```
+
+#### Step 2: Dependencies Installation
+```powershell
+python -m pip install --upgrade pip
+pip install -r requirements.txt
+```
+
+#### Step 3: Create `.env` Configuration
+```powershell
+copy .env.example .env          # Windows
+# cp .env.example .env           # Linux / macOS
+```
+
+#### Step 4: Initialize Local SQLite Databases
+```powershell
+# Set PYTHONPATH to include src/
+$env:PYTHONPATH="src"           # Windows PowerShell
+# set PYTHONPATH=src            # Windows CMD
+# export PYTHONPATH=src         # Linux / macOS
+
+# Seed config DB (db/diagflow.db)
+python db/create_diagflow_db.py
+
+# Seed mock SLIS exam DB (db/mock_slis.db)
+python db/seed_mock_db.py
+
+# (Optional) Seed sanitized demo templates
+python db/seed_templates.py
+```
+
+#### Step 5: Launch Server / Application on Localhost
+
+##### Option 1: FastAPI Web Server with Hot-Reloading (Recommended for Web Dev)
+```powershell
+$env:PYTHONPATH="src"
+uvicorn diagflow.main:app --reload --host 127.0.0.1 --port 8000
+```
+Open browser:
+- **Dashboard:** [http://localhost:8000](http://localhost:8000)
+- **Admin Panel:** [http://localhost:8000/admin.html](http://localhost:8000/admin.html)
+- **Swagger Docs:** [http://localhost:8000/docs](http://localhost:8000/docs)
+
+##### Option 2: Desktop Window Mode (pywebview Launcher)
+```powershell
+$env:PYTHONPATH="src"
+python src/diagflow/launcher.py
+```
+
+##### Option 3: Compile & Run Standalone EXE
+```powershell
+python scripts/build_exe.py
+.\dist\DiagFlow.exe
+```
+
+#### Step 6: Execute Automated Test Suite
+```powershell
+$env:PYTHONPATH="src"
+python -m pytest
+```
+
+---
+
 ## 4. Building the Portable Executable (`DiagFlow.exe`)
 
 To build an executable on a developer machine:

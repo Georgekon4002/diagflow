@@ -345,11 +345,11 @@ async def suggest_assignment(
 ):
     """Generate an assignment suggestion for a specific exam."""
     pending = assign_svc.get_pending_exams()
-    exam_data = next((e for e in pending if e["exam_id"] == request.exam_id), None)
+    exam_data = next((e for e in pending if str(e["exam_id"]) == str(request.exam_id)), None)
     
     if not exam_data:
         assigned = assign_svc.get_assigned_exams()
-        exam_data = next((e for e in assigned if e["exam_id"] == request.exam_id), None)
+        exam_data = next((e for e in assigned if str(e["exam_id"]) == str(request.exam_id)), None)
 
     if not exam_data:
         raise HTTPException(status_code=404, detail=f"Exam {request.exam_id} not found")
@@ -494,7 +494,8 @@ async def bulk_eligible_diagnosticians(
     from diagflow.engine.filters import apply_hard_filters, get_elimination_reason, ExamContext
 
     all_exams = assign_svc.get_pending_exams() + assign_svc.get_assigned_exams()
-    selected_exams = [e for e in all_exams if e["exam_id"] in request.exam_ids]
+    req_ids = {str(x) for x in request.exam_ids}
+    selected_exams = [e for e in all_exams if str(e["exam_id"]) in req_ids]
 
     if not selected_exams:
         return BulkEligibleResponse(diagnosticians=[])

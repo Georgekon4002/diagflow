@@ -31,10 +31,12 @@ htmlcov/
 alembic/versions/*.py
 !alembic/versions/__init__.py
 
-## SQLite Databases (Keep SQL schema scripts, ignore binary databases)
+## SQLite Databases & Raw Production Data (Ignore binary databases and raw SQL dumps)
 db/*.db
 *.sqlite
 *.sqlite3
+db/init_diagflow.sql
+db/init_mock_slis.sql
 
 ## Office Temporary Lock Files
 ~$*
@@ -47,3 +49,6 @@ logs/
 
 ## Scratch
 scratch*
+
+#Docs
+docs/

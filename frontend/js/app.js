@@ -1435,13 +1435,15 @@ function buildNotesCell(notes) {
  * Shows a 🕐 button on hover only if OLDVISIT ≠ 0.
  */
 function buildOldVisitCell(exam) {
-    const ov = exam.oldvisit;
-    if (!ov || ov === 0) {
+    const hasHistory = (exam.oldpers && exam.oldpers !== 0) || 
+                       (exam.oldvisit && exam.oldvisit !== 0) || 
+                       (exam.olddiagnostis && exam.olddiagnostis !== '-' && exam.olddiagnostis !== '');
+    if (!hasHistory) {
         return '<span style="color:var(--text-tertiary)">—</span>';
     }
     const lines = [
         exam.oldorder ? `Ημ/νία: ${formatDateDMY(exam.oldorder)}` : null,
-        exam.olddiagnostis && exam.olddiagnostis !== '-' ? `Διαγνώστης: ${exam.olddiagnostis}` : null,
+        (exam.olddiagnostis && exam.olddiagnostis !== '-') ? `Διαγνώστης: ${exam.olddiagnostis}` : null,
     ].filter(Boolean).join('<br>');
     return `<div class="comment-btn-wrap">
         <button class="comment-btn" style="background:rgba(59,130,246,0.12);color:var(--accent-info);border:1px solid rgba(59,130,246,0.3);">🕐 Ιστορικό</button>
@@ -2292,7 +2294,7 @@ async function loadDashboard() {
             const diagInfo = diagnosticians.find(x => x.id === d.diagnostician_id);
             let quota = diagInfo ? getTodayQuota(diagInfo) : 0;
             let quotaStr = quota === 999 ? '∞' : quota;
-            let count = d.assigned_orders.length;
+            let count = (d.assigned_exam_ids && d.assigned_exam_ids.length > 0) ? d.assigned_exam_ids.length : d.assigned_orders.length;
 
             const isFull = quota > 0 && quota !== 999 && count >= quota;
             const cardClass = isFull ? 'card error-card' : 'card';
@@ -2304,7 +2306,7 @@ async function loadDashboard() {
             });
             const ordersList = Object.entries(orderCounts).map(([o, cnt]) => {
                 const badge = cnt > 1 ? `<span style="position:absolute; top:-6px; right:-6px; background:#ef4444; color:white; border-radius:50%; width:14px; height:14px; font-size:9px; display:flex; align-items:center; justify-content:center; line-height:1;">${cnt}</span>` : '';
-                return `<span style="position:relative; display:inline-block; background:var(--bg-secondary); padding:2px 6px; border-radius:4px; font-size:11px; margin:4px 4px 2px 2px;">${o}${badge}</span>`;
+                return `<span style="position:relative; display:inline-block; background:var(--bg-secondary); padding:2px 6px; border-radius:4px; font-size:11px; margin:4px 4px 2px 2px;">#${escapeHtml(o)}${badge}</span>`;
             }).join('');
 
             let modalityHtml = '';

@@ -237,56 +237,133 @@ $$\text{Συνολική Βαθμολογία} = \sum (\text{Ακατέργασ�
 
 ---
 
-## 🚀 Οδηγός Εγκατάστασης και Ρύθμισης
+## 🚀 Οδηγός Εγκατάστασης & Εκτέλεσης στο Localhost
 
-### Επιλογή Α: Εκτέλεση ως Εφαρμογή Web
+### 💻 Εκτέλεση του DiagFlow Τοπικά (Localhost)
 
-#### 1. Κλωνοποίηση και Ρύθμιση Περιβάλλοντος
+Αυτή η ενότητα παρέχει πλήρεις οδηγίες βήμα-προς-βήμα για την εκτέλεση του DiagFlow στο `localhost` (λειτουργία ανάπτυξης & δοκιμών), αναλύοντας όλα τα απαραίτητα αρχεία, τις εντολές αρχικοποίησης, τις επιλογές εκκίνησης διακομιστή και τη λειτουργία δοκιμών.
 
+#### 1. Προαπαιτούμενα & Απαιτήσεις Συστήματος
+* **Python 3.10+** (Υποστηρίζονται πλήρως οι εκδόσεις Python 3.11, 3.12, 3.13, 3.14)
+* **Git** (για την κλωνοποίηση του αποθετηρίου)
+* **Πρόγραμμα περιήγησης Web** (Edge, Chrome, Firefox, Safari) ή **Edge WebView2** (για λειτουργία desktop GUI)
+
+#### 2. Απαραίτητα Αρχεία & Στοιχεία
+Πριν την εκκίνηση, βεβαιωθείτε ότι υπάρχουν τα παρακάτω βασικά αρχεία στον κατάλογο του έργου:
+* `requirements.txt` — Εξαρτήσεις πακέτων Python
+* `.env.example` — Πρότυπο αρχείο ρυθμίσεων περιβάλλοντος
+* `src/diagflow/main.py` — Σημείο εισόδου διακομιστή FastAPI & διαδρομές REST API
+* `src/diagflow/launcher.py` — Launcher εφαρμογής Desktop GUI (`pywebview`)
+* `db/create_diagflow_db.py` — Script αρχικοποίησης βάσης ρυθμίσεων (`db/diagflow.db`)
+* `db/seed_mock_db.py` — Script αρχικοποίησης δοκιμαστικής βάσης εξετάσεων SLIS (`db/mock_slis.db`)
+* `db/seed_templates.py` — Script δημιουργίας ανώνυμων προτύπων βάσεων (`db/templates/`)
+* `frontend/` — Αρχεία HTML/JS/CSS για το Dashboard Γραμματείας και το Admin UI
+
+#### 3. Εντολές Τερματικού Βήμα-προς-Βήμα
+
+##### Βήμα 1: Κλωνοποίηση Αποθετηρίου & Δημιουργία Εικονικού Περιβάλλοντος
 ```powershell
-git clone <repo-url>
+# Κλωνοποίηση αποθετηρίου
+git clone https://github.com/Georgekon4002/diagflow.git
 cd diagflow
 
+# Δημιουργία εικονικού περιβάλλοντος Python
 python -m venv .venv
-.venv\Scripts\activate          # Windows PowerShell / CMD
-# source .venv/bin/activate     # Linux / macOS
 
+# Ενεργοποίηση εικονικού περιβάλλοντος
+# Windows (PowerShell):
+.\.venv\Scripts\Activate.ps1
+# Windows (Command Prompt):
+.\.venv\Scripts\activate.bat
+# Linux / macOS:
+source .venv/bin/activate
+```
+
+##### Βήμα 2: Εγκατάσταση Εξαρτήσεων
+```powershell
+python -m pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-#### 2. Ρύθμιση Περιβαλλοντικών Μεταβλητών
-
+##### Βήμα 3: Δημιουργία Αρχείου Περιβάλλοντος (`.env`)
 ```powershell
-copy .env.example .env
+# Αντιγραφή προτύπου περιβάλλοντος
+copy .env.example .env    # Windows CMD / PowerShell
+# cp .env.example .env     # Linux / macOS
 ```
 
-Επεξεργαστείτε το `.env`:
+Ρυθμίστε το αρχείο `.env`:
 ```ini
+# --- Database Configuration ---
 USE_MOCK_SLIS_DB=true
 MOCK_SLIS_DB_PATH=db/mock_slis.db
-SLIS_DB_CONNECTION_STRING=mssql+pyodbc://user:password@localhost/SlisDB?driver=ODBC+Driver+17+for+SQL+Server
-APP_HOST=0.0.0.0
+SLIS_DB_CONNECTION_STRING=mssql+pyodbc://diagflow_user:SecurePassword123!@192.168.1.100/SlisDB?driver=ODBC+Driver+17+for+SQL+Server
+CONFIG_DB_CONNECTION_STRING=sqlite:///db/diagflow.db
+
+# --- Rule Engine Weights ---
+WEIGHT_PARTNERSHIP=0.35
+WEIGHT_PATIENT_HISTORY=0.20
+WEIGHT_SKILLS=0.20
+WEIGHT_LAB=0.15
+WEIGHT_CAPACITY=0.10
+
+# --- Server Settings ---
+APP_HOST=127.0.0.1
 APP_PORT=8000
-LOG_LEVEL=DEBUG
+LOG_LEVEL=INFO
 ```
 
-#### 3. Αρχικοποίηση Βάσεων Δεδομένων
-
+##### Βήμα 4: Αρχικοποίηση Βάσεων Δεδομένων & Δοκιμαστικών Δεδομένων
 ```powershell
-sqlite3 db/diagflow.db < db/init_diagflow.sql
-sqlite3 db/mock_slis.db < db/init.sql
+# Ορισμός PYTHONPATH ώστε να περιλαμβάνει τον κατάλογο src/
+$env:PYTHONPATH="src"     # Windows PowerShell
+# set PYTHONPATH=src      # Windows CMD
+# export PYTHONPATH=src   # Linux / macOS
+
+# 1. Δημιουργία & αρχικοποίηση βάσης ρυθμίσεων (db/diagflow.db)
+python db/create_diagflow_db.py
+
+# 2. Δημιουργία & αρχικοποίηση δοκιμαστικής βάσης SLIS (db/mock_slis.db)
 python db/seed_mock_db.py
+
+# 3. (Προαιρετικό) Δημιουργία & ανανέωση ανώνυμων προτύπων βάσεων (db/templates/*)
+python db/seed_templates.py
 ```
+> [!NOTE]
+> **Σημείωση Ασφάλειας & Ιδιωτικότητας:** Τα πρωτογενή αρχεία SQL που περιέχουν πραγματικά δεδομένα (`db/init_diagflow.sql` και `db/init_mock_slis.sql`) εξαιρούνται ρητά από το `.gitignore` ώστε να μην ανεβαίνουν ποτέ ευαίσθητα δεδομένα στο GitHub. Τα scripts αρχικοποίησης (`create_diagflow_db.py` & `seed_mock_db.py`) ανιχνεύουν αυτόματα αν λείπουν τα πρωτογενή αρχεία και χρησιμοποιούν ως fallback τα ανωνυμοποιημένα πρότυπα από το `db/templates/`.
 
-#### 4. Εκκίνηση Application Server
+##### Βήμα 5: Εκκίνηση Εφαρμογής
 
+###### Επιλογή Α: Διακομιστής Ανάπτυξης Web (Uvicorn + Hot Reloading)
+Εκτελεί το FastAPI στο `localhost` με αυτόματη ανανέωση κώδικα:
 ```powershell
-uvicorn src.diagflow.main:app --reload --port 8000
+$env:PYTHONPATH="src"
+uvicorn diagflow.main:app --reload --host 127.0.0.1 --port 8000
+```
+Πρόσβαση στις σελίδες μέσω browser:
+* **Dashboard Γραμματείας:** [http://localhost:8000](http://localhost:8000)
+* **Admin Control Panel:** [http://localhost:8000/admin.html](http://localhost:8000/admin.html)
+* **Τεκμηρίωση API (Swagger):** [http://localhost:8000/docs](http://localhost:8000/docs)
+
+###### Επιλογή Β: Παράθυρο Εφαρμογής Desktop GUI (pywebview Launcher)
+Εκκινεί την εφαρμογή σε αυτόνομο παράθυρο Windows desktop:
+```powershell
+$env:PYTHONPATH="src"
+python src/diagflow/launcher.py
 ```
 
-- **Dashboard Γραμματείας:** [http://localhost:8000](http://localhost:8000)
-- **Admin Control Panel:** [http://localhost:8000/admin.html](http://localhost:8000/admin.html)
-- **Τεκμηρίωση API:** [http://localhost:8000/docs](http://localhost:8000/docs)
+###### Επιλογή Γ: Κατασκευή & Εκτέλεση Εκτελέσιμου Αρχείου (`DiagFlow.exe`)
+Δημιουργεί και εκτελεί το αυτόνομο αρχείο `.exe`:
+```powershell
+python scripts/build_exe.py
+.\dist\DiagFlow.exe
+```
+
+##### Βήμα 6: Εκτέλεση Αυτοματοποιημένων Δοκιμών (Pytest)
+```powershell
+$env:PYTHONPATH="src"
+python -m pytest
+```
 
 ---
 
@@ -570,5 +647,7 @@ diagflow/
   <img src="media/logo_multiple.png" alt="DiagFlow Logo" height="50" />
   &nbsp;&nbsp;&nbsp;&nbsp;
   <img src="media/textbox.png" alt="DiagFlow Textbox" height="50" />
+  &nbsp;&nbsp;&nbsp;&nbsp;
+  <img src="media/logo_transparent_crop.png" alt="DiagFlow Transparent Logo" height="50" />
 </div>
 

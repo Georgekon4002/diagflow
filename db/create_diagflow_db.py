@@ -17,11 +17,16 @@ DIAGFLOW_DB = SCRIPT_DIR / "diagflow.db"
 INIT_SQL    = SCRIPT_DIR / "init_diagflow.sql"
 
 def seed():
-    print(f"\nSeeding {DIAGFLOW_DB} from {INIT_SQL} ...")
+    sql_file = INIT_SQL
+    if not sql_file.exists():
+        fallback_sql = SCRIPT_DIR / "templates" / "init_diagflow.sql"
+        if fallback_sql.exists():
+            sql_file = fallback_sql
+        else:
+            print(f"Error: {INIT_SQL} not found.")
+            return
 
-    if not INIT_SQL.exists():
-        print(f"Error: {INIT_SQL} not found.")
-        return
+    print(f"\nSeeding {DIAGFLOW_DB} from {sql_file} ...")
 
     # Try to delete the file, but if it's locked by uvicorn, just drop the tables
     if DIAGFLOW_DB.exists():
@@ -30,7 +35,7 @@ def seed():
         except PermissionError:
             pass
 
-    con = sqlite3.connect(DIAGFLOW_DB)
+    con = sqlite3.connect(DIAGFLOW_DB, timeout=10.0)
     cur = con.cursor()
 
     # Drop existing config tables in case the file couldn't be deleted
@@ -46,7 +51,7 @@ def seed():
     cur.execute("DROP INDEX IF EXISTS idx_partner_doctor")
     con.commit()
 
-    with open(INIT_SQL, 'r', encoding='utf-8') as f:
+    with open(sql_file, 'r', encoding='utf-8') as f:
         sql_script = f.read()
 
     cur.executescript(sql_script)

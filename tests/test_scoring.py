@@ -20,7 +20,7 @@ class TestCapacityScoring:
 
     def test_full_capacity_scores_high(self, sample_exam, sample_candidates):
         """Diagnostician with lots of remaining capacity should score high."""
-        candidate = sample_candidates[1]  # Κωνσταντίνου: 3/12 used
+        candidate = sample_candidates[1]  # Candidate 2: 3/12 used
         result = score_capacity(candidate)
         assert result.raw_score == pytest.approx(0.75, abs=0.01)
 
@@ -46,7 +46,7 @@ class TestSkillsScoring:
 
     def test_skilled_candidate_scores_proficiency(self, sample_exam, sample_candidates):
         """Candidate with matching skill should score their proficiency level."""
-        candidate = sample_candidates[0]  # Νάτσικα: abdomen MRI, proficiency 1.0
+        candidate = sample_candidates[0]  # Candidate 1: abdomen MRI, proficiency 1.0
         result = score_skills_weighted(candidate, sample_exam)
         assert result.raw_score == 1.0
 
@@ -62,13 +62,13 @@ class TestPartnershipScoring:
 
     def test_partnership_match_scores_positive(self, sample_exam, sample_candidates):
         """Candidate matching the issuing doctor's preference should score high."""
-        candidate = sample_candidates[2]  # Παπαδόπουλος: partnership match
+        candidate = sample_candidates[2]  # Candidate 3: partnership match
         result = score_partnership(candidate, sample_exam)
         assert result.raw_score > 0.0
 
     def test_no_partnership_scores_zero(self, sample_exam, sample_candidates):
         """Candidate without partnership match should score 0."""
-        candidate = sample_candidates[0]  # Νάτσικα: no partnership
+        candidate = sample_candidates[0]  # Candidate 1: no partnership
         result = score_partnership(candidate, sample_exam)
         assert result.raw_score == 0.0
 
@@ -78,13 +78,13 @@ class TestPatientHistoryScoring:
 
     def test_patient_history_scores_positive(self, sample_exam, sample_candidates):
         """Candidate with patient history should get a bonus."""
-        candidate = sample_candidates[0]  # Νάτσικα: 3 past exams
+        candidate = sample_candidates[0]  # Candidate 1: 3 past exams
         result = score_patient_history(candidate, sample_exam)
         assert result.raw_score > 0.0
 
     def test_no_history_scores_zero(self, sample_exam, sample_candidates):
         """Candidate without patient history should score 0."""
-        candidate = sample_candidates[1]  # Κωνσταντίνου: no history
+        candidate = sample_candidates[1]  # Candidate 2: no history
         result = score_patient_history(candidate, sample_exam)
         assert result.raw_score == 0.0
 

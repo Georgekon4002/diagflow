@@ -33,24 +33,17 @@ class PamakristosScheduler:
                 "source": "db",
             }
 
-        # Hardcoded weekly schedule fallback
+        # Check weekly recurring schedule from DB
         weekday = target.weekday()
-        schedule = {
-            0: {"id": 59, "name": "ΜΠΕΡΕΤΗΣ ΓΕΩΡΓΙΟΣ"},
-            1: {"id": 61, "name": "ΑΝΘΙΜΟΥ ΣΠΥΡΙΔΩΝ"},
-            2: {"id": 316, "name": "ΤΡΙΑΝΤΑΦΥΛΛΟΥ ΜΑΡΙΑ"},
-            3: {"id": 189, "name": "ΛΙΟΝΤΟΣ ΠΟΛΥΧΡΟΝΗΣ"},
-            4: {"id": 14, "name": "ΝΑΤΣΙΚΑ ΜΑΡΓΑΡΙΤΑ"},
-        }
-
-        if weekday in schedule:
-            diag = schedule[weekday]
-            return {
-                "date": target.isoformat(),
-                "diagnostician_id": diag["id"],
-                "diagnostician_name": diag["name"],
-                "source": "hardcoded_rule",
-            }
+        weekly_schedule = cfg_db.get_pamakristos_weekly_schedule_db()
+        for item in weekly_schedule:
+            if item.get("weekday") == weekday:
+                return {
+                    "date": target.isoformat(),
+                    "diagnostician_id": item["diagnostician_id"],
+                    "diagnostician_name": item["diagnostician_name"],
+                    "source": "weekly_schedule",
+                }
 
         logger.info("pamakristos_oncall_not_set", date=target.isoformat())
         return None

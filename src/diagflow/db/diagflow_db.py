@@ -363,17 +363,14 @@ def init_pamakristos_schedule():
         )
         count = con.execute("SELECT COUNT(*) FROM pamakristos_schedule").fetchone()[0]
         if count == 0:
-            defaults = [
-                (0, 59),   # Δευτέρα: ΜΠΕΡΕΤΗΣ ΓΕΩΡΓΙΟΣ
-                (1, 61),   # Τρίτη: ΑΝΘΙΜΟΥ ΣΠΥΡΙΔΩΝ
-                (2, 316),  # Τετάρτη: ΤΡΙΑΝΤΑΦΥΛΛΟΥ ΜΑΡΙΑ
-                (3, 189),  # Πέμπτη: ΛΙΟΝΤΟΣ ΠΟΛΥΧΡΟΝΗΣ
-                (4, 14),   # Παρασκευή: ΝΑΤΣΙΚΑ ΜΑΡΓΑΡΙΤΑ
-            ]
-            con.executemany(
-                "INSERT INTO pamakristos_schedule (weekday, diagnostician_id) VALUES (?, ?)",
-                defaults
-            )
+            diags = con.execute("SELECT id FROM diagnosticians WHERE active = 1 ORDER BY id").fetchall()
+            if diags:
+                diag_ids = [d[0] for d in diags]
+                defaults = [(w, diag_ids[w % len(diag_ids)]) for w in range(7)]
+                con.executemany(
+                    "INSERT INTO pamakristos_schedule (weekday, diagnostician_id) VALUES (?, ?)",
+                    defaults
+                )
 
 
 def get_pamakristos_weekly_schedule_db() -> list[dict]:
@@ -538,16 +535,8 @@ def delete_local_assignment(exammoreid: int) -> bool:
 
 def get_dashboard_data() -> list[dict]:
     with _conn() as con:
-        rows = con.execute(
-            """
-            SELECT d.id as diagnostician_id, d.name as diagnostician_name,
-                   al.exammoreid, al.extracode, al.modality as category
-            FROM assignment_log al
-            JOIN diagnosticians d ON al.diagnostician_id = d.id
-            WHERE substr(al.assigned_at, 1, 10) = date('now', 'localtime')
-            ORDER BY d.name, al.extracode
-            """
-        ).fetchall()
+        # Fetch active diagnosticians
+        diags = con.execute("SELECT id, name FROM diagnosticians WHERE active = 1 ORDER BY name").fetchall()
         
         # Fetch modality quotas
         quota_rows = con.execute("SELECT diagnostician_id, modality, max_count FROM modality_quotas WHERE is_active = 1").fetchall()
@@ -557,32 +546,87 @@ def get_dashboard_data() -> list[dict]:
             if did not in modality_limits:
                 modality_limits[did] = {}
             modality_limits[did][qr["modality"].upper()] = qr["max_count"]
-        
-    dashboard_map = {}
-    for r in rows:
-        d_id = r["diagnostician_id"]
-        if d_id not in dashboard_map:
-            dashboard_map[d_id] = {
-                "diagnostician_id": d_id,
-                "diagnostician_name": r["diagnostician_name"],
+
+        dashboard_map = {}
+        for d in diags:
+            did = d["id"]
+            dashboard_map[did] = {
+                "diagnostician_id": did,
+                "diagnostician_name": d["name"],
                 "assigned_orders": [],
                 "modality_counts": {"CT": 0, "MRI": 0, "US": 0, "XRAY": 0},
                 "assigned_exam_ids": [],
-                "modality_limits": modality_limits.get(d_id, {})
+                "modality_limits": modality_limits.get(did, {})
             }
-        
-        mod = r["category"]
+
+        # 1. Fetch from local_assignments
+        local_rows = con.execute(
+            """
+            SELECT diagnostician_id, exammoreid
+            FROM local_assignments
+            """
+        ).fetchall()
+
+        # 2. Fetch from assignment_log
+        log_rows = con.execute(
+            """
+            SELECT diagnostician_id, exammoreid, extracode, modality as category
+            FROM assignment_log
+            WHERE substr(assigned_at, 1, 10) = date('now', 'localtime')
+            """
+        ).fetchall()
+
+    # 3. Fetch from mock_slis.db (assigned exams and detail map)
+    slis_rows = []
+    exam_details = {}
+    try:
+        from diagflow.services.assignment import _get_mock_db
+        con_slis = _get_mock_db()
+        cur_slis = con_slis.execute("SELECT exammoreid, extracode, category, diagnostis FROM slis_exams")
+        for r in cur_slis.fetchall():
+            eid = r["exammoreid"]
+            exam_details[eid] = (r["extracode"], r["category"])
+            if r["diagnostis"] is not None:
+                slis_rows.append({"diagnostician_id": r["diagnostis"], "exammoreid": eid, "extracode": r["extracode"], "category": r["category"]})
+        con_slis.close()
+    except Exception:
+        pass
+
+    seen_exam_ids = set()
+
+    def process_record(d_id, exammoreid, extracode=None, category=None):
+        if d_id not in dashboard_map:
+            return
+        if exammoreid and exammoreid in seen_exam_ids:
+            return
+        if exammoreid:
+            seen_exam_ids.add(exammoreid)
+            dashboard_map[d_id]["assigned_exam_ids"].append(exammoreid)
+
+        if not extracode and exammoreid in exam_details:
+            extracode = exam_details[exammoreid][0]
+        if not category and exammoreid in exam_details:
+            category = exam_details[exammoreid][1]
+
+        order_val = str(extracode) if extracode else (str(exammoreid) if exammoreid else None)
+        if order_val:
+            dashboard_map[d_id]["assigned_orders"].append(order_val)
+
+        mod = (category or "").upper()
         if mod:
-            mod = mod.upper()
             if mod not in dashboard_map[d_id]["modality_counts"]:
                 dashboard_map[d_id]["modality_counts"][mod] = 0
             dashboard_map[d_id]["modality_counts"][mod] += 1
 
-        if r["extracode"]:
-            dashboard_map[d_id]["assigned_orders"].append(r["extracode"])
-        if r["exammoreid"]:
-            dashboard_map[d_id]["assigned_exam_ids"].append(r["exammoreid"])
-            
+    for r in local_rows:
+        process_record(r["diagnostician_id"], r["exammoreid"])
+
+    for r in log_rows:
+        process_record(r["diagnostician_id"], r["exammoreid"], r["extracode"], r["category"])
+
+    for r in slis_rows:
+        process_record(r["diagnostician_id"], r["exammoreid"], r["extracode"], r["category"])
+
     return list(dashboard_map.values())
 
 # ── Advanced Options: Exam Routing Rules ──────────────────────────────────────
@@ -625,8 +669,8 @@ DEFAULT_ADMIN_USERNAME = "admin"
 DEFAULT_ADMIN_PASSWORD_HASH = "$2b$12$0qxEPV2WtZ00AhsmOgAbJOQuiessOk/m5jq4x55CB/c680fNiW13i"
 
 DEFAULT_IT_SUPPORT_USERNAME = "it_support"
-# Generated with bcrypt.hashpw(b"it_support", bcrypt.gensalt(12))
-DEFAULT_IT_SUPPORT_PASSWORD_HASH = "$2b$12$EZsWHGua1Wmf6lk0LBS1J.WMmepfsugJDJzqTSv.f1azf8R03CJJy"
+# bcrypt hash of "it_support1234" (cost=12).
+DEFAULT_IT_SUPPORT_PASSWORD_HASH = "$2b$12$6klwZqROtRrIi2RwZgIwKuaGpapOHqUFCQJfWsR1rSLG40X31RnPG"
 
 def update_exam_routing_rule(rule_id: int, update_data: dict) -> dict | None:
     if update_data:

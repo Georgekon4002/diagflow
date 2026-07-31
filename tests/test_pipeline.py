@@ -34,9 +34,9 @@ class TestAssignmentPipeline:
         suggestion = pipeline.run(sample_exam, sample_candidates)
 
         assert suggestion is not None
-        # Λιάκος (4) — CT only, no lab acceptance
+        # Candidate 4 — CT only, no lab acceptance
         assert suggestion.suggested_diagnostician_id != 4
-        # Αντωνίου (5) — on leave
+        # Candidate 5 — on leave
         assert suggestion.suggested_diagnostician_id != 5
 
     def test_all_filtered_returns_none(self, pipeline, sample_exam):

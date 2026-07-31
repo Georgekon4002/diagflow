@@ -31,10 +31,9 @@ def _sha256_hash(password: str) -> str:
 
 def _reset_default_credentials():
     """Reset DB to default admin/admin1234 with a fresh bcrypt hash."""
-    cfg_db.update_admin_credentials(
-        username=ADMIN_USERNAME,
-        password_hash=_bcrypt_hash(ADMIN_PASSWORD),
-    )
+    user = cfg_db.get_admin_user_by_username(ADMIN_USERNAME)
+    if user:
+        cfg_db.update_admin_user(user["id"], password_hash=_bcrypt_hash(ADMIN_PASSWORD))
 
 
 class TestAdminLoginBcrypt:
@@ -59,10 +58,12 @@ class TestAdminLoginBcrypt:
     def test_sha256_legacy_hash_auto_migrates_to_bcrypt(self):
         """Login should succeed against a legacy SHA-256 hash and silently upgrade it to bcrypt."""
         legacy_hash = _sha256_hash(ADMIN_PASSWORD)
-        cfg_db.update_admin_credentials(username=ADMIN_USERNAME, password_hash=legacy_hash)
+        user = cfg_db.get_admin_user_by_username(ADMIN_USERNAME)
+        cfg_db.update_admin_user(user["id"], password_hash=legacy_hash)
 
         # Confirm the stored hash is still SHA-256 (64 hex chars)
-        _, stored_hash = cfg_db.get_admin_credentials()
+        user = cfg_db.get_admin_user_by_username(ADMIN_USERNAME)
+        stored_hash = user["password_hash"]
         assert len(stored_hash) == 64
         assert not stored_hash.startswith("$2")
 
@@ -71,7 +72,8 @@ class TestAdminLoginBcrypt:
         assert res.status_code == 200
 
         # Hash should now be bcrypt
-        _, new_hash = cfg_db.get_admin_credentials()
+        user = cfg_db.get_admin_user_by_username(ADMIN_USERNAME)
+        new_hash = user["password_hash"]
         assert new_hash.startswith("$2b$12$")
         assert bcrypt.checkpw(ADMIN_PASSWORD.encode(), new_hash.encode())
 
@@ -93,7 +95,8 @@ class TestAdminLoginBcrypt:
         assert change_res.status_code == 200
 
         # Verify stored hash is bcrypt
-        _, new_hash = cfg_db.get_admin_credentials()
+        user = cfg_db.get_admin_user_by_username(ADMIN_USERNAME)
+        new_hash = user["password_hash"]
         assert new_hash.startswith("$2b$12$")
         assert bcrypt.checkpw(b"newSecure999", new_hash.encode())
 

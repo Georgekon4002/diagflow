@@ -99,6 +99,13 @@ def build():
             print(f"  Copying database files from {db_src} to {db_dst}...")
             shutil.copytree(db_src, db_dst, dirs_exist_ok=True)
 
+        env_example = ROOT / ".env.example"
+        if env_example.exists():
+            print("  Copying .env.example to dist...")
+            shutil.copy(env_example, ROOT / "dist" / ".env.example")
+            if not (ROOT / "dist" / ".env").exists():
+                shutil.copy(env_example, ROOT / "dist" / ".env")
+
         print("\n" + "=" * 60)
         print("  BUILD SUCCESSFUL!")
         print(f"  EXE location: {ROOT / 'dist' / 'DiagFlow.exe'}")

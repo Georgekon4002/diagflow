@@ -21,13 +21,13 @@ class TestAvailabilityFilter:
 
     def test_available_candidate_passes(self, sample_exam, sample_candidates):
         """Available candidates should pass the filter."""
-        candidate = sample_candidates[0]  # Νάτσικα — available
+        candidate = sample_candidates[0]  # Candidate 1 — available
         result = filter_by_availability(candidate, sample_exam)
         assert result.passed is True
 
     def test_unavailable_candidate_fails(self, sample_exam, sample_candidates):
         """Candidates on leave should be filtered out."""
-        candidate = sample_candidates[4]  # Αντωνίου — on leave
+        candidate = sample_candidates[4]  # Candidate 5 — on leave
         result = filter_by_availability(candidate, sample_exam)
         assert result.passed is False
         assert "διαθέσιμος" in result.reason.lower()
@@ -38,19 +38,19 @@ class TestModalityFilter:
 
     def test_mri_capable_passes_mri_exam(self, sample_exam, sample_candidates):
         """Diagnostician who can do MRI should pass MRI exam filter."""
-        candidate = sample_candidates[0]  # Νάτσικα — can MRI
+        candidate = sample_candidates[0]  # Candidate 1 — can MRI
         result = filter_by_modality(candidate, sample_exam)  # MRI exam
         assert result.passed is True
 
     def test_ct_only_fails_mri_exam(self, sample_exam, sample_candidates):
         """CT-only diagnostician should fail MRI exam filter."""
-        candidate = sample_candidates[3]  # Λιάκος — CT only
+        candidate = sample_candidates[3]  # Candidate 4 — CT only
         result = filter_by_modality(candidate, sample_exam)  # MRI exam
         assert result.passed is False
 
     def test_ct_capable_passes_ct_exam(self, ct_exam, sample_candidates):
         """CT-capable diagnostician should pass CT exam filter."""
-        candidate = sample_candidates[3]  # Λιάκος — can CT
+        candidate = sample_candidates[3]  # Candidate 4 — can CT
         result = filter_by_modality(candidate, ct_exam)
         assert result.passed is True
 
@@ -126,17 +126,17 @@ class TestApplyAllHardFilters:
         passed, results = apply_hard_filters(sample_candidates, sample_exam)
 
         # From 5 candidates:
-        # - Νάτσικα (1): available, MRI capable, accepts lab → PASS
-        # - Κωνσταντίνου (2): available, MRI capable, accepts lab → PASS
-        # - Παπαδόπουλος (3): available, MRI capable, accepts lab → PASS
-        # - Λιάκος (4): available, CT only → FAIL (modality) or FAIL (lab)
-        # - Αντωνίου (5): on leave → FAIL (availability)
+        # - Candidate 1: available, MRI capable, accepts lab → PASS
+        # - Candidate 2: available, MRI capable, accepts lab → PASS
+        # - Candidate 3: available, MRI capable, accepts lab → PASS
+        # - Candidate 4: available, CT only → FAIL (modality) or FAIL (lab)
+        # - Candidate 5: on leave → FAIL (availability)
         passed_ids = {c.id for c in passed}
-        assert 1 in passed_ids  # Νάτσικα
-        assert 2 in passed_ids  # Κωνσταντίνου
-        assert 3 in passed_ids  # Παπαδόπουλος
-        assert 4 not in passed_ids  # Λιάκος — filtered
-        assert 5 not in passed_ids  # Αντωνίου — filtered
+        assert 1 in passed_ids  # Candidate 1
+        assert 2 in passed_ids  # Candidate 2
+        assert 3 in passed_ids  # Candidate 3
+        assert 4 not in passed_ids  # Candidate 4 — filtered
+        assert 5 not in passed_ids  # Candidate 5 — filtered
 
     def test_all_filtered_returns_empty(self, sample_exam):
         """If all candidates are ineligible, return empty list."""

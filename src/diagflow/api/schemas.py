@@ -106,7 +106,7 @@ class SuggestionResponse(BaseModel):
     """Response for an assignment suggestion."""
 
     exam_id: str
-    patient_id: str
+    patient_id: str | None = None
     exam_summary: str
     suggested_diagnostician_id: int
     suggested_diagnostician_name: str
