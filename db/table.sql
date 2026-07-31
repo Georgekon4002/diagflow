@@ -30,3 +30,8 @@ CREATE TABLE #TMP_LIST
 		EXAMMOREID	INT,            -- Unique Exam ID
 		CATEGORY	VARCHAR(50)     -- Exam Category (either ΜΑΓΝΗΤΙΚΗ or ΑΞΟΝΙΚΗ)
 	)
+
+
+
+EXEC getWardDoctors
+EXEC getExamsListForPeriod '2026-07-29','2026-07-31'
