@@ -19,8 +19,14 @@ database "diagflow.db" as configdb #B2EBF2
 == Startup: Slis Pull + Auto-Assignments ==
 
 api -> assign : pull_from_slis()
-assign -> mockdb : SELECT pending exams\n(last 3 days, no diagnostician)
-mockdb --> assign : Raw exam rows
+alt USE_MOCK_SLIS_DB = false
+    assign -> slisdb : EXEC getExamsListForPeriod (last 3 days)
+    slisdb --> assign : Filter unassigned exams (DIAGNOSTIS IS NULL)
+    assign -> mockdb : Cache unassigned exams into slis_exams
+else USE_MOCK_SLIS_DB = true
+    assign -> mockdb : SELECT pending exams (last 3 days, no diagnostician)
+    mockdb --> assign : Raw exam rows
+end
 assign -> configdb : Get exclusive partnerships
 assign -> configdb : Get exam_routing_rules
 assign -> configdb : Get Παμμακάριστος on-call

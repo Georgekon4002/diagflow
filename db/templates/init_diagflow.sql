@@ -48,8 +48,7 @@ CREATE TABLE IF NOT EXISTS diagnosticians (
 
 CREATE TABLE IF NOT EXISTS doctors (
     id          TEXT PRIMARY KEY,
-    name        TEXT NOT NULL,
-    specialty   TEXT DEFAULT ''
+    name        TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS partnerships (
@@ -152,11 +151,11 @@ INSERT INTO diagnostician_skills (diagnostician_id, exam_code, is_preferred) VAL
 (6, '22150', 0);
 
 -- Doctors
-INSERT INTO doctors (id, name, specialty) VALUES
-('DOC101', 'ΔΡ. ΚΩΝΣΤΑΝΤΙΝΟΥ ΜΙΧΑΗΛ', 'Καρδιολογία'),
-('DOC102', 'ΔΡ. ΘΕΟΔΩΡΟΥ ΣΟΦΙΑ', 'Νευρολογία'),
-('DOC103', 'ΔΡ. ΑΝΤΩΝΙΟΥ ΑΝΔΡΕΑΣ', 'Ορθοπαιδική'),
-('DOC104', 'ΔΡ. ΝΙΚΟΛΑΟΥ ΕΛΕΝΗ', 'Παθολογία');
+INSERT INTO doctors (id, name) VALUES
+('DOC101', 'ΔΡ. ΚΩΝΣΤΑΝΤΙΝΟΥ ΜΙΧΑΗΛ'),
+('DOC102', 'ΔΡ. ΘΕΟΔΩΡΟΥ ΣΟΦΙΑ'),
+('DOC103', 'ΔΡ. ΑΝΤΩΝΙΟΥ ΑΝΔΡΕΑΣ'),
+('DOC104', 'ΔΡ. ΝΙΚΟΛΑΟΥ ΕΛΕΝΗ');
 
 -- Partnerships (Exclusive & Preferred)
 INSERT INTO partnerships (issuing_doctor_id, issuing_doctor_name, preferred_diagnostician_id, priority, exclusive, is_active) VALUES
@@ -197,7 +196,6 @@ INSERT INTO modality_quotas (diagnostician_id, modality, max_count, is_active) V
 
 -- System Settings (Scoring Weights)
 INSERT INTO system_settings (key, value) VALUES
-('w_specialty', '0.25'),
 ('w_capacity', '0.20'),
 ('w_fairness', '0.20'),
 ('w_speed', '0.15'),

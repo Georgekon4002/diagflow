@@ -36,11 +36,12 @@ CREATE TABLE IF NOT EXISTS slis_exams (
     notes           TEXT,
     exammoreid      INTEGER PRIMARY KEY,
     category        TEXT,
-    slis_synced_at  TEXT DEFAULT NULL
+    slis_synced_at  TEXT DEFAULT NULL,
+    FOREIGN KEY (examnumcode) REFERENCES exam_categories (examnumcode)
 );
 
 CREATE TABLE IF NOT EXISTS diagnosticians (
-    PERSONELID     REAL PRIMARY KEY,
+    PERSONELID     REAL,
     DOCNAME        TEXT,
     MAXEXAMS       REAL,
     ISMR           REAL,
@@ -57,7 +58,7 @@ CREATE TABLE IF NOT EXISTS diagnosticians (
 );
 
 CREATE TABLE IF NOT EXISTS doctors (
-    DOCTORID   REAL PRIMARY KEY,
+    DOCTORID   REAL,
     CODE       REAL,
     DOCNAME    TEXT,
     SPECIALID  REAL,

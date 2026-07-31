@@ -82,6 +82,9 @@ def build():
         "--hidden-import", "apscheduler",
         "--hidden-import", "apscheduler.schedulers.asyncio",
         "--hidden-import", "webview",
+        "--hidden-import", "pyodbc",
+        "--hidden-import", "sqlalchemy.dialects.mssql",
+        "--hidden-import", "bcrypt",
         # Entry point
         str(SRC / "diagflow" / "launcher.py"),
     ]

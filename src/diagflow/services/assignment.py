@@ -451,24 +451,17 @@ def _get_exam_categories_from_db() -> list[dict]:
 # ── Inject methods into AssignmentService ─────────────────────────
 
 def _get_pending_exams(self) -> list[dict]:
-    """Fetch pending exams (real or mock DB)."""
-    if settings.use_mock_slis_db:
-        return _get_pending_exams_from_db()
-    # TODO: implement real Slis DB query here when available
-    return []
+    """Fetch pending exams (from local slis_exams store, populated by mock or real Slis pull)."""
+    return _get_pending_exams_from_db()
 
 
 def _get_assigned_exams(self) -> list[dict]:
-    """Fetch assigned exams (real or mock DB)."""
-    if settings.use_mock_slis_db:
-        return _get_assigned_exams_from_db()
-    return []
+    """Fetch assigned exams (from local slis_exams store, populated by mock or real Slis pull)."""
+    return _get_assigned_exams_from_db()
 
 def _get_exam_categories(self) -> list[dict]:
-    """Fetch exam categories (real or mock DB)."""
-    if settings.use_mock_slis_db:
-        return _get_exam_categories_from_db()
-    return []
+    """Fetch exam categories (from local slis_exams store, populated by mock or real Slis pull)."""
+    return _get_exam_categories_from_db()
 
 
 AssignmentService.get_pending_exams = _get_pending_exams       # type: ignore

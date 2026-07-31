@@ -209,9 +209,10 @@ DiagFlow isolates operational Slis exam data from application configuration usin
 
 ### 4. Two-Way Slis Sync Service
 
-- **Pull (On-Demand / Startup):** Queries unassigned exams from the last 3 days from Slis (`diagnostis IS NULL`), runs Stage 0 auto-assignment rules, and populates the Secretariat pending table.
-- **Push (Manual Trigger):** Pushes confirmed local assignments (`POST /api/slis/push-all` or `/api/slis/push-selected`) directly to Slis (`slis_exams`), recording the sync timestamp.
-- **Daily Master Data Cron:** APScheduler automatically triggers a background sync every day at **3:00 AM** to sync Personnel and Doctor master tables from Slis into `diagflow.db`.
+- **Pull (On-Demand / Startup):** When `USE_MOCK_SLIS_DB=false`, executes stored procedure `EXEC getExamsListForPeriod 'YYYY-MM-DD', 'YYYY-MM-DD'` on the Slis MSSQL DB to pull unassigned exams (`DIAGNOSTIS IS NULL`) for the last 3 days. In mock mode, reads from `mock_slis.db`. Runs Stage 0 auto-assignment rules, and populates the Secretariat pending table.
+- **Doctor Sync (Startup / Daily 3 AM Cron):** When `USE_MOCK_SLIS_DB=false`, executes stored procedure `EXEC getWardDoctors` on launch and via daily APScheduler cron to sync new issuing/ward doctors (`CODE`, `DOCNAME`) into `diagflow.db` (`doctors` table, inserting new IDs only).
+- **Diagnostician Sync (Admin Panel 'Refresh'):** When `USE_MOCK_SLIS_DB=false`, executes stored procedure `EXEC getdiagnosticsList` when the admin clicks "Refresh" to sync new diagnosticians (`PERSONELID`, `DOCNAME`) into `diagflow.db` (`diagnosticians` table, inserting new IDs only).
+- **Push (Manual Trigger):** Pushes confirmed local assignments (`POST /api/slis/push-all` or `/api/slis/push-selected`) directly to Slis (`UPDATE exammore SET diagnostisid=? WHERE exammoreid=?`), recording the sync timestamp.
 
 ---
 
@@ -427,7 +428,7 @@ To deploy DiagFlow onto another machine:
 | `diagnostician_skills` | Exam code proficiencies | `id` (INT) | `diagnostician_id`, `exam_code`, `is_preferred` |
 | `partnerships` | Doctor-diagnostician pairings | `id` (INT) | `issuing_doctor_id`, `preferred_diagnostician_id`, `exclusive`, `is_active` |
 | `availability` | Daily leave & status calendar | `id` (INT) | `diagnostician_id`, `date`, `status`, `is_pamakristos_oncall` |
-| `doctors` | Doctor catalogue | `id` (TEXT) | `name`, `specialty` |
+| `doctors` | Doctor catalogue | `id` (TEXT) | `name` |
 | `local_assignments` | Local un-pushed assignments | `exammoreid` (INT) | `diagnostician_id`, `diagnostician_name`, `assigned_at`, `is_auto`, `rule_desc` |
 | `assignment_log` | Audit trail history | `exammoreid` (INT) | `diagnostician_id`, `assigned_at`, `modality`, `extracode` |
 | `pamakristos_schedule` | Weekly on-call rotation | `weekday` (INT) | `diagnostician_id` (0=Mon .. 6=Sun) |

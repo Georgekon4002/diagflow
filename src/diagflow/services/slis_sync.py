@@ -61,24 +61,139 @@ def _get_db() -> sqlite3.Connection:
 
 def pull_from_slis() -> dict:
     """
-    Simulate pulling fresh exam data from the Slis DB.
+    Pull exam data from Slis DB or mock DB.
 
-    In production this would run the supervisor's stored procedure
-    (which produces the #TMP_LIST result set in docs/table.sql).
+    In production (USE_MOCK_SLIS_DB=false):
+      - Executes stored procedure `EXEC getExamsListForPeriod 'YYYY-MM-DD', 'YYYY-MM-DD'`
+        for the last 3 days up to today.
+      - Filters results to only exams where DIAGNOSTIS IS NULL (unassigned).
+      - Populates local slis_exams table in mock_slis.db so the app's local processing pipeline runs seamlessly.
 
-    In mock mode:
-      - The mock_slis.db already contains seeded data.
-      - We simply verify the schema is up to date (add slis_synced_at
-        if it is missing from an older DB file).
-      - Returns a count of how many eligible exams are currently visible.
-
-    Returns:
-        dict with keys: pulled (int), expired (int), total_pending (int)
+    In mock mode (USE_MOCK_SLIS_DB=true):
+      - Verifies slis_synced_at column exists.
+      - Expire old synced rows.
+      - Counts pending exams for the last 3 days.
     """
     if not settings.use_mock_slis_db:
-        # TODO: implement real Slis pull via pyodbc
-        logger.warning("pull_from_slis: real Slis DB not configured — skipping pull")
-        return {"pulled": 0, "expired": 0, "total_pending": 0}
+        try:
+            from sqlalchemy import create_engine, text
+            engine = create_engine(settings.slis_db_connection_string)
+
+            end_date = date.today()
+            start_date = end_date - timedelta(days=3)
+            start_str = start_date.strftime("%Y-%m-%d")
+            end_str = end_date.strftime("%Y-%m-%d")
+
+            logger.info("pulling_real_slis_exams", start=start_str, end=end_str)
+
+            with engine.connect() as conn:
+                query = text(f"EXEC getExamsListForPeriod '{start_str}', '{end_str}'")
+                res = conn.execute(query)
+                keys = list(res.keys())
+                rows = [dict(zip(keys, row)) for row in res.fetchall()]
+
+            unassigned_rows = [
+                r for r in rows
+                if r.get("DIAGNOSTIS") is None or r.get("DIAGNOSTIS") == "" or str(r.get("DIAGNOSTIS")).strip().lower() == "none"
+            ]
+
+            pulled_count = len(unassigned_rows)
+
+            con = _get_db()
+            cols = [row[1] for row in con.execute("PRAGMA table_info(slis_exams)").fetchall()]
+            if "slis_synced_at" not in cols:
+                con.execute("ALTER TABLE slis_exams ADD COLUMN slis_synced_at TEXT DEFAULT NULL")
+                con.commit()
+
+            expired = delete_expired(con)
+
+            for r in unassigned_rows:
+                row_dict = {k.lower(): v for k, v in r.items()}
+                exammoreid = row_dict.get("exammoreid")
+                if not exammoreid:
+                    continue
+
+                con.execute(
+                    """
+                    INSERT INTO slis_exams (
+                        oldexam, oldvisit, oldorder, oldpers, olddiagnostis, aa,
+                        extracode, visitid, demogid, fname, lname, examid,
+                        examnumcode, examname, visitdate, labcodeid, laboratoryname,
+                        wardid, wcode, wname, diagnostis, personelid, code, name,
+                        notes, exammoreid, category
+                    ) VALUES (
+                        :oldexam, :oldvisit, :oldorder, :oldpers, :olddiagnostis, :aa,
+                        :extracode, :visitid, :demogid, :fname, :lname, :examid,
+                        :examnumcode, :examname, :visitdate, :labcodeid, :laboratoryname,
+                        :wardid, :wcode, :wname, :diagnostis, :personelid, :code, :name,
+                        :notes, :exammoreid, :category
+                    )
+                    ON CONFLICT(exammoreid) DO UPDATE SET
+                        extracode=excluded.extracode,
+                        visitid=excluded.visitid,
+                        demogid=excluded.demogid,
+                        fname=excluded.fname,
+                        lname=excluded.lname,
+                        examnumcode=excluded.examnumcode,
+                        examname=excluded.examname,
+                        visitdate=excluded.visitdate,
+                        labcodeid=excluded.labcodeid,
+                        laboratoryname=excluded.laboratoryname,
+                        wardid=excluded.wardid,
+                        wcode=excluded.wcode,
+                        wname=excluded.wname,
+                        diagnostis=excluded.diagnostis,
+                        notes=excluded.notes,
+                        category=excluded.category
+                    """,
+                    {
+                        "oldexam": row_dict.get("oldexam"),
+                        "oldvisit": row_dict.get("oldvisit"),
+                        "oldorder": str(row_dict.get("oldorder")) if row_dict.get("oldorder") else None,
+                        "oldpers": row_dict.get("oldpers"),
+                        "olddiagnostis": str(row_dict.get("olddiagnostis")) if row_dict.get("olddiagnostis") else None,
+                        "aa": row_dict.get("aa"),
+                        "extracode": row_dict.get("extracode"),
+                        "visitid": row_dict.get("visitid"),
+                        "demogid": row_dict.get("demogid"),
+                        "fname": row_dict.get("fname"),
+                        "lname": row_dict.get("lname"),
+                        "examid": row_dict.get("examid"),
+                        "examnumcode": row_dict.get("examnumcode"),
+                        "examname": row_dict.get("examname"),
+                        "visitdate": str(row_dict.get("visitdate"))[:10] if row_dict.get("visitdate") else None,
+                        "labcodeid": row_dict.get("labcodeid"),
+                        "laboratoryname": row_dict.get("laboratoryname"),
+                        "wardid": row_dict.get("wardid"),
+                        "wcode": str(row_dict.get("wcode")) if row_dict.get("wcode") else None,
+                        "wname": row_dict.get("wname"),
+                        "diagnostis": None,
+                        "personelid": row_dict.get("personelid"),
+                        "code": row_dict.get("code"),
+                        "name": row_dict.get("name"),
+                        "notes": row_dict.get("notes"),
+                        "exammoreid": exammoreid,
+                        "category": row_dict.get("category") or "MRI",
+                    }
+                )
+
+            con.commit()
+
+            cutoff_date = (date.today() - timedelta(days=3)).isoformat()
+            today_str = date.today().isoformat()
+            count_row = con.execute(
+                "SELECT COUNT(*) FROM slis_exams WHERE diagnostis IS NULL AND visitdate BETWEEN ? AND ?",
+                (cutoff_date, today_str),
+            ).fetchone()
+            total_pending = count_row[0] if count_row else 0
+            con.close()
+
+            logger.info("pull_from_slis_production_complete", pulled=pulled_count, total_pending=total_pending)
+            return {"pulled": pulled_count, "expired": expired, "total_pending": total_pending}
+
+        except Exception as exc:
+            logger.error("pull_from_slis_production_error", error=str(exc))
+            return {"pulled": 0, "expired": 0, "total_pending": 0}
 
     try:
         con = _get_db()
@@ -353,87 +468,120 @@ def push_selected_to_slis(exammoreid_list: list[int]) -> dict:
 
 def sync_diagnosticians() -> dict:
     """
-    Pull diagnosticians from Slis DB and insert new ones into local diagflow.db.
+    Pull diagnosticians from Slis DB (EXEC getdiagnosticsList) or mock DB,
+    and insert NEW ones into local diagflow.db (active=0 default, ON CONFLICT DO NOTHING).
     """
     import diagflow.db.diagflow_db as cfg_db
-    
-    if not settings.use_mock_slis_db:
-        logger.warning("sync_diagnosticians: real Slis DB not configured — skipping pull")
-        return {"synced": 0}
+
+    synced_count = 0
+    local_con = sqlite3.connect(cfg_db._DB_PATH)
+    local_con.execute("PRAGMA foreign_keys = ON")
 
     try:
-        con = _get_db()
-        rows = con.execute("SELECT PERSONELID, DOCNAME FROM diagnosticians").fetchall()
-        con.close()
-        
-        synced_count = 0
-        local_con = sqlite3.connect(cfg_db._DB_PATH)
-        local_con.execute("PRAGMA foreign_keys = ON")
-        
-        for row in rows:
-            diag_id = row['PERSONELID']
-            diag_name = row['DOCNAME']
-            
-            # Insert only new entries, defaulting them to inactive (active=0)
-            cur = local_con.execute("""
-                INSERT INTO diagnosticians (id, name, active) 
-                VALUES (?, ?, 0) 
-                ON CONFLICT(id) DO NOTHING
-            """, (diag_id, diag_name))
-            if cur.rowcount > 0:
-                synced_count += 1
-            
+        if not settings.use_mock_slis_db:
+            from sqlalchemy import create_engine, text
+            engine = create_engine(settings.slis_db_connection_string)
+            with engine.connect() as conn:
+                res = conn.execute(text("EXEC getdiagnosticsList"))
+                keys = list(res.keys())
+                rows = [dict(zip(keys, row)) for row in res.fetchall()]
+
+            for row in rows:
+                r_dict = {k.lower(): v for k, v in row.items()}
+                diag_id = r_dict.get("personelid")
+                diag_name = r_dict.get("docname")
+                if diag_id is not None and diag_name:
+                    cur = local_con.execute("""
+                        INSERT INTO diagnosticians (id, name, active) 
+                        VALUES (?, ?, 0) 
+                        ON CONFLICT(id) DO NOTHING
+                    """, (diag_id, str(diag_name).strip()))
+                    if cur.rowcount > 0:
+                        synced_count += 1
+        else:
+            con = _get_db()
+            rows = con.execute("SELECT PERSONELID, DOCNAME FROM diagnosticians").fetchall()
+            con.close()
+
+            for row in rows:
+                diag_id = row['PERSONELID']
+                diag_name = row['DOCNAME']
+                cur = local_con.execute("""
+                    INSERT INTO diagnosticians (id, name, active) 
+                    VALUES (?, ?, 0) 
+                    ON CONFLICT(id) DO NOTHING
+                """, (diag_id, str(diag_name).strip()))
+                if cur.rowcount > 0:
+                    synced_count += 1
+
         local_con.commit()
         local_con.close()
-        
+
         logger.info("sync_diagnosticians_complete", new_count=synced_count)
         return {"synced": synced_count}
-        
+
     except Exception as exc:
+        local_con.close()
         logger.error("sync_diagnosticians_error", error=str(exc))
         return {"error": str(exc)}
 
 
-
 def sync_doctors() -> dict:
     """
-    Pull doctors from Slis DB and insert new ones into local diagflow.db.
+    Pull ward doctors from Slis DB (EXEC getWardDoctors) or mock DB,
+    and insert NEW ones into local diagflow.db (ON CONFLICT DO NOTHING).
     """
     import diagflow.db.diagflow_db as cfg_db
-    
-    if not settings.use_mock_slis_db:
-        logger.warning("sync_doctors: real Slis DB not configured — skipping pull")
-        return {"synced": 0}
+
+    synced_count = 0
+    local_con = sqlite3.connect(cfg_db._DB_PATH)
+    local_con.execute("PRAGMA foreign_keys = ON")
 
     try:
-        con = _get_db()
-        rows = con.execute("SELECT CODE, DOCNAME FROM doctors").fetchall()
-        con.close()
-        
-        synced_count = 0
-        local_con = sqlite3.connect(cfg_db._DB_PATH)
-        local_con.execute("PRAGMA foreign_keys = ON")
-        
-        for row in rows:
-            doc_id = str(row['CODE'])  # Diagflow uses TEXT for doctor id
-            doc_name = row['DOCNAME']
-            
-            # Insert only new entries
-            cur = local_con.execute("""
-                INSERT INTO doctors (id, name) 
-                VALUES (?, ?) 
-                ON CONFLICT(id) DO NOTHING
-            """, (doc_id, doc_name))
-            if cur.rowcount > 0:
-                synced_count += 1
-            
+        if not settings.use_mock_slis_db:
+            from sqlalchemy import create_engine, text
+            engine = create_engine(settings.slis_db_connection_string)
+            with engine.connect() as conn:
+                res = conn.execute(text("EXEC getWardDoctors"))
+                keys = list(res.keys())
+                rows = [dict(zip(keys, row)) for row in res.fetchall()]
+
+            for row in rows:
+                r_dict = {k.lower(): v for k, v in row.items()}
+                doc_id = r_dict.get("code")
+                doc_name = r_dict.get("docname")
+                if doc_id is not None and doc_name:
+                    cur = local_con.execute("""
+                        INSERT INTO doctors (id, name) 
+                        VALUES (?, ?) 
+                        ON CONFLICT(id) DO NOTHING
+                    """, (str(doc_id).strip(), str(doc_name).strip()))
+                    if cur.rowcount > 0:
+                        synced_count += 1
+        else:
+            con = _get_db()
+            rows = con.execute("SELECT CODE, DOCNAME FROM doctors").fetchall()
+            con.close()
+
+            for row in rows:
+                doc_id = str(row['CODE']).strip()
+                doc_name = str(row['DOCNAME']).strip()
+                cur = local_con.execute("""
+                    INSERT INTO doctors (id, name) 
+                    VALUES (?, ?) 
+                    ON CONFLICT(id) DO NOTHING
+                """, (doc_id, doc_name))
+                if cur.rowcount > 0:
+                    synced_count += 1
+
         local_con.commit()
         local_con.close()
-        
+
         logger.info("sync_doctors_complete", new_count=synced_count)
         return {"synced": synced_count}
-        
+
     except Exception as exc:
+        local_con.close()
         logger.error("sync_doctors_error", error=str(exc))
         return {"error": str(exc)}
 

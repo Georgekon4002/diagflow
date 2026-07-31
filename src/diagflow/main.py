@@ -29,13 +29,15 @@ async def lifespan(app: FastAPI):
     """Application lifespan — runs setup on startup and cleanup on shutdown."""
     setup_logging(settings.log_level)
 
-    # ── Pull from Slis on startup ──
-    # Expires old synced rows and verifies the DB schema is current.
-    # In production this would trigger the real Slis stored-procedure pull.
-    from diagflow.services.slis_sync import pull_from_slis, sync_diagnosticians, sync_doctors
+    # ── Sync Doctors and Pull Exams on startup ──
+    from diagflow.services.slis_sync import pull_from_slis, sync_doctors
+    doc_res = sync_doctors()
+    logger.info("startup_doctor_sync", synced=doc_res.get("synced", 0))
+
     result = pull_from_slis()
     logger.info(
         "startup_slis_pull",
+        pulled=result.get("pulled", 0),
         expired=result.get("expired", 0),
         total_pending=result.get("total_pending", 0),
     )

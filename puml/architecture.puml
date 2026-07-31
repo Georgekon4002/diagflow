@@ -78,14 +78,13 @@ package "Frontend (Static HTML/JS)" as front #E8F5E9 {
 }
 
 ' ─── Connections ───
-slisdb <..> sa_engines : "pyodbc\n(production)"
+slisdb <..> sync_svc : "pyodbc SP calls\n(EXEC getExamsListForPeriod,\nEXEC getWardDoctors,\nEXEC getdiagnosticsList)"
 mockdb <--> sync_svc : "SQLite read/write\n(development)"
 
 cfg_layer --> configdb : "sqlite3\nCRUD"
-sa_engines ..> services : "(future MSSQL)"
 
 sync_svc --> cfg_layer : "sync diagnosticians\n& doctors"
-cron --> sync_svc : "trigger daily\nsync_diagnosticians()\nsync_doctors()"
+cron --> sync_svc : "trigger daily\nsync_doctors()"
 
 services --> engine : "run 4-stage pipeline"
 assign_svc --> cfg_layer : "upsert_local_assignment\nauto-assign routing rules"

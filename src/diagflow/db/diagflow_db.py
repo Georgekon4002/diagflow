@@ -455,13 +455,13 @@ def get_all_doctors(q: str = "", skip: int = 0, limit: int = 50) -> dict:
             where_clause = "WHERE doc.name LIKE ? OR doc.id LIKE ? OR diag.name LIKE ?"
             total = con.execute(f"SELECT count(DISTINCT doc.id) {base_query} {where_clause}", (like_q, like_q, like_q)).fetchone()[0]
             rows = con.execute(
-                f"SELECT doc.id, doc.name, doc.specialty, GROUP_CONCAT(diag.name, ', ') as partner_name {base_query} {where_clause} GROUP BY doc.id, doc.name, doc.specialty ORDER BY doc.name LIMIT ? OFFSET ?",
+                f"SELECT doc.id, doc.name, GROUP_CONCAT(diag.name, ', ') as partner_name {base_query} {where_clause} GROUP BY doc.id, doc.name ORDER BY doc.name LIMIT ? OFFSET ?",
                 (like_q, like_q, like_q, limit, skip)
             ).fetchall()
         else:
             total = con.execute(f"SELECT count(DISTINCT doc.id) {base_query}").fetchone()[0]
             rows = con.execute(
-                f"SELECT doc.id, doc.name, doc.specialty, GROUP_CONCAT(diag.name, ', ') as partner_name {base_query} GROUP BY doc.id, doc.name, doc.specialty ORDER BY doc.name LIMIT ? OFFSET ?",
+                f"SELECT doc.id, doc.name, GROUP_CONCAT(diag.name, ', ') as partner_name {base_query} GROUP BY doc.id, doc.name ORDER BY doc.name LIMIT ? OFFSET ?",
                 (limit, skip)
             ).fetchall()
     return {
@@ -470,15 +470,15 @@ def get_all_doctors(q: str = "", skip: int = 0, limit: int = 50) -> dict:
     }
 
 
-def upsert_doctor(doctor_id: str, name: str, specialty: str = "") -> dict:
+def upsert_doctor(doctor_id: str, name: str) -> dict:
     with _conn() as con:
         con.execute(
-            "INSERT INTO doctors (id, name, specialty) VALUES (?, ?, ?) "
-            "ON CONFLICT(id) DO UPDATE SET name=excluded.name, specialty=excluded.specialty",
-            (doctor_id, name, specialty),
+            "INSERT INTO doctors (id, name) VALUES (?, ?) "
+            "ON CONFLICT(id) DO UPDATE SET name=excluded.name",
+            (doctor_id, name),
         )
         row = con.execute(
-            "SELECT id, name, specialty FROM doctors WHERE id = ?", (doctor_id,)
+            "SELECT id, name FROM doctors WHERE id = ?", (doctor_id,)
         ).fetchone()
     return _row_to_dict(row)
 

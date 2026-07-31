@@ -876,7 +876,6 @@ async def admin_delete_partnership(part_id: int, _=Depends(_require_admin)):
 class DoctorCreateRequest(BaseModel):
     id: str = ""
     name: str
-    specialty: str = ""
 
 
 @router.get("/admin/doctors")
@@ -893,7 +892,7 @@ def admin_list_doctors(
 async def admin_create_doctor(req: DoctorCreateRequest, _=Depends(_require_admin)):
     import secrets
     doc_id = req.id if req.id else f"DR-{secrets.token_hex(4).upper()}"
-    return cfg_db.upsert_doctor(doctor_id=doc_id, name=req.name, specialty=req.specialty)
+    return cfg_db.upsert_doctor(doctor_id=doc_id, name=req.name)
 
 
 @router.delete("/admin/doctors/{doctor_id}")

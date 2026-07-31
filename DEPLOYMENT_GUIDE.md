@@ -25,11 +25,11 @@ Every deployment requires a `.env` file located in the application root (or alon
 # ============================================================
 
 # --- Database Connection ---
-# Slis DB (read-only access to existing Slis tables)
-SLIS_DB_CONNECTION_STRING=mssql+pyodbc://diagflow_user:SecurePassword123!@192.168.1.100/SlisDB?driver=ODBC+Driver+17+for+SQL+Server
+# Read-only / main access to Slis database tables
+SLIS_DB_CONNECTION_STRING=mssql+pyodbc://<USERNAME>:<PASSWORD>@<SERVER_IP_OR_HOSTNAME>/<DATABASE_NAME>?driver=ODBC+Driver+17+for+SQL+Server
 
-# Config DB (DiagFlow's own tables — can be same DB or separate)
-CONFIG_DB_CONNECTION_STRING=mssql+pyodbc://diagflow_user:SecurePassword123!@192.168.1.100/SlisDB?driver=ODBC+Driver+17+for+SQL+Server
+# DiagFlow config tables (can target the same DB or a dedicated DB)
+CONFIG_DB_CONNECTION_STRING=mssql+pyodbc://<USERNAME>:<PASSWORD>@<SERVER_IP_OR_HOSTNAME>/<DATABASE_NAME>?driver=ODBC+Driver+17+for+SQL+Server
 
 # Set to false in production to connect to real Slis SQL Server instance
 USE_MOCK_SLIS_DB=false
@@ -58,6 +58,11 @@ LOG_LEVEL=INFO
 2. Configure `SLIS_DB_CONNECTION_STRING` with valid host, port, credentials, and database name.
 3. Ensure ODBC Driver 17 is installed on the target machine.
 4. Verify database firewall/network access between target computer and SQL Server.
+5. Verify the required Slis stored procedures exist in the target Slis DB:
+   - `EXEC getWardDoctors` (returns `CODE`, `DOCNAME` — called on launch & 3 AM cron)
+   - `EXEC getExamsListForPeriod 'YYYY-MM-DD', 'YYYY-MM-DD'` (returns unassigned exams for the period — called on launch & refresh)
+   - `EXEC getdiagnosticsList` (returns `PERSONELID`, `DOCNAME` — called on Admin Panel "Refresh")
+6. Verify table write-back permissions (`UPDATE exammore SET diagnostisid=? WHERE exammoreid=?`).
 
 ### Mode B: Standalone / Demo Mode (SQLite Mock DB)
 1. Set `USE_MOCK_SLIS_DB=true` in `.env`.

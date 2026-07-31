@@ -40,7 +40,8 @@ def seed():
 
     # Drop existing config tables in case the file couldn't be deleted
     for tbl in ["diagnostician_skills", "availability", "partnerships",
-                "doctors", "diagnosticians", "local_assignments", "assignment_log", "system_settings"]:
+                "doctors", "diagnosticians", "local_assignments", "assignment_log", "system_settings",
+                "exam_routing_rules", "exclusive_lab_rules", "modality_quotas", "pamakristos_schedule", "admin_users"]:
         cur.execute(f"DROP TABLE IF EXISTS {tbl}")
     
     # Also drop indexes to avoid conflicts if they already exist

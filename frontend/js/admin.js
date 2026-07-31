@@ -1199,9 +1199,9 @@ function getMockPartnerships() {
 
 function getMockDoctors() {
     return [
-        { id: 'DR-101', name: 'Παπαδόπουλος Ν.', specialty: 'Ορθοπεδική' },
-        { id: 'DR-205', name: 'Ιωάννου Ε.', specialty: 'Καρδιολογία' },
-        { id: 'DR-310', name: 'Βασιλείου Κ.', specialty: 'Νευρολογία' },
+        { id: 'DR-101', name: 'Παπαδόπουλος Ν.' },
+        { id: 'DR-205', name: 'Ιωάννου Ε.' },
+        { id: 'DR-310', name: 'Βασιλείου Κ.' },
     ];
 }
 

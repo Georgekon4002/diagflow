@@ -57,7 +57,6 @@ package "diagflow.db — Config & State" as diagflow_db #E3F2FD {
         * **id** : TEXT <<PK>>
         --
         * name : TEXT
-        specialty : TEXT
     }
 
     entity "local_assignments" as local_assign {

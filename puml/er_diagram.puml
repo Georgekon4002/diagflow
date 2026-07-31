@@ -68,7 +68,6 @@ package "diagflow.db" as db1 #E3F2FD {
         * id : TEXT <<PK>>
         --
         name : TEXT <<NOT NULL>>
-        specialty : TEXT <<default ''>>
     }
 
     entity "local_assignments" as local {

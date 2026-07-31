@@ -203,9 +203,10 @@ $$\text{Συνολική Βαθμολογία} = \sum (\text{Ακατέργασ�
 
 ### 4. Υπηρεσία Αμφίδρομης Συγχρονισμού Slis
 
-- **Άντληση (On-Demand / Εκκίνηση):** Αναζήτηση μη ανατεθέντων εξετάσεων τελευταίων 3 ημερών, εκτέλεση κανόνων αυτόματης ανάθεσης και γέμισμα πίνακα εκκρεμών.
-- **Ώθηση (Χειροκίνητη):** Επιβεβαιωμένες τοπικές αναθέσεις ωθούνται άμεσα στο Slis.
-- **Ημερήσιο Cron:** APScheduler εκτελείται κάθε μέρα στις **3:00 ΠΜ**.
+- **Άντληση (On-Demand / Εκκίνηση):** Όταν `USE_MOCK_SLIS_DB=false`, εκτελεί τη stored procedure `EXEC getExamsListForPeriod 'YYYY-MM-DD', 'YYYY-MM-DD'` στη βάση Slis MSSQL για άντληση μη ανατεθέντων εξετάσεων (`DIAGNOSTIS IS NULL`) των τελευταίων 3 ημερών.
+- **Συγχρονισμός Γιατρών (Εκκίνηση / Ημερήσιο 3 ΠΜ Cron):** Όταν `USE_MOCK_SLIS_DB=false`, εκτελεί τη stored procedure `EXEC getWardDoctors` για συγχρονισμό νέων γιατρών (`CODE`, `DOCNAME`) στον πίνακα `doctors` της βάσης `diagflow.db`.
+- **Συγχρονισμός Διαγνωστών (Ανανέωση Admin Panel):** Όταν `USE_MOCK_SLIS_DB=false`, εκτελεί τη stored procedure `EXEC getdiagnosticsList` όταν ο admin πατάει "Ανανέωση" για συγχρονισμό νέων διαγνωστών (`PERSONELID`, `DOCNAME`) στον πίνακα `diagnosticians`.
+- **Ώθηση (Χειροκίνητη):** Επιβεβαιωμένες τοπικές αναθέσεις ωθούνται άμεσα στο Slis (`UPDATE exammore SET diagnostisid=? WHERE exammoreid=?`).
 
 ---
 
@@ -413,7 +414,7 @@ python scripts/build_exe.py
 | `diagnostician_skills` | Εξειδικεύσεις κωδικών εξετάσεων | `id` (INT) | `diagnostician_id`, `exam_code`, `is_preferred` |
 | `partnerships` | Ζεύγη γιατρού-διαγνωστή | `id` (INT) | `issuing_doctor_id`, `preferred_diagnostician_id`, `exclusive`, `is_active` |
 | `availability` | Ημερολόγιο αδειών και κατάστασης | `id` (INT) | `diagnostician_id`, `date`, `status`, `is_pamakristos_oncall` |
-| `doctors` | Κατάλογος γιατρών | `id` (TEXT) | `name`, `specialty` |
+| `doctors` | Κατάλογος γιατρών | `id` (TEXT) | `name` |
 | `local_assignments` | Τοπικές μη ωθημένες αναθέσεις | `exammoreid` (INT) | `diagnostician_id`, `diagnostician_name`, `assigned_at`, `is_auto`, `rule_desc` |
 | `assignment_log` | Ίχνος ελέγχου | `exammoreid` (INT) | `diagnostician_id`, `assigned_at`, `modality`, `extracode` |
 | `pamakristos_schedule` | Εβδομαδιαία εναλλαγή on-call | `weekday` (INT) | `diagnostician_id` (0=Δευτ .. 6=Κυρ) |
