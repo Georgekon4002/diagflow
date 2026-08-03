@@ -152,8 +152,8 @@ class TestAutoAssignFiltersAndScoring:
         scores = {c["name"]: c["score"] for c in result.alternatives}
         scores[result.suggested_diagnostician_name] = result.confidence_score
         
-        # Partnership (Partner Dr) should score highest due to highest weight (0.35)
-        assert scores["Partner Dr"] > scores["History Dr"]
+        # Patient History (History Dr) should score highest due to highest weight (0.35 vs 0.20)
+        assert scores["History Dr"] > scores["Partner Dr"]
         
         # Patient History (History Dr) should score higher than Lab Preference (0.20 vs 0.15)
         assert scores["History Dr"] > scores["Lab Pref Dr"]

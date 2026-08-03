@@ -158,8 +158,8 @@ $$\text{Total Score} = \sum (\text{Factor Raw Score} \times \text{Factor Weight}
 
 | Scoring Factor | Dynamic Key | Default Weight | Description |
 |----------------|-------------|----------------|-------------|
-| **Doctor Partnership** | `pts_partnership` | `0.35` | Preferred diagnostician for the issuing doctor |
-| **Patient History** | `pts_history` | `0.20` | Continuity of care (diagnostician reviewed patient's past exams) |
+| **Patient History** | `pts_history` | `0.35` | Continuity of care (diagnostician reviewed patient's past exams) |
+| **Doctor Partnership** | `pts_partnership` | `0.20` | Preferred diagnostician for the issuing doctor |
 | **Skills Bonus** | `pts_skills_pref` | `0.20` | Specialization preference (`1.0` preferred, `0.5` neutral, `0.3` no data) |
 | **Lab Preference** | `pts_lab_pref` | `0.15` | Matches diagnostician's preferred facility/laboratory |
 | **Remaining Capacity** | `pts_capacity` | `0.10` | Ratio of remaining daily quota slots |

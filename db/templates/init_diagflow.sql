@@ -1,17 +1,21 @@
--- DiagFlow Configuration Database Initialization & Mock Template Data Script
 BEGIN TRANSACTION;
-
--- Schema Definition
-CREATE TABLE IF NOT EXISTS local_assignments (
-    exammoreid          INTEGER PRIMARY KEY,
-    diagnostician_id    INTEGER NOT NULL,
-    diagnostician_name  TEXT    NOT NULL,
-    assigned_at         TEXT    NOT NULL,
-    is_auto             INTEGER NOT NULL DEFAULT 0,
-    rule_desc           TEXT
+CREATE TABLE admin_users (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    username      TEXT UNIQUE NOT NULL,
+    password_hash TEXT NOT NULL,
+    role          TEXT NOT NULL DEFAULT 'admin',
+    is_active     INTEGER NOT NULL DEFAULT 1
 );
-
-CREATE TABLE IF NOT EXISTS availability (
+INSERT INTO "admin_users" VALUES(1,'admin','$2b$12$SsLUct5RLmZJBwDQDBQ7xusD4CrjabY8EX9q.gKZjZbch5HZ2Ovly','admin',1);
+INSERT INTO "admin_users" VALUES(2,'it_support','$2b$12$dk9gH/KU49ZmcFDnQo8bl.D7q8/wcHT.icrlAFlJ8Kd9E3AjItrFa','it_support',1);
+CREATE TABLE assignment_log (
+    exammoreid        INTEGER PRIMARY KEY,
+    diagnostician_id  INTEGER NOT NULL,
+    assigned_at       TEXT NOT NULL,
+    modality          TEXT,
+    extracode         TEXT
+);
+CREATE TABLE availability (
     id                      INTEGER PRIMARY KEY AUTOINCREMENT,
     diagnostician_id        INTEGER NOT NULL REFERENCES diagnosticians(id) ON DELETE CASCADE,
     date                    TEXT    NOT NULL,
@@ -20,16 +24,35 @@ CREATE TABLE IF NOT EXISTS availability (
     notes                   TEXT,
     UNIQUE(diagnostician_id, date)
 );
-
-CREATE TABLE IF NOT EXISTS diagnostician_skills (
+INSERT INTO "availability" VALUES(1,1,'2026-08-03','available',0,NULL);
+INSERT INTO "availability" VALUES(2,2,'2026-08-03','available',1,'Εφημερία Παμμακάριστος');
+INSERT INTO "availability" VALUES(3,3,'2026-08-03','available',0,NULL);
+INSERT INTO "availability" VALUES(4,4,'2026-08-03','absent',0,'Άδεια');
+INSERT INTO "availability" VALUES(5,5,'2026-08-03','available',0,NULL);
+INSERT INTO "availability" VALUES(6,6,'2026-08-03','available',0,NULL);
+CREATE TABLE diagnostician_skills (
     id                INTEGER PRIMARY KEY AUTOINCREMENT,
     diagnostician_id  INTEGER NOT NULL REFERENCES diagnosticians(id) ON DELETE CASCADE,
     exam_code         TEXT    NOT NULL,
     is_preferred      INTEGER NOT NULL DEFAULT 0,
     UNIQUE(diagnostician_id, exam_code)
 );
-
-CREATE TABLE IF NOT EXISTS diagnosticians (
+INSERT INTO "diagnostician_skills" VALUES(1,1,'22140',1);
+INSERT INTO "diagnostician_skills" VALUES(2,1,'22141',1);
+INSERT INTO "diagnostician_skills" VALUES(3,1,'22150',0);
+INSERT INTO "diagnostician_skills" VALUES(4,2,'22140',0);
+INSERT INTO "diagnostician_skills" VALUES(5,2,'22150',1);
+INSERT INTO "diagnostician_skills" VALUES(6,2,'22151',1);
+INSERT INTO "diagnostician_skills" VALUES(7,3,'22705',1);
+INSERT INTO "diagnostician_skills" VALUES(8,3,'22150',1);
+INSERT INTO "diagnostician_skills" VALUES(9,3,'22141',0);
+INSERT INTO "diagnostician_skills" VALUES(10,4,'22140',1);
+INSERT INTO "diagnostician_skills" VALUES(11,4,'22141',1);
+INSERT INTO "diagnostician_skills" VALUES(12,5,'22150',1);
+INSERT INTO "diagnostician_skills" VALUES(13,5,'22151',1);
+INSERT INTO "diagnostician_skills" VALUES(14,6,'22140',0);
+INSERT INTO "diagnostician_skills" VALUES(15,6,'22150',0);
+CREATE TABLE diagnosticians (
     id               INTEGER PRIMARY KEY,
     name             TEXT    NOT NULL,
     active           INTEGER NOT NULL DEFAULT 1,
@@ -45,31 +68,31 @@ CREATE TABLE IF NOT EXISTS diagnosticians (
     preferred_lab_id INTEGER DEFAULT NULL,
     created_at       TEXT    DEFAULT (datetime('now'))
 );
-
-CREATE TABLE IF NOT EXISTS doctors (
+INSERT INTO "diagnosticians" VALUES(1,'ΑΛΕΞΙΟΥ ΑΛΕΞΑΝΔΡΟΣ',1,1,1,15,15,15,15,15,0,0,1,'2026-08-03 13:37:59');
+INSERT INTO "diagnosticians" VALUES(2,'ΒΑΡΔΑΣ ΒΑΣΙΛΕΙΟΣ',1,1,1,15,15,15,15,15,0,0,1,'2026-08-03 13:37:59');
+INSERT INTO "diagnosticians" VALUES(3,'ΓΕΩΡΓΙΑΔΟΥ ΓΕΩΡΓΙΑ',1,1,1,15,15,15,15,15,0,0,2,'2026-08-03 13:37:59');
+INSERT INTO "diagnosticians" VALUES(4,'ΔΗΜΟΥ ΔΗΜΗΤΡΙΟΣ',1,1,0,12,12,12,12,12,0,0,1,'2026-08-03 13:37:59');
+INSERT INTO "diagnosticians" VALUES(5,'ΕΥΑΓΓΕΛΑΤΟΣ ΕΥΑΓΓΕΛΟΣ',1,0,1,12,12,12,12,12,0,0,2,'2026-08-03 13:37:59');
+INSERT INTO "diagnosticians" VALUES(6,'ΖΑΧΑΡΗ ΖΩΗ',1,1,1,15,15,15,15,15,0,0,1,'2026-08-03 13:37:59');
+CREATE TABLE doctors (
     id          TEXT PRIMARY KEY,
     name        TEXT NOT NULL
 );
-
-CREATE TABLE IF NOT EXISTS partnerships (
-    id                          INTEGER PRIMARY KEY AUTOINCREMENT,
-    issuing_doctor_id           TEXT    NOT NULL,
-    issuing_doctor_name         TEXT    NOT NULL,
-    preferred_diagnostician_id  INTEGER NOT NULL REFERENCES diagnosticians(id) ON DELETE CASCADE,
-    priority                    INTEGER NOT NULL DEFAULT 1,
-    exclusive                   INTEGER NOT NULL DEFAULT 0,
-    is_active                   INTEGER NOT NULL DEFAULT 1
+INSERT INTO "doctors" VALUES('DOC101','ΔΡ. ΚΩΝΣΤΑΝΤΙΝΟΥ ΜΙΧΑΗΛ');
+INSERT INTO "doctors" VALUES('DOC102','ΔΡ. ΘΕΟΔΩΡΟΥ ΣΟΦΙΑ');
+INSERT INTO "doctors" VALUES('DOC103','ΔΡ. ΑΝΤΩΝΙΟΥ ΑΝΔΡΕΑΣ');
+INSERT INTO "doctors" VALUES('DOC104','ΔΡ. ΝΙΚΟΛΑΟΥ ΕΛΕΝΗ');
+CREATE TABLE exam_dictionary (
+    code     TEXT PRIMARY KEY,
+    name     TEXT NOT NULL,
+    category TEXT
 );
-
-CREATE TABLE IF NOT EXISTS assignment_log (
-    exammoreid        INTEGER PRIMARY KEY,
-    diagnostician_id  INTEGER NOT NULL,
-    assigned_at       TEXT NOT NULL,
-    modality          TEXT,
-    extracode         TEXT
-);
-
-CREATE TABLE IF NOT EXISTS exam_routing_rules (
+INSERT INTO "exam_dictionary" VALUES('22140','ΑΞΟΝΙΚΗ ΤΟΜΟΓΡΑΦΙΑ ΘΩΡΑΚΑ','CT');
+INSERT INTO "exam_dictionary" VALUES('22141','ΑΞΟΝΙΚΗ ΤΟΜΟΓΡΑΦΙΑ ΚΟΙΛΙΑΣ','CT');
+INSERT INTO "exam_dictionary" VALUES('22150','ΜΑΓΝΗΤΙΚΗ ΤΟΜΟΓΡΑΦΙΑ ΕΓΚΕΦΑΛΟΥ','MRI');
+INSERT INTO "exam_dictionary" VALUES('22151','ΜΑΓΝΗΤΙΚΗ ΤΟΜΟΓΡΑΦΙΑ ΣΠΟΝΔΥΛΙΚΗΣ ΣΤΗΛΗΣ','MRI');
+INSERT INTO "exam_dictionary" VALUES('22705','ΜΑΓΝΗΤΙΚΗ ΦΑΣΜΑΤΟΣΚΟΠΙΑ (MRS)','MRI');
+CREATE TABLE exam_routing_rules (
     id                  INTEGER PRIMARY KEY AUTOINCREMENT,
     lab_id              INTEGER,
     is_pamakristos      INTEGER NOT NULL DEFAULT 0,
@@ -80,131 +103,76 @@ CREATE TABLE IF NOT EXISTS exam_routing_rules (
     issuing_doctor_name TEXT,
     is_active           INTEGER NOT NULL DEFAULT 1
 );
-
-CREATE TABLE IF NOT EXISTS exclusive_lab_rules (
+INSERT INTO "exam_routing_rules" VALUES(1,NULL,1,'22705',3,'Παμμακάριστος - Μαγνητική Φασματοσκοπία σε Γεωργιάδου',NULL,NULL,1);
+INSERT INTO "exam_routing_rules" VALUES(2,2,0,'22151',5,'MRI Σπονδυλικής Αμπελοκήπων σε Ευαγγελάτο',NULL,NULL,1);
+CREATE TABLE exclusive_lab_rules (
     id                INTEGER PRIMARY KEY AUTOINCREMENT,
     diagnostician_id  INTEGER NOT NULL,
     lab_id            INTEGER NOT NULL,
     lab_name          TEXT,
     is_active         INTEGER NOT NULL DEFAULT 1
 );
-
-CREATE TABLE IF NOT EXISTS modality_quotas (
+INSERT INTO "exclusive_lab_rules" VALUES(1,5,2,'Αμπελόκηποι',1);
+CREATE TABLE local_assignments (
+    exammoreid          INTEGER PRIMARY KEY,
+    diagnostician_id    INTEGER NOT NULL,
+    diagnostician_name  TEXT    NOT NULL,
+    assigned_at         TEXT    NOT NULL,
+    is_auto             INTEGER NOT NULL DEFAULT 0,
+    rule_desc           TEXT
+);
+CREATE TABLE modality_quotas (
     id                INTEGER PRIMARY KEY AUTOINCREMENT,
     diagnostician_id  INTEGER NOT NULL,
     modality          TEXT NOT NULL,
     max_count         INTEGER NOT NULL,
     is_active         INTEGER NOT NULL DEFAULT 1
 );
-
-CREATE TABLE IF NOT EXISTS system_settings (
-    key   TEXT PRIMARY KEY,
-    value TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS pamakristos_schedule (
+INSERT INTO "modality_quotas" VALUES(1,4,'CT',8,1);
+CREATE TABLE pamakristos_schedule (
     weekday          INTEGER PRIMARY KEY,
     diagnostician_id INTEGER NOT NULL REFERENCES diagnosticians(id)
 );
-
-CREATE TABLE IF NOT EXISTS admin_users (
-    id            INTEGER PRIMARY KEY AUTOINCREMENT,
-    username      TEXT UNIQUE NOT NULL,
-    password_hash TEXT NOT NULL,
-    role          TEXT NOT NULL DEFAULT 'admin',
-    is_active     INTEGER NOT NULL DEFAULT 1
+INSERT INTO "pamakristos_schedule" VALUES(0,3);
+INSERT INTO "pamakristos_schedule" VALUES(1,4);
+INSERT INTO "pamakristos_schedule" VALUES(2,5);
+INSERT INTO "pamakristos_schedule" VALUES(3,6);
+INSERT INTO "pamakristos_schedule" VALUES(4,2);
+CREATE TABLE partnerships (
+    id                          INTEGER PRIMARY KEY AUTOINCREMENT,
+    issuing_doctor_id           TEXT    NOT NULL,
+    issuing_doctor_name         TEXT    NOT NULL,
+    preferred_diagnostician_id  INTEGER NOT NULL REFERENCES diagnosticians(id) ON DELETE CASCADE,
+    priority                    INTEGER NOT NULL DEFAULT 1,
+    exclusive                   INTEGER NOT NULL DEFAULT 0,
+    is_active                   INTEGER NOT NULL DEFAULT 1
 );
-
-CREATE INDEX IF NOT EXISTS idx_skills_diag    ON diagnostician_skills(diagnostician_id);
-CREATE INDEX IF NOT EXISTS idx_skills_code    ON diagnostician_skills(exam_code);
-CREATE INDEX IF NOT EXISTS idx_avail_diag     ON availability(diagnostician_id);
-CREATE INDEX IF NOT EXISTS idx_avail_date     ON availability(date);
-CREATE INDEX IF NOT EXISTS idx_partner_doctor ON partnerships(issuing_doctor_id);
-
--- Mock Data Population
-
--- Fictional Mock Diagnosticians
-INSERT INTO diagnosticians (id, name, active, can_ct, can_mri, quota_monday, quota_tuesday, quota_wednesday, quota_thursday, quota_friday, quota_saturday, quota_sunday, preferred_lab_id) VALUES
-(1, 'ΑΛΕΞΙΟΥ ΑΛΕΞΑΝΔΡΟΣ', 1, 1, 1, 15, 15, 15, 15, 15, 0, 0, 1),
-(2, 'ΒΑΡΔΑΣ ΒΑΣΙΛΕΙΟΣ', 1, 1, 1, 15, 15, 15, 15, 15, 0, 0, 1),
-(3, 'ΓΕΩΡΓΙΑΔΟΥ ΓΕΩΡΓΙΑ', 1, 1, 1, 15, 15, 15, 15, 15, 0, 0, 2),
-(4, 'ΔΗΜΟΥ ΔΗΜΗΤΡΙΟΣ', 1, 1, 0, 12, 12, 12, 12, 12, 0, 0, 1),
-(5, 'ΕΥΑΓΓΕΛΑΤΟΣ ΕΥΑΓΓΕΛΟΣ', 1, 0, 1, 12, 12, 12, 12, 12, 0, 0, 2),
-(6, 'ΖΑΧΑΡΗ ΖΩΗ', 1, 1, 1, 15, 15, 15, 15, 15, 0, 0, 1);
-
--- Diagnostician Skills
-INSERT INTO diagnostician_skills (diagnostician_id, exam_code, is_preferred) VALUES
-(1, '22140', 1),
-(1, '22141', 1),
-(1, '22150', 0),
-(2, '22140', 0),
-(2, '22150', 1),
-(2, '22151', 1),
-(3, '22705', 1),
-(3, '22150', 1),
-(3, '22141', 0),
-(4, '22140', 1),
-(4, '22141', 1),
-(5, '22150', 1),
-(5, '22151', 1),
-(6, '22140', 0),
-(6, '22150', 0);
-
--- Doctors
-INSERT INTO doctors (id, name) VALUES
-('DOC101', 'ΔΡ. ΚΩΝΣΤΑΝΤΙΝΟΥ ΜΙΧΑΗΛ'),
-('DOC102', 'ΔΡ. ΘΕΟΔΩΡΟΥ ΣΟΦΙΑ'),
-('DOC103', 'ΔΡ. ΑΝΤΩΝΙΟΥ ΑΝΔΡΕΑΣ'),
-('DOC104', 'ΔΡ. ΝΙΚΟΛΑΟΥ ΕΛΕΝΗ');
-
--- Partnerships (Exclusive & Preferred)
-INSERT INTO partnerships (issuing_doctor_id, issuing_doctor_name, preferred_diagnostician_id, priority, exclusive, is_active) VALUES
-('DOC101', 'ΔΡ. ΚΩΝΣΤΑΝΤΙΝΟΥ ΜΙΧΑΗΛ', 1, 1, 1, 1),
-('DOC102', 'ΔΡ. ΘΕΟΔΩΡΟΥ ΣΟΦΙΑ', 3, 1, 0, 1);
-
--- Weekly Pamakristos Schedule (Weekdays 0..6)
-INSERT INTO pamakristos_schedule (weekday, diagnostician_id) VALUES
-(0, 3), -- Δευτέρα: ΓΕΩΡΓΙΑΔΟΥ ΓΕΩΡΓΙΑ
-(1, 4), -- Τρίτη: ΔΗΜΟΥ ΔΗΜΗΤΡΙΟΣ
-(2, 5), -- Τετάρτη: ΕΥΑΓΓΕΛΑΤΟΣ ΕΥΑΓΓΕΛΟΣ
-(3, 6), -- Πέμπτη: ΖΑΧΑΡΗ ΖΩΗ
-(4, 2), -- Παρασκευή: ΒΑΡΔΑΣ ΒΑΣΙΛΕΙΟΣ
-(5, 1), -- Σάββατο: ΑΛΕΞΙΟΥ ΑΛΕΞΑΝΔΡΟΣ
-(6, 3); -- Κυριακή: ΓΕΩΡΓΙΑΔΟΥ ΓΕΩΡΓΙΑ
-
--- Availability Records
-INSERT INTO availability (diagnostician_id, date, status, is_pamakristos_oncall, notes) VALUES
-(1, '2026-08-03', 'available', 0, NULL),
-(2, '2026-08-03', 'available', 1, 'Εφημερία Παμμακάριστος'),
-(3, '2026-08-03', 'available', 0, NULL),
-(4, '2026-08-03', 'absent', 0, 'Άδεια'),
-(5, '2026-08-03', 'available', 0, NULL),
-(6, '2026-08-03', 'available', 0, NULL);
-
--- Exam Routing Rules
-INSERT INTO exam_routing_rules (lab_id, is_pamakristos, exam_codes, diagnostician_id, description, issuing_doctor_id, issuing_doctor_name, is_active) VALUES
-(NULL, 1, '22705', 3, 'Παμμακάριστος - Μαγνητική Φασματοσκοπία σε Γεωργιάδου', NULL, NULL, 1),
-(2, 0, '22151', 5, 'MRI Σπονδυλικής Αμπελοκήπων σε Ευαγγελάτο', NULL, NULL, 1);
-
--- Exclusive Lab Rules
-INSERT INTO exclusive_lab_rules (diagnostician_id, lab_id, lab_name, is_active) VALUES
-(5, 2, 'Αμπελόκηποι', 1);
-
--- Modality Quotas
-INSERT INTO modality_quotas (diagnostician_id, modality, max_count, is_active) VALUES
-(4, 'CT', 8, 1);
-
--- System Settings (Scoring Weights)
-INSERT INTO system_settings (key, value) VALUES
-('w_capacity', '0.20'),
-('w_fairness', '0.20'),
-('w_speed', '0.15'),
-('w_partnership', '0.10'),
-('w_pamakristos', '0.10');
-
--- Admin Users (Admin & IT Support)
-INSERT INTO admin_users (username, password_hash, role, is_active) VALUES
-('admin', '$2b$12$SsLUct5RLmZJBwDQDBQ7xusD4CrjabY8EX9q.gKZjZbch5HZ2Ovly', 'admin', 1),
-('it_support', '$2b$12$dk9gH/KU49ZmcFDnQo8bl.D7q8/wcHT.icrlAFlJ8Kd9E3AjItrFa', 'it_support', 1);
-
+INSERT INTO "partnerships" VALUES(1,'DOC101','ΔΡ. ΚΩΝΣΤΑΝΤΙΝΟΥ ΜΙΧΑΗΛ',1,1,1,1);
+INSERT INTO "partnerships" VALUES(2,'DOC102','ΔΡ. ΘΕΟΔΩΡΟΥ ΣΟΦΙΑ',3,1,0,1);
+CREATE TABLE system_settings (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+INSERT INTO "system_settings" VALUES('pts_partnership','0.20');
+INSERT INTO "system_settings" VALUES('pts_history','0.35');
+INSERT INTO "system_settings" VALUES('pts_skills_pref','0.20');
+INSERT INTO "system_settings" VALUES('pts_skills_neut','0.10');
+INSERT INTO "system_settings" VALUES('pts_skills_none','0.00');
+INSERT INTO "system_settings" VALUES('pts_lab_pref','0.15');
+INSERT INTO "system_settings" VALUES('pts_lab_neut','0.10');
+INSERT INTO "system_settings" VALUES('pts_lab_other','0.02');
+INSERT INTO "system_settings" VALUES('pts_capacity','0.10');
+CREATE INDEX idx_skills_diag    ON diagnostician_skills(diagnostician_id);
+CREATE INDEX idx_skills_code    ON diagnostician_skills(exam_code);
+CREATE INDEX idx_avail_diag     ON availability(diagnostician_id);
+CREATE INDEX idx_avail_date     ON availability(date);
+CREATE INDEX idx_partner_doctor ON partnerships(issuing_doctor_id);
+DELETE FROM "sqlite_sequence";
+INSERT INTO "sqlite_sequence" VALUES('diagnostician_skills',15);
+INSERT INTO "sqlite_sequence" VALUES('partnerships',2);
+INSERT INTO "sqlite_sequence" VALUES('availability',6);
+INSERT INTO "sqlite_sequence" VALUES('exam_routing_rules',2);
+INSERT INTO "sqlite_sequence" VALUES('exclusive_lab_rules',1);
+INSERT INTO "sqlite_sequence" VALUES('modality_quotas',1);
+INSERT INTO "sqlite_sequence" VALUES('admin_users',2);
 COMMIT;

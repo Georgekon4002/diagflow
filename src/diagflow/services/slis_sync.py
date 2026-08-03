@@ -76,6 +76,29 @@ def normalize_modality(cat: str | None) -> str:
 #  Pull from Slis
 # ─────────────────────────────────────────────────────────────────
 
+def ensure_mock_slis_dates_last_3_days():
+    """Ensure mock_slis.db exams always have visitdate values within the last 3 days relative to today."""
+    if not settings.use_mock_slis_db:
+        return
+    try:
+        con = _get_db()
+        today = date.today()
+        dates = [
+            (today - timedelta(days=2)).isoformat(),
+            (today - timedelta(days=1)).isoformat(),
+            today.isoformat()
+        ]
+        rows = con.execute("SELECT exammoreid FROM slis_exams").fetchall()
+        for r in rows:
+            eid = r[0]
+            target_date = dates[eid % 3]
+            con.execute("UPDATE slis_exams SET visitdate = ? WHERE exammoreid = ?", (target_date, eid))
+        con.commit()
+        con.close()
+    except Exception as exc:
+        logger.warning("ensure_mock_slis_dates_failed", error=str(exc))
+
+
 def pull_from_slis() -> dict:
     """
     Pull exam data from Slis DB or mock DB.
@@ -88,10 +111,13 @@ def pull_from_slis() -> dict:
       - Populates local slis_exams table in mock_slis.db so the app's local processing pipeline runs seamlessly.
 
     In mock mode (USE_MOCK_SLIS_DB=true):
+      - Ensures visitdate values in mock DB are dynamically within the last 3 days.
       - Verifies slis_synced_at column exists.
       - Expire old synced rows.
       - Counts pending exams for the last 3 days.
     """
+    ensure_mock_slis_dates_last_3_days()
+
     if not settings.use_mock_slis_db:
         try:
             from sqlalchemy import create_engine, text

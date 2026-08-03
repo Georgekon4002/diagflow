@@ -132,6 +132,13 @@ package "diagflow.db" as db1 #E3F2FD {
         value : TEXT <<NOT NULL>>
     }
 
+    entity "exam_dictionary" as exam_dict {
+        * code : TEXT <<PK>>
+        --
+        name : TEXT <<NOT NULL>>
+        category : TEXT
+    }
+
     entity "admin_users" as admin_users {
         * id : INTEGER <<PK, autoincrement>>
         --

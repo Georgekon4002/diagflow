@@ -420,7 +420,7 @@ function renderPamakristosWeeklySchedule() {
         const match = weeklyScheduleData.find(w => w.weekday === d.weekday);
         const selectedId = match ? match.diagnostician_id : "";
 
-        let options = '<option value="">— Επιλέξτε —</option>';
+        let options = '<option value="">— Κανένας (Χωρίς Υπεύθυνο) —</option>';
         diagnosticians.forEach(diag => {
             if (!diag.active) return;
             const sel = String(diag.id) === String(selectedId) ? 'selected' : '';
@@ -548,7 +548,6 @@ function renderDiagnosticians() {
                     <option value="5" ${d.preferred_lab_id === 5 ? 'selected' : ''}>ΣΕΠΟΛΙΑ (5)</option>
                     <option value="6" ${d.preferred_lab_id === 6 ? 'selected' : ''}>ΑΝΩ ΠΑΤΗΣΙΑ (6)</option>
                     <option value="7" ${d.preferred_lab_id === 7 ? 'selected' : ''}>ΙΛΙΟΝ (7)</option>
-                    <option value="8" ${d.preferred_lab_id === 8 ? 'selected' : ''}>ΧΑΛΚΙΔΟΣ (8)</option>
                 </select>
             </td>
             <td>
@@ -787,7 +786,7 @@ function renderSkills() {
         diagSkills.forEach((s, index) => {
             const isPreferred = s.is_preferred || false;
             const examCode = s.exam_code || '—';
-            const examTitle = s.exam_title || s.body_part || EXAM_CODE_MAP[s.exam_code] || '—';
+            const examTitle = s.exam_name || s.exam_title || s.body_part || s.exam_code || '—';
             
             html += `<tr class="skills-row-${diagIdForCollapse}" style="display:none; background:#fafafa;">
                 <td style="padding-left:32px;"></td>

@@ -114,6 +114,14 @@ def delete_diagnostician(diag_id: int) -> bool:
 
 def get_skills(diagnostician_id: int | None = None) -> list[dict]:
     with _conn() as con:
+        # Create table if it doesn't exist
+        con.execute(
+            "CREATE TABLE IF NOT EXISTS exam_dictionary ("
+            "code TEXT PRIMARY KEY, name TEXT NOT NULL, category TEXT)"
+        )
+        dict_rows = con.execute("SELECT code, name FROM exam_dictionary").fetchall()
+        exam_name_map = {str(r["code"]): r["name"] for r in dict_rows}
+
         if diagnostician_id is not None:
             rows = con.execute(
                 "SELECT ds.id, ds.diagnostician_id, d.name AS diagnostician_name, "
@@ -132,7 +140,16 @@ def get_skills(diagnostician_id: int | None = None) -> list[dict]:
                 "JOIN diagnosticians d ON d.id = ds.diagnostician_id "
                 "ORDER BY d.name, ds.exam_code",
             ).fetchall()
-    return [_row_to_dict(r) for r in rows]
+
+    results = []
+    for r in rows:
+        d = _row_to_dict(r)
+        code_str = str(d.get("exam_code") or "")
+        d["exam_name"] = exam_name_map.get(code_str, code_str)
+        d["exam_title"] = d["exam_name"]
+        results.append(d)
+
+    return results
 
 
 def upsert_skill(diagnostician_id: int, exam_code: str,
@@ -368,7 +385,7 @@ def init_pamakristos_schedule():
             diags = con.execute("SELECT id FROM diagnosticians WHERE active = 1 ORDER BY id").fetchall()
             if diags:
                 diag_ids = [d[0] for d in diags]
-                defaults = [(w, diag_ids[w % len(diag_ids)]) for w in range(7)]
+                defaults = [(w, diag_ids[w % len(diag_ids)]) for w in range(5)]
                 con.executemany(
                     "INSERT INTO pamakristos_schedule (weekday, diagnostician_id) VALUES (?, ?)",
                     defaults
@@ -394,22 +411,20 @@ def update_pamakristos_weekly_schedule_db(schedule_items: list[dict]):
     """Update or insert weekly schedule entries for specified weekdays."""
     init_pamakristos_schedule()
     with _conn() as con:
+        con.execute("DELETE FROM pamakristos_schedule")
         for item in schedule_items:
             w = int(item["weekday"])
-            d_id = int(item["diagnostician_id"])
-            con.execute(
-                """
-                INSERT INTO pamakristos_schedule (weekday, diagnostician_id)
-                VALUES (?, ?)
-                ON CONFLICT(weekday) DO UPDATE SET diagnostician_id = excluded.diagnostician_id
-                """,
-                (w, d_id),
-            )
+            d_id = item.get("diagnostician_id")
+            if d_id is not None and str(d_id).strip() != "":
+                con.execute(
+                    "INSERT INTO pamakristos_schedule (weekday, diagnostician_id) VALUES (?, ?)",
+                    (w, int(d_id)),
+                )
 
 
 def get_oncall_diagnostician(date_str: str) -> dict | None:
     """Return the diagnostician on Παμμακάριστος on-call for the given date.
-    Checks availability table first; falls back to the persistent weekly schedule table.
+    Checks availability table first; falls back to the persistent weekly schedule table (Mon-Fri only).
     """
     with _conn() as con:
         row = con.execute(
@@ -426,6 +441,8 @@ def get_oncall_diagnostician(date_str: str) -> dict | None:
         from datetime import date as dt_date
         dt = dt_date.fromisoformat(date_str)
         weekday = dt.weekday()
+        if weekday in (5, 6):
+            return None  # Saturday & Sunday have no oncall diagnostician
         weekly = get_pamakristos_weekly_schedule_db()
         match = next((item for item in weekly if item["weekday"] == weekday), None)
         if match:
@@ -546,6 +563,9 @@ def delete_local_assignment(exammoreid: int) -> bool:
         cur = con.execute("DELETE FROM local_assignments WHERE exammoreid = ?", (exammoreid,))
         return cur.rowcount > 0
 
+def mark_local_assignment_synced(exammoreid: int, synced_at: str | None = None) -> bool:
+    return delete_local_assignment(exammoreid)
+
 def get_dashboard_data() -> list[dict]:
     with _conn() as con:
         # Fetch active diagnosticians
@@ -640,7 +660,7 @@ def get_dashboard_data() -> list[dict]:
     for r in slis_rows:
         process_record(r["diagnostician_id"], r["exammoreid"], r["extracode"], r["category"])
 
-    return list(dashboard_map.values())
+    return [d for d in dashboard_map.values() if len(d["assigned_exam_ids"]) > 0 or len(d["assigned_orders"]) > 0]
 
 # ── Advanced Options: Exam Routing Rules ──────────────────────────────────────
 
@@ -937,14 +957,14 @@ def get_system_weights() -> dict:
     
     # Defaults matching scoring.py and frontend admin.js
     weights = {
-        "pts_partnership": 0.35,
-        "pts_history": 0.20,
+        "pts_partnership": 0.20,
+        "pts_history": 0.35,
         "pts_skills_pref": 0.20,
         "pts_skills_neut": 0.10,
-        "pts_skills_none": 0.06,
+        "pts_skills_none": 0.00,
         "pts_lab_pref": 0.15,
-        "pts_lab_neut": 0.075,
-        "pts_lab_other": 0.015,
+        "pts_lab_neut": 0.10,
+        "pts_lab_other": 0.02,
         "pts_capacity": 0.10
     }
     

@@ -141,6 +141,12 @@ CREATE TABLE IF NOT EXISTS system_settings (
     value TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS exam_dictionary (
+    code     TEXT PRIMARY KEY,
+    name     TEXT NOT NULL,
+    category TEXT
+);
+
 CREATE TABLE IF NOT EXISTS pamakristos_schedule (
     weekday          INTEGER PRIMARY KEY,
     diagnostician_id INTEGER NOT NULL REFERENCES diagnosticians(id)
@@ -201,15 +207,13 @@ INSERT INTO partnerships (issuing_doctor_id, issuing_doctor_name, preferred_diag
 ('DOC101', 'ΔΡ. ΚΩΝΣΤΑΝΤΙΝΟΥ ΜΙΧΑΗΛ', 1, 1, 1, 1),
 ('DOC102', 'ΔΡ. ΘΕΟΔΩΡΟΥ ΣΟΦΙΑ', 3, 1, 0, 1);
 
--- Weekly Pamakristos Schedule (Weekdays 0..6)
+-- Weekly Pamakristos Schedule (Mon-Fri only, weekdays 0..4)
 INSERT INTO pamakristos_schedule (weekday, diagnostician_id) VALUES
 (0, 3), -- Δευτέρα: ΓΕΩΡΓΙΑΔΟΥ ΓΕΩΡΓΙΑ
 (1, 4), -- Τρίτη: ΔΗΜΟΥ ΔΗΜΗΤΡΙΟΣ
 (2, 5), -- Τετάρτη: ΕΥΑΓΓΕΛΑΤΟΣ ΕΥΑΓΓΕΛΟΣ
 (3, 6), -- Πέμπτη: ΖΑΧΑΡΗ ΖΩΗ
-(4, 2), -- Παρασκευή: ΒΑΡΔΑΣ ΒΑΣΙΛΕΙΟΣ
-(5, 1), -- Σάββατο: ΑΛΕΞΙΟΥ ΑΛΕΞΑΝΔΡΟΣ
-(6, 3); -- Κυριακή: ΓΕΩΡΓΙΑΔΟΥ ΓΕΩΡΓΙΑ
+(4, 2); -- Παρασκευή: ΒΑΡΔΑΣ ΒΑΣΙΛΕΙΟΣ
 
 -- Availability Records
 INSERT INTO availability (diagnostician_id, date, status, is_pamakristos_oncall, notes) VALUES
@@ -233,13 +237,17 @@ INSERT INTO exclusive_lab_rules (diagnostician_id, lab_id, lab_name, is_active) 
 INSERT INTO modality_quotas (diagnostician_id, modality, max_count, is_active) VALUES
 (4, 'CT', 8, 1);
 
--- System Settings (Scoring Weights)
+-- System Settings (Picture 1 Proposed Scoring Weights)
 INSERT INTO system_settings (key, value) VALUES
-('w_capacity', '0.20'),
-('w_fairness', '0.20'),
-('w_speed', '0.15'),
-('w_partnership', '0.10'),
-('w_pamakristos', '0.10');
+('pts_partnership', '0.20'),
+('pts_history', '0.35'),
+('pts_skills_pref', '0.20'),
+('pts_skills_neut', '0.10'),
+('pts_skills_none', '0.00'),
+('pts_lab_pref', '0.15'),
+('pts_lab_neut', '0.10'),
+('pts_lab_other', '0.02'),
+('pts_capacity', '0.10');
 
 -- Admin Users (Admin & IT Support)
 INSERT INTO admin_users (username, password_hash, role, is_active) VALUES
@@ -417,23 +425,7 @@ COMMIT;
 def seed_templates():
     print(f"Generating template files in {TEMPLATES_DIR} ...")
 
-    # 1. Write init_diagflow.sql & build db/templates/diagflow.db
-    diag_sql_content = build_diagflow_sql()
-    DIAGFLOW_SQL.write_text(diag_sql_content, encoding="utf-8")
-    print(f"  [OK] Wrote {DIAGFLOW_SQL}")
-
-    if DIAGFLOW_DB.exists():
-        try:
-            DIAGFLOW_DB.unlink()
-        except PermissionError:
-            pass
-
-    con_diag = sqlite3.connect(DIAGFLOW_DB)
-    con_diag.executescript(diag_sql_content)
-    con_diag.close()
-    print(f"  [OK] Created & Seeded {DIAGFLOW_DB}")
-
-    # 2. Write init_mock_slis.sql & build db/templates/mock_slis.db
+    # 1. Write init_mock_slis.sql & build db/templates/mock_slis.db
     slis_sql_content = build_mock_slis_sql()
     MOCK_SLIS_SQL.write_text(slis_sql_content, encoding="utf-8")
     print(f"  [OK] Wrote {MOCK_SLIS_SQL}")
@@ -448,6 +440,39 @@ def seed_templates():
     con_slis.executescript(slis_sql_content)
     con_slis.close()
     print(f"  [OK] Created & Seeded {MOCK_SLIS_DB}")
+
+    # 2. Write init_diagflow.sql & build db/templates/diagflow.db
+    diag_sql_content = build_diagflow_sql()
+
+    if DIAGFLOW_DB.exists():
+        try:
+            DIAGFLOW_DB.unlink()
+        except PermissionError:
+            pass
+
+    con_diag = sqlite3.connect(DIAGFLOW_DB)
+    con_diag.executescript(diag_sql_content)
+
+    # Populate exam_dictionary from mock_slis.db exam_categories
+    con_slis_read = sqlite3.connect(MOCK_SLIS_DB)
+    dict_rows = con_slis_read.execute("SELECT examnumcode, name, category FROM exam_categories").fetchall()
+    con_slis_read.close()
+
+    for r in dict_rows:
+        con_diag.execute(
+            "INSERT OR REPLACE INTO exam_dictionary (code, name, category) VALUES (?, ?, ?)",
+            (str(r[0]), r[1], r[2])
+        )
+    con_diag.commit()
+
+    # Dump full SQL schema + data to init_diagflow.sql
+    with open(DIAGFLOW_SQL, "w", encoding="utf-8") as f:
+        for line in con_diag.iterdump():
+            f.write(f"{line}\n")
+
+    con_diag.close()
+    print(f"  [OK] Wrote {DIAGFLOW_SQL}")
+    print(f"  [OK] Created & Seeded {DIAGFLOW_DB}")
 
     print("\nTemplate database generation complete!")
 

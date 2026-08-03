@@ -1103,11 +1103,20 @@ function openSuggestionModal(examId, suggestion) {
     updateProposalModalButtons();
 }
 
+async function refreshExams() {
+    await Promise.all([
+        loadPendingExams(),
+        loadAssignedExams(),
+    ]);
+}
+
 function updateProposalModalButtons() {
     const overrideSelect = document.getElementById('override-select');
     const btnOverride = document.getElementById('btn-override');
     const btnConfirm = document.getElementById('btn-confirm');
     if (!btnOverride || !btnConfirm) return;
+
+    btnOverride.innerHTML = 'Αλλαγή';
 
     const selectVal = overrideSelect ? overrideSelect.value : '';
     const activeAltId = selectVal || selectedAlternativeId || '';
@@ -2329,7 +2338,7 @@ async function updateExamOnSlis(examId, exammoreid) {
         });
         if (result && result.succeeded && result.succeeded.length > 0) {
             showToast('✅ Η εξέταση ενημερώθηκε επιτυχώς στη βάση Slis!', 'success');
-            await loadExams();
+            await refreshExams();
         } else {
             const err = result?.failed?.[0]?.error || 'Άγνωστο σφάλμα';
             showToast(`❌ Αποτυχία ενημέρωσης Slis: ${err}`, 'error');
@@ -2359,7 +2368,7 @@ async function updateAllToSlis() {
         const result = await apiCall('/slis/push-all', 'POST');
         if (result && result.succeeded && result.succeeded.length > 0) {
             showToast(`✅ Ενημερώθηκαν ${result.succeeded.length} εξετάσεις στη βάση Slis!`, 'success');
-            await loadExams();
+            await refreshExams();
         } else if (result && result.total === 0) {
             showToast('Δεν υπάρχουν εξετάσεις για ενημέρωση', 'info');
         } else {
@@ -2410,7 +2419,7 @@ async function updateSelectedToSlis() {
         if (result && result.succeeded && result.succeeded.length > 0) {
             showToast(`✅ Ενημερώθηκαν ${result.succeeded.length} επιλεγμένες εξετάσεις στη βάση Slis!`, 'success');
             selectedAssignedExams.clear();
-            await loadExams();
+            await refreshExams();
         } else {
             const err = result?.failed?.[0]?.error || 'Άγνωστο σφάλμα';
             showToast(`❌ Αποτυχία ενημέρωσης Slis: ${err}`, 'error');

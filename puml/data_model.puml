@@ -121,6 +121,13 @@ package "diagflow.db — Config & State" as diagflow_db #E3F2FD {
         * value : TEXT
     }
 
+    entity "exam_dictionary" as exam_dict {
+        * **code** : TEXT <<PK>>
+        --
+        * name : TEXT
+        category : TEXT
+    }
+
     entity "admin_users" as admin_users {
         * **id** : INTEGER <<PK>>
         --

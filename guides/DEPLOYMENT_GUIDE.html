@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="el">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Deployment Guide — DiagFlow</title>
+    
+<style>
+    body {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        line-height: 1.6;
+        color: #24292f;
+        background-color: #ffffff;
+        max-width: 960px;
+        margin: 0 auto;
+        padding: 30px 20px;
+    }
+    h1, h2, h3, h4, h5, h6 {
+        margin-top: 28px;
+        margin-bottom: 16px;
+        font-weight: 600;
+        line-height: 1.25;
+        color: #1f2328;
+    }
+    h1 { font-size: 2em; padding-bottom: 0.3em; border-bottom: 1px solid #d0d7de; }
+    h2 { font-size: 1.5em; padding-bottom: 0.3em; border-bottom: 1px solid #d0d7de; }
+    h3 { font-size: 1.25em; }
+    code {
+        padding: 0.2em 0.4em;
+        margin: 0;
+        font-size: 85%;
+        white-space: break-spaces;
+        background-color: rgba(175, 184, 193, 0.2);
+        border-radius: 6px;
+        font-family: ui-monospace, SFMono-Regular, SF Mono, Menlo, Consolas, Liberation Mono, monospace;
+    }
+    pre {
+        padding: 16px;
+        overflow: auto;
+        font-size: 85%;
+        line-height: 1.45;
+        background-color: #f6f8fa;
+        border-radius: 6px;
+    }
+    pre code { background-color: transparent; padding: 0; }
+    blockquote {
+        padding: 0 1em;
+        color: #636c76;
+        border-left: 0.25em solid #d0d7de;
+        margin: 0 0 16px 0;
+    }
+    table {
+        border-spacing: 0;
+        border-collapse: collapse;
+        margin-top: 12px;
+        margin-bottom: 16px;
+        width: 100%;
+    }
+    table th, table td {
+        padding: 8px 14px;
+        border: 1px solid #d0d7de;
+        text-align: center;
+        vertical-align: middle;
+    }
+    table tr:nth-child(2n) { background-color: #f6f8fa; }
+    img { max-width: 100%; height: auto; border-radius: 8px; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1); }
+    a { color: #0969da; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    hr { height: 0.25em; padding: 0; margin: 24px 0; background-color: #d0d7de; border: 0; }
+</style>
+
+</head>
+<body>
+<h1 id="diagflow-cross-computer-deployment-distribution-guide">DiagFlow — Cross-Computer Deployment &amp; Distribution Guide</h1>
+<p>This guide provides step-by-step instructions for deploying DiagFlow to other computers, configuring database access (real MSSQL or mock SQLite), building standalone executables, and packaging GitHub releases.</p>
+<hr />
+<h2 id="1-system-requirements-prerequisites">1. System Requirements &amp; Prerequisites</h2>
+<h3 id="target-computer-end-user-pc-requirements">Target Computer (End-User PC) Requirements</h3>
+<ul>
+<li><strong>Operating System</strong>: Windows 10 (64-bit) or Windows 11.</li>
+<li><strong>Microsoft Edge WebView2 Runtime</strong>: Required for embedded desktop GUI window (Pre-installed on Windows 11 &amp; updated Windows 10; downloadable from <a href="https://developer.microsoft.com/en-us/microsoft-edge/webview2/">Microsoft Edge WebView2</a>).</li>
+<li><strong>Microsoft ODBC Driver 17 for SQL Server</strong>: Required if connecting to real Slis MSSQL database (<code>USE_MOCK_SLIS_DB=false</code>). Downloadable from <a href="https://learn.microsoft.com/en-us/sql/connect/odbc/download-odbc-driver-for-sql-server">Microsoft SQL Server ODBC Driver Downloads</a>.</li>
+</ul>
+<hr />
+<h2 id="2-configuration-env">2. Configuration (<code>.env</code>)</h2>
+<p>Every deployment requires a <code>.env</code> file located in the application root (or alongside <code>DiagFlow.exe</code>).</p>
+<h3 id="example-env-file">Example <code>.env</code> File:</h3>
+<pre><code class="language-ini"># ============================================================
+# DiagFlow — Environment Configuration
+# ============================================================
+
+# --- Database Connection ---
+# Read-only / main access to Slis database tables
+SLIS_DB_CONNECTION_STRING=mssql+pyodbc://&lt;USERNAME&gt;:&lt;PASSWORD&gt;@&lt;SERVER_IP_OR_HOSTNAME&gt;/&lt;DATABASE_NAME&gt;?driver=ODBC+Driver+17+for+SQL+Server
+
+# DiagFlow config tables (can target the same DB or a dedicated DB)
+CONFIG_DB_CONNECTION_STRING=mssql+pyodbc://&lt;USERNAME&gt;:&lt;PASSWORD&gt;@&lt;SERVER_IP_OR_HOSTNAME&gt;/&lt;DATABASE_NAME&gt;?driver=ODBC+Driver+17+for+SQL+Server
+
+# Set to false in production to connect to real Slis SQL Server instance
+USE_MOCK_SLIS_DB=false
+MOCK_SLIS_DB_PATH=db/mock_slis.db
+
+# --- Rule Engine Weights ---
+WEIGHT_PARTNERSHIP=0.35
+WEIGHT_PATIENT_HISTORY=0.20
+WEIGHT_SKILLS=0.20
+WEIGHT_LAB=0.15
+WEIGHT_CAPACITY=0.10
+
+# --- Server Settings ---
+APP_HOST=127.0.0.1
+APP_PORT=8080
+APP_ENV=production
+LOG_LEVEL=INFO
+</code></pre>
+<hr />
+<h2 id="3-database-connection-modes">3. Database Connection Modes</h2>
+<h3 id="mode-a-production-mode-real-slis-mssql-database">Mode A: Production Mode (Real Slis MSSQL Database)</h3>
+<ol>
+<li>Set <code>USE_MOCK_SLIS_DB=false</code> in <code>.env</code>.</li>
+<li>Configure <code>SLIS_DB_CONNECTION_STRING</code> with valid host, port, credentials, and database name.</li>
+<li>Ensure ODBC Driver 17 is installed on the target machine.</li>
+<li>Verify database firewall/network access between target computer and SQL Server.</li>
+<li>Verify the required Slis stored procedures exist in the target Slis DB:</li>
+<li><code>EXEC getWardDoctors</code> (returns <code>CODE</code>, <code>DOCNAME</code> — called on launch &amp; 3 AM cron)</li>
+<li><code>EXEC getExamsListForPeriod 'YYYY-MM-DD', 'YYYY-MM-DD'</code> (returns unassigned exams for the period — called on launch &amp; refresh)</li>
+<li><code>EXEC getdiagnosticsList</code> (returns <code>PERSONELID</code>, <code>DOCNAME</code> — called on Admin Panel "Refresh")</li>
+<li>Verify table write-back permissions (<code>UPDATE exammore SET diagnostisid=? WHERE exammoreid=?</code>).</li>
+</ol>
+<h3 id="mode-b-standalone-demo-mode-sqlite-mock-db">Mode B: Standalone / Demo Mode (SQLite Mock DB)</h3>
+<ol>
+<li>Set <code>USE_MOCK_SLIS_DB=true</code> in <code>.env</code>.</li>
+<li>Ensure <code>db/mock_slis.db</code> and <code>db/diagflow.db</code> are present in the <code>db/</code> folder next to the executable.</li>
+</ol>
+<hr />
+<h2 id="31-running-diagflow-on-localhost-local-development-server-guide">3.1 Running DiagFlow on Localhost (Local Development &amp; Server Guide)</h2>
+<p>This section provides complete, step-by-step instructions for setting up and running DiagFlow directly on <code>localhost</code> (127.0.0.1) for development, testing, and debugging purposes.</p>
+<h3 id="1-system-requirements-software-tools">1. System Requirements &amp; Software Tools</h3>
+<ul>
+<li><strong>Python 3.10+</strong> (Python 3.11, 3.12, 3.13, 3.14 fully supported)</li>
+<li><strong>Git</strong> (for code retrieval)</li>
+<li><strong>Modern Web Browser</strong> (Chrome, Edge, Firefox, Safari)</li>
+</ul>
+<h3 id="2-workspace-file-structure-requirements">2. Workspace File Structure Requirements</h3>
+<p>Ensure the following core project files are available in your local repository:</p>
+<pre><code class="language-text">diagflow/
+├── .env                       # Environment configuration (copied from .env.example)
+├── requirements.txt           # Python library dependencies
+├── src/
+│   └── diagflow/
+│       ├── main.py            # FastAPI backend server &amp; endpoints
+│       └── launcher.py        # Desktop window launcher (pywebview)
+├── frontend/                  # HTML/CSS/JS dashboard UI
+├── db/
+│   ├── create_diagflow_db.py  # Seeder for db/diagflow.db
+│   ├── seed_mock_db.py        # Seeder for db/mock_slis.db
+│   └── seed_templates.py      # Seeder for sanitized demo templates
+└── scripts/
+    └── build_exe.py           # PyInstaller build automation script
+</code></pre>
+<h3 id="3-step-by-step-terminal-execution-commands">3. Step-by-Step Terminal Execution Commands</h3>
+<h4 id="step-1-environment-setup">Step 1: Environment Setup</h4>
+<pre><code class="language-powershell"># Clone repository &amp; navigate into project directory
+git clone https://github.com/Georgekon4002/diagflow.git
+cd diagflow
+
+# Create Python virtual environment
+python -m venv .venv
+
+# Activate virtual environment
+.\.venv\Scripts\Activate.ps1    # PowerShell (Windows)
+# .venv\Scripts\activate.bat   # CMD (Windows)
+# source .venv/bin/activate    # Linux / macOS
+</code></pre>
+<h4 id="step-2-dependencies-installation">Step 2: Dependencies Installation</h4>
+<pre><code class="language-powershell">python -m pip install --upgrade pip
+pip install -r requirements.txt
+</code></pre>
+<h4 id="step-3-create-env-configuration">Step 3: Create <code>.env</code> Configuration</h4>
+<pre><code class="language-powershell">copy .env.example .env          # Windows
+# cp .env.example .env           # Linux / macOS
+</code></pre>
+<h4 id="step-4-initialize-local-sqlite-databases">Step 4: Initialize Local SQLite Databases</h4>
+<pre><code class="language-powershell"># Set PYTHONPATH to include src/
+$env:PYTHONPATH=&quot;src&quot;           # Windows PowerShell
+# set PYTHONPATH=src            # Windows CMD
+# export PYTHONPATH=src         # Linux / macOS
+
+# Seed config DB (db/diagflow.db)
+python db/create_diagflow_db.py
+
+# Seed mock SLIS exam DB (db/mock_slis.db)
+python db/seed_mock_db.py
+
+# (Optional) Seed sanitized demo templates
+python db/seed_templates.py
+</code></pre>
+<h4 id="step-5-launch-server-application-on-localhost">Step 5: Launch Server / Application on Localhost</h4>
+<h5 id="option-1-fastapi-web-server-with-hot-reloading-recommended-for-web-dev">Option 1: FastAPI Web Server with Hot-Reloading (Recommended for Web Dev)</h5>
+<pre><code class="language-powershell">$env:PYTHONPATH=&quot;src&quot;
+uvicorn diagflow.main:app --reload --host 127.0.0.1 --port 8000
+</code></pre>
+<p>Open browser:<br />
+- <strong>Dashboard:</strong> <a href="http://localhost:8000">http://localhost:8000</a><br />
+- <strong>Admin Panel:</strong> <a href="http://localhost:8000/admin.html">http://localhost:8000/admin.html</a><br />
+- <strong>Swagger Docs:</strong> <a href="http://localhost:8000/docs">http://localhost:8000/docs</a></p>
+<h5 id="option-2-desktop-window-mode-pywebview-launcher">Option 2: Desktop Window Mode (pywebview Launcher)</h5>
+<pre><code class="language-powershell">$env:PYTHONPATH=&quot;src&quot;
+python src/diagflow/launcher.py
+</code></pre>
+<h5 id="option-3-compile-run-standalone-exe">Option 3: Compile &amp; Run Standalone EXE</h5>
+<pre><code class="language-powershell">python scripts/build_exe.py
+.\dist\DiagFlow.exe
+</code></pre>
+<h4 id="step-6-execute-automated-test-suite">Step 6: Execute Automated Test Suite</h4>
+<pre><code class="language-powershell">$env:PYTHONPATH=&quot;src&quot;
+python -m pytest
+</code></pre>
+<hr />
+<h2 id="4-building-the-portable-executable-diagflowexe">4. Building the Portable Executable (<code>DiagFlow.exe</code>)</h2>
+<p>To build an executable on a developer machine:</p>
+<ol>
+<li>Open PowerShell / Command Prompt in the repository root.</li>
+<li>Activate your virtual environment (if applicable):<br />
+<code>cmd
+   .venv\Scripts\activate</code></li>
+<li>Run the build script:<br />
+<code>cmd
+   python scripts/build_exe.py</code></li>
+<li>Output will be generated at <code>dist/DiagFlow.exe</code>.</li>
+</ol>
+<hr />
+<h2 id="5-packaging-a-github-release">5. Packaging a GitHub Release</h2>
+<p>When distributing DiagFlow via GitHub Releases or direct zip distribution, bundle the following files into a single <code>.zip</code> file (e.g. <code>DiagFlow-v1.0.0-Windows.zip</code>):</p>
+<pre><code class="language-text">DiagFlow-Release/
+├── DiagFlow.exe              # Standalone executable
+├── .env.example              # Template environment file
+├── DEPLOYMENT_GUIDE.md       # Deployment instructions
+├── USER_GUIDE.md             # End-user manual
+└── db/                       # Initial database directory
+    ├── diagflow.db           # Config &amp; admin user database
+    └── mock_slis.db          # Mock exam database (if offline mode)
+</code></pre>
+<h3 id="github-release-steps">GitHub Release Steps:</h3>
+<ol>
+<li>Push release tag to GitHub:<br />
+<code>cmd
+   git tag -a v1.0.0 -m "Release v1.0.0"
+   git push origin v1.0.0</code></li>
+<li>Navigate to <strong>Releases</strong> -&gt; <strong>Draft a new release</strong> on GitHub.</li>
+<li>Attach <code>DiagFlow-v1.0.0-Windows.zip</code>.</li>
+<li>Publish the release.</li>
+</ol>
+</body>
+</html>
