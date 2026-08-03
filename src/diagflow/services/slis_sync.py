@@ -303,66 +303,72 @@ def delete_expired(con: sqlite3.Connection | None = None) -> int:
     Returns:
         Number of rows deleted.
     """
-    close_after = con is None
     if con is None:
         con = _get_db()
 
-    cutoff = (date.today() - timedelta(days=3)).isoformat()
-    try:
-        cur = con.execute(
-            """
-            DELETE FROM slis_exams
-            WHERE visitdate < ?
-              AND slis_synced_at IS NOT NULL
-            """,
-            (cutoff,),
-        )
-        con.commit()
-        count = cur.rowcount
-        if count:
-            logger.info("expired_exams_deleted", count=count, cutoff=cutoff)
-        return count
-    finally:
-        if close_after:
-            con.close()
-
-
-# ─────────────────────────────────────────────────────────────────
-#  Push to Slis (Dry-Run Preview Mode)
-# ─────────────────────────────────────────────────────────────────
-
 def push_exam_to_slis(exammoreid: int, diagnostician_id: int, diagnostician_name: str) -> dict:
     """
-    Generate the SQL script required to update a single exam in Slis.
-    Does NOT update the DB or delete local assignments (Dry-Run mode for testing/debugging).
+    Execute the SQL update required to update a single exam in Slis (or mock_slis.db).
+    Updates the database and records local assignment sync timestamp.
 
     Returns:
-        dict with success, exammoreid, diagnostician_id, sql, dry_run=True
+        dict with success, exammoreid, diagnostician_id, sql
     """
+    import diagflow.db.diagflow_db as cfg_db
     now_iso = datetime.now().isoformat()
     sql_cmd = f"UPDATE exammore SET diagnostisid = {diagnostician_id} WHERE exammoreid = {exammoreid};"
     
-    logger.info(
-        "preview_push_to_slis",
-        exammoreid=exammoreid,
-        diagnostician_id=diagnostician_id,
-        sql=sql_cmd,
-    )
-    return {
-        "success": True,
-        "dry_run": True,
-        "exammoreid": exammoreid,
-        "diagnostician_id": diagnostician_id,
-        "diagnostician_name": diagnostician_name,
-        "synced_at": now_iso,
-        "sql": sql_cmd,
-    }
+    try:
+        if not settings.use_mock_slis_db:
+            from sqlalchemy import create_engine, text
+            engine = create_engine(settings.slis_db_connection_string)
+            with engine.connect() as conn:
+                conn.execute(
+                    text("UPDATE exammore SET diagnostisid = :diag_id WHERE exammoreid = :id"),
+                    {"diag_id": diagnostician_id, "id": exammoreid}
+                )
+                conn.commit()
+        else:
+            con = _get_db()
+            con.execute(
+                "UPDATE exammore SET diagnostisid = ? WHERE exammoreid = ?",
+                (diagnostician_id, exammoreid)
+            )
+            con.commit()
+            con.close()
+
+        cfg_db.mark_local_assignment_synced(exammoreid, now_iso)
+
+        logger.info(
+            "push_to_slis_success",
+            exammoreid=exammoreid,
+            diagnostician_id=diagnostician_id,
+            synced_at=now_iso,
+        )
+        return {
+            "success": True,
+            "exammoreid": exammoreid,
+            "diagnostician_id": diagnostician_id,
+            "diagnostician_name": diagnostician_name,
+            "synced_at": now_iso,
+            "sql": sql_cmd,
+        }
+    except Exception as exc:
+        logger.error(
+            "push_to_slis_error",
+            exammoreid=exammoreid,
+            error=str(exc),
+        )
+        return {
+            "success": False,
+            "exammoreid": exammoreid,
+            "error": str(exc),
+        }
 
 
 def push_all_to_slis() -> dict:
     """
-    Generate the SQL script to push ALL assigned-but-not-yet-synced exams to Slis.
-    Does NOT modify the DB (Dry-Run mode).
+    Execute the SQL update to push ALL assigned-but-not-yet-synced exams to Slis.
 
     Returns:
         dict with total, succeeded, failed lists, queries, and sql_script
@@ -389,21 +395,19 @@ def push_all_to_slis() -> dict:
     script_lines = ["BEGIN TRANSACTION;"] + [f"  {q}" for q in queries] + ["COMMIT;"]
     formatted_script = "\n".join(script_lines)
 
-    logger.info("push_all_dry_run_complete", total=len(rows), succeeded=len(succeeded))
+    logger.info("push_all_complete", total=len(rows), succeeded=len(succeeded))
     return {
         "total": len(rows),
         "succeeded": succeeded,
         "failed": failed,
         "queries": queries,
         "sql_script": formatted_script,
-        "dry_run": True,
     }
 
 
 def push_selected_to_slis(exammoreid_list: list[int]) -> dict:
     """
-    Generate the SQL script to push a specific selection of exams to Slis.
-    Does NOT modify the DB (Dry-Run mode).
+    Execute the SQL update to push a specific selection of exams to Slis.
 
     Args:
         exammoreid_list: list of exammoreid values to push
@@ -416,7 +420,7 @@ def push_selected_to_slis(exammoreid_list: list[int]) -> dict:
     queries = []
 
     if not exammoreid_list:
-        return {"total": 0, "succeeded": [], "failed": [], "queries": [], "sql_script": "-- No exams selected", "dry_run": True}
+        return {"total": 0, "succeeded": [], "failed": [], "queries": [], "sql_script": "-- No exams selected"}
 
     import diagflow.db.diagflow_db as cfg_db
     local_assignments = cfg_db.get_all_local_assignments()
@@ -441,14 +445,13 @@ def push_selected_to_slis(exammoreid_list: list[int]) -> dict:
     script_lines = ["BEGIN TRANSACTION;"] + [f"  {q}" for q in queries] + ["COMMIT;"]
     formatted_script = "\n".join(script_lines)
 
-    logger.info("push_selected_dry_run_complete", total=len(exammoreid_list), succeeded=len(succeeded))
+    logger.info("push_selected_complete", total=len(exammoreid_list), succeeded=len(succeeded))
     return {
         "total": len(exammoreid_list),
         "succeeded": succeeded,
         "failed": failed,
         "queries": queries,
         "sql_script": formatted_script,
-        "dry_run": True,
     }
 
 

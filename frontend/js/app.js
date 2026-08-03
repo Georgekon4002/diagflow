@@ -2327,13 +2327,12 @@ async function updateExamOnSlis(examId, exammoreid) {
         const result = await apiCall('/slis/push-selected', 'POST', {
             exammoreid_list: [exammoreid]
         });
-        if (result && result.sql_script) {
-            showSqlModal(result.sql_script);
-        } else if (result && result.queries && result.queries.length > 0) {
-            showSqlModal(result.queries.join('\n'));
+        if (result && result.succeeded && result.succeeded.length > 0) {
+            showToast('✅ Η εξέταση ενημερώθηκε επιτυχώς στη βάση Slis!', 'success');
+            await loadExams();
         } else {
             const err = result?.failed?.[0]?.error || 'Άγνωστο σφάλμα';
-            showToast(`❌ Αποτυχία δημιουργίας SQL script: ${err}`, 'error');
+            showToast(`❌ Αποτυχία ενημέρωσης Slis: ${err}`, 'error');
         }
     } catch (err) {
         showToast(`Σφάλμα: ${err.message}`, 'error');
@@ -2341,7 +2340,7 @@ async function updateExamOnSlis(examId, exammoreid) {
 }
 
 /**
- * Update ALL assigned-not-yet-synced exams on Slis (Dry-run mode: shows SQL script preview).
+ * Update ALL assigned-not-yet-synced exams on Slis (Executes DB Update).
  */
 async function updateAllToSlis() {
     if (assignedExams.length === 0) {
@@ -2358,10 +2357,13 @@ async function updateAllToSlis() {
 
     try {
         const result = await apiCall('/slis/push-all', 'POST');
-        if (result && result.sql_script) {
-            showSqlModal(result.sql_script);
-        } else {
+        if (result && result.succeeded && result.succeeded.length > 0) {
+            showToast(`✅ Ενημερώθηκαν ${result.succeeded.length} εξετάσεις στη βάση Slis!`, 'success');
+            await loadExams();
+        } else if (result && result.total === 0) {
             showToast('Δεν υπάρχουν εξετάσεις για ενημέρωση', 'info');
+        } else {
+            showToast('⚠️ Ορισμένες εξετάσεις δεν μπόρεσαν να ενημερωθούν.', 'warning');
         }
     } catch (err) {
         showToast(`Σφάλμα: ${err.message}`, 'error');
@@ -2374,7 +2376,7 @@ async function updateAllToSlis() {
 }
 
 /**
- * Update SELECTED assigned exams on Slis (Dry-run mode: shows SQL script preview).
+ * Update SELECTED assigned exams on Slis (Executes DB Update).
  */
 async function updateSelectedToSlis() {
     if (selectedAssignedExams.size === 0) {
@@ -2394,17 +2396,32 @@ async function updateSelectedToSlis() {
         return;
     }
 
+    const btn = document.getElementById('fab-btn-update-slis');
+    const originalHTML = btn ? btn.innerHTML : '';
+    if (btn) {
+        btn.innerHTML = '<span class="loading-spinner"></span>';
+        btn.disabled = true;
+    }
+
     try {
         const result = await apiCall('/slis/push-selected', 'POST', {
             exammoreid_list: exammoreidList
         });
-        if (result && result.sql_script) {
-            showSqlModal(result.sql_script);
+        if (result && result.succeeded && result.succeeded.length > 0) {
+            showToast(`✅ Ενημερώθηκαν ${result.succeeded.length} επιλεγμένες εξετάσεις στη βάση Slis!`, 'success');
+            selectedAssignedExams.clear();
+            await loadExams();
         } else {
-            showToast(`❌ Αποτυχία παραγωγής SQL script`, 'error');
+            const err = result?.failed?.[0]?.error || 'Άγνωστο σφάλμα';
+            showToast(`❌ Αποτυχία ενημέρωσης Slis: ${err}`, 'error');
         }
     } catch (err) {
         showToast(`Σφάλμα: ${err.message}`, 'error');
+    } finally {
+        if (btn) {
+            btn.innerHTML = originalHTML;
+            btn.disabled = false;
+        }
     }
 }
 
