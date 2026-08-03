@@ -32,11 +32,55 @@ let diagSearchQuery = '';
 
 let EXAM_CODE_MAP = {};
 
+let dbStatusInfo = { status: 'mock', error: null };
+
+async function checkDbStatus() {
+    try {
+        const res = await apiCall('/slis/status', 'GET');
+        if (res) {
+            dbStatusInfo = res;
+            updateDbStatusBadge();
+        }
+    } catch { /* Fallback */ }
+}
+
+function updateDbStatusBadge() {
+    const badge = document.getElementById('db-status-badge');
+    const textEl = document.getElementById('db-status-text');
+    if (!badge || !textEl) return;
+
+    badge.classList.remove('mock', 'connected', 'error');
+    if (dbStatusInfo.status === 'connected') {
+        badge.classList.add('connected');
+        textEl.textContent = '🟢 Connected to Slis DB';
+        badge.title = 'Συνδέθηκε επιτυχώς στη βάση Slis';
+    } else if (dbStatusInfo.status === 'error') {
+        badge.classList.add('error');
+        textEl.textContent = '🔴 Slis DB Error';
+        badge.title = 'Αποτυχία σύνδεσης: ' + (dbStatusInfo.error || 'Άγνωστο σφάλμα') + ' (κάντε κλικ για λεπτομέρειες)';
+    } else {
+        badge.classList.add('mock');
+        textEl.textContent = '🟡 Mock Slis DB';
+        badge.title = 'Χρήση τοπικής δοκιμαστικής βάσης (Mock Slis DB)';
+    }
+}
+
+function showDbStatusDetails() {
+    if (dbStatusInfo.status === 'error' && dbStatusInfo.error) {
+        showToast(`❌ Σφάλμα Σύνδεσης Slis DB: ${dbStatusInfo.error}`, 'error');
+    } else if (dbStatusInfo.status === 'connected') {
+        showToast('🟢 Επιτυχής σύνδεση στη βάση Slis DB!', 'success');
+    } else {
+        showToast('🟡 Χρήση Mock Slis DB (SQLite)', 'info');
+    }
+}
+
 // ══════════════════════════════════════════════
 //  Auth Guard & Init
 // ══════════════════════════════════════════════
 
 document.addEventListener('DOMContentLoaded', async () => {
+    checkDbStatus();
     if (!adminToken) {
         // Not logged in — redirect back
         showToast('Απαιτείται σύνδεση διαχειριστή.', 'error');
@@ -224,6 +268,34 @@ async function syncDoctors() {
         await loadDoctors(0);
     } else {
         showToast('Σφάλμα κατά τον συγχρονισμό.', 'error');
+    }
+}
+
+async function syncDiagnosticians() {
+    try {
+        const res = await apiCall('/admin/diagnosticians/sync', 'POST');
+        if (res && res.synced !== undefined) {
+            showToast(`🔄 Ο συγχρονισμός ολοκληρώθηκε. Προστέθηκαν ${res.synced} νέοι διαγνώστες.`, 'success');
+        } else {
+            showToast('🔄 Ο συγχρονισμός ολοκληρώθηκε.', 'info');
+        }
+        await loadDiagnosticians();
+    } catch (err) {
+        showToast(`Σφάλμα συγχρονισμού: ${err.message}`, 'error');
+    }
+}
+
+async function syncDoctors() {
+    try {
+        const res = await apiCall('/admin/doctors/sync', 'POST');
+        if (res && res.synced !== undefined) {
+            showToast(`🔄 Ο συγχρονισμός ολοκληρώθηκε. Προστέθηκαν ${res.synced} νέοι ιατροί.`, 'success');
+        } else {
+            showToast('🔄 Ο συγχρονισμός ολοκληρώθηκε.', 'info');
+        }
+        await loadDoctors(0);
+    } catch (err) {
+        showToast(`Σφάλμα συγχρονισμού: ${err.message}`, 'error');
     }
 }
 
@@ -425,13 +497,26 @@ function filterDoctors(q) {
     loadDoctors(0);
 }
 
+function normalizeGreek(str) {
+    if (!str) return '';
+    return str.toString()
+        .toUpperCase()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/Ά/g, 'Α').replace(/Έ/g, 'Ε').replace(/Ή/g, 'Η')
+        .replace(/Ί/g, 'Ι').replace(/Ό/g, 'Ο').replace(/Ύ/g, 'Υ').replace(/Ώ/g, 'Ω');
+}
+
 function renderDiagnosticians() {
     const tbody = document.getElementById('diag-tbody');
     
     let filteredDiags = diagnosticians;
     if (diagSearchQuery) {
-        const lowerQ = diagSearchQuery.toLowerCase();
-        filteredDiags = filteredDiags.filter(d => d.name.toLowerCase().includes(lowerQ));
+        const tokens = normalizeGreek(diagSearchQuery).split(/\s+/).filter(Boolean);
+        filteredDiags = filteredDiags.filter(d => {
+            const haystack = normalizeGreek(`${d.name || ''} ${d.id || ''}`);
+            return tokens.every(t => haystack.includes(t));
+        });
     }
     
     // Sort diagnosticians: Active first, then inactive. Sort alphabetically within those groups.

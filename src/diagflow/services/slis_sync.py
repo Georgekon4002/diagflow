@@ -55,6 +55,23 @@ def _get_db() -> sqlite3.Connection:
     return con
 
 
+def normalize_modality(cat: str | None) -> str:
+    """
+    Normalize raw SLIS exam category/modality to standard codes: MRI, CT, MRA.
+    Handles Greek category strings (e.g., ΜΑΓΝΗΤΙΚΗ, ΑΞΟΝΙΚΗ, ΑΓΓΕΙΟΓΡΑΦΙΑ).
+    """
+    if not cat:
+        return "MRI"
+    cat_upper = str(cat).upper().strip()
+    if "MRA" in cat_upper or "ΑΓΓΕΙΟ" in cat_upper:
+        return "MRA"
+    if "ΜΑΓΝΗΤ" in cat_upper or "MRI" in cat_upper:
+        return "MRI"
+    if "ΑΞΟΝ" in cat_upper or "CT" in cat_upper:
+        return "CT"
+    return cat_upper
+
+
 # ─────────────────────────────────────────────────────────────────
 #  Pull from Slis
 # ─────────────────────────────────────────────────────────────────
@@ -67,6 +84,7 @@ def pull_from_slis() -> dict:
       - Executes stored procedure `EXEC getExamsListForPeriod 'YYYY-MM-DD', 'YYYY-MM-DD'`
         for the last 3 days up to today.
       - Filters results to only exams where DIAGNOSTIS IS NULL (unassigned).
+      - Clears old mock/non-existent exams in local slis_exams table.
       - Populates local slis_exams table in mock_slis.db so the app's local processing pipeline runs seamlessly.
 
     In mock mode (USE_MOCK_SLIS_DB=true):
@@ -98,12 +116,21 @@ def pull_from_slis() -> dict:
             ]
 
             pulled_count = len(unassigned_rows)
+            pulled_exammoreids = [r.get("exammoreid") for r in unassigned_rows if r.get("exammoreid") is not None]
 
             con = _get_db()
             cols = [row[1] for row in con.execute("PRAGMA table_info(slis_exams)").fetchall()]
             if "slis_synced_at" not in cols:
                 con.execute("ALTER TABLE slis_exams ADD COLUMN slis_synced_at TEXT DEFAULT NULL")
                 con.commit()
+
+            # Clean out pre-existing mock/stale exams that are NOT in the pulled real SLIS exams list
+            if pulled_exammoreids:
+                placeholders = ",".join(["?"] * len(pulled_exammoreids))
+                con.execute(f"DELETE FROM slis_exams WHERE exammoreid NOT IN ({placeholders})", pulled_exammoreids)
+            else:
+                con.execute("DELETE FROM slis_exams")
+            con.commit()
 
             expired = delete_expired(con)
 
@@ -112,6 +139,9 @@ def pull_from_slis() -> dict:
                 exammoreid = row_dict.get("exammoreid")
                 if not exammoreid:
                     continue
+
+                raw_cat = row_dict.get("category")
+                norm_cat = normalize_modality(raw_cat)
 
                 con.execute(
                     """
@@ -173,7 +203,7 @@ def pull_from_slis() -> dict:
                         "name": row_dict.get("name"),
                         "notes": row_dict.get("notes"),
                         "exammoreid": exammoreid,
-                        "category": row_dict.get("category") or "MRI",
+                        "category": norm_cat,
                     }
                 )
 
@@ -187,6 +217,13 @@ def pull_from_slis() -> dict:
             ).fetchone()
             total_pending = count_row[0] if count_row else 0
             con.close()
+
+            # Clean orphaned local assignments in diagflow.db that no longer match any pulled SLIS exam
+            import diagflow.db.diagflow_db as cfg_db
+            with cfg_db._conn() as local_con:
+                if pulled_exammoreids:
+                    placeholders = ",".join(["?"] * len(pulled_exammoreids))
+                    local_con.execute(f"DELETE FROM local_assignments WHERE exammoreid NOT IN ({placeholders})", pulled_exammoreids)
 
             logger.info("pull_from_slis_production_complete", pulled=pulled_count, total_pending=total_pending)
             return {"pulled": pulled_count, "expired": expired, "total_pending": total_pending}
@@ -204,6 +241,16 @@ def pull_from_slis() -> dict:
             con.execute("ALTER TABLE slis_exams ADD COLUMN slis_synced_at TEXT DEFAULT NULL")
             con.commit()
             logger.info("pull_from_slis: added slis_synced_at column to existing DB")
+
+        # Normalize any existing categories in mock DB
+        rows = con.execute("SELECT exammoreid, category FROM slis_exams").fetchall()
+        for r in rows:
+            eid = r["exammoreid"]
+            cat = r["category"]
+            norm = normalize_modality(cat)
+            if norm != cat:
+                con.execute("UPDATE slis_exams SET category = ? WHERE exammoreid = ?", (norm, eid))
+        con.commit()
 
         # ── Expire & remove old synced rows ───────────────────────
         expired = delete_expired(con)
@@ -281,112 +328,44 @@ def delete_expired(con: sqlite3.Connection | None = None) -> int:
 
 
 # ─────────────────────────────────────────────────────────────────
-#  Push to Slis
+#  Push to Slis (Dry-Run Preview Mode)
 # ─────────────────────────────────────────────────────────────────
 
 def push_exam_to_slis(exammoreid: int, diagnostician_id: int, diagnostician_name: str) -> dict:
     """
-    Push a single exam assignment back to Slis and mark it as synced.
-
-    In mock mode:
-      - Updates the mock_slis.db slis_exams row:
-          SET slis_synced_at = <now>  (marks it as pushed)
-        The real Slis DB is simulated by updating the same row's diagnostis
-        field too (so the mock data stays consistent).
-      - Deletes the row from local_assignments.
-
-    In production:
-      - Runs: BEGIN TRAN; UPDATE exammore SET diagnostisid=? WHERE exammoreid=?; COMMIT
-      - Deletes the local_assignments row.
+    Generate the SQL script required to update a single exam in Slis.
+    Does NOT update the DB or delete local assignments (Dry-Run mode for testing/debugging).
 
     Returns:
-        dict with success, exammoreid, diagnostician_id
+        dict with success, exammoreid, diagnostician_id, sql, dry_run=True
     """
-    if not settings.use_mock_slis_db:
-        try:
-            from sqlalchemy import create_engine, text
-            engine = create_engine(settings.slis_db_connection_string)
-            with engine.begin() as conn:
-                conn.execute(
-                    text("UPDATE exammore SET diagnostisid = :did WHERE exammoreid = :eid"),
-                    {"did": diagnostician_id, "eid": exammoreid}
-                )
-            
-            now_iso = datetime.now().isoformat()
-            
-            # Now we must delete from local_assignments!
-            import diagflow.db.diagflow_db as cfg_db
-            cfg_db.delete_local_assignment(exammoreid)
-            
-            logger.info(
-                "pushed_to_slis_production",
-                exammoreid=exammoreid,
-                diagnostician_id=diagnostician_id,
-            )
-            return {
-                "success": True,
-                "exammoreid": exammoreid,
-                "diagnostician_id": diagnostician_id,
-                "synced_at": now_iso,
-                "sql": f"UPDATE exammore SET diagnostisid = {diagnostician_id} WHERE exammoreid = {exammoreid};"
-            }
-        except Exception as exc:
-            logger.error("push_to_slis_error", exammoreid=exammoreid, error=str(exc))
-            return {"success": False, "exammoreid": exammoreid, "error": str(exc)}
-
-    try:
-        con = _get_db()
-        now_iso = datetime.now().isoformat()
-
-        # Simulate the Slis update: mark slis_synced_at AND keep diagnostis consistent
-        cur = con.execute(
-            """
-            UPDATE slis_exams
-            SET slis_synced_at = ?,
-                diagnostis     = ?,
-                code           = ?
-            WHERE exammoreid = ?
-            """,
-            (now_iso, diagnostician_id, diagnostician_name, exammoreid),
-        )
-        con.commit()
-        con.close()
-        
-        # Delete from local_assignments!
-        import diagflow.db.diagflow_db as cfg_db
-        cfg_db.delete_local_assignment(exammoreid)
-
-        if cur.rowcount == 0:
-            return {
-                "success": False,
-                "exammoreid": exammoreid,
-                "error": f"No exam found with exammoreid={exammoreid}",
-            }
-
-        logger.info(
-            "pushed_to_slis",
-            exammoreid=exammoreid,
-            diagnostician_id=diagnostician_id,
-        )
-        return {
-            "success": True,
-            "exammoreid": exammoreid,
-            "diagnostician_id": diagnostician_id,
-            "synced_at": now_iso,
-            "sql": f"UPDATE slis_exams SET slis_synced_at = '{now_iso}', diagnostis = {diagnostician_id}, code = '{diagnostician_name}' WHERE exammoreid = {exammoreid};"
-        }
-
-    except Exception as exc:
-        logger.error("push_to_slis_error", exammoreid=exammoreid, error=str(exc))
-        return {"success": False, "exammoreid": exammoreid, "error": str(exc)}
+    now_iso = datetime.now().isoformat()
+    sql_cmd = f"UPDATE exammore SET diagnostisid = {diagnostician_id} WHERE exammoreid = {exammoreid};"
+    
+    logger.info(
+        "preview_push_to_slis",
+        exammoreid=exammoreid,
+        diagnostician_id=diagnostician_id,
+        sql=sql_cmd,
+    )
+    return {
+        "success": True,
+        "dry_run": True,
+        "exammoreid": exammoreid,
+        "diagnostician_id": diagnostician_id,
+        "diagnostician_name": diagnostician_name,
+        "synced_at": now_iso,
+        "sql": sql_cmd,
+    }
 
 
 def push_all_to_slis() -> dict:
     """
-    Push ALL assigned-but-not-yet-synced exams to Slis in a single loop.
+    Generate the SQL script to push ALL assigned-but-not-yet-synced exams to Slis.
+    Does NOT modify the DB (Dry-Run mode).
 
     Returns:
-        dict with total, succeeded, failed lists
+        dict with total, succeeded, failed lists, queries, and sql_script
     """
     import diagflow.db.diagflow_db as cfg_db
     local_assignments = cfg_db.get_all_local_assignments()
@@ -407,31 +386,37 @@ def push_all_to_slis() -> dict:
         else:
             failed.append({"exammoreid": exammoreid, "error": result.get("error")})
 
-    logger.info("push_all_complete", total=len(rows), succeeded=len(succeeded), failed=len(failed))
+    script_lines = ["BEGIN TRANSACTION;"] + [f"  {q}" for q in queries] + ["COMMIT;"]
+    formatted_script = "\n".join(script_lines)
+
+    logger.info("push_all_dry_run_complete", total=len(rows), succeeded=len(succeeded))
     return {
         "total": len(rows),
         "succeeded": succeeded,
         "failed": failed,
         "queries": queries,
+        "sql_script": formatted_script,
+        "dry_run": True,
     }
 
 
 def push_selected_to_slis(exammoreid_list: list[int]) -> dict:
     """
-    Push a specific selection of exams to Slis.
+    Generate the SQL script to push a specific selection of exams to Slis.
+    Does NOT modify the DB (Dry-Run mode).
 
     Args:
         exammoreid_list: list of exammoreid values to push
 
     Returns:
-        dict with total, succeeded, failed lists
+        dict with total, succeeded, failed lists, queries, and sql_script
     """
     succeeded = []
     failed = []
     queries = []
 
     if not exammoreid_list:
-        return {"total": 0, "succeeded": [], "failed": [], "queries": []}
+        return {"total": 0, "succeeded": [], "failed": [], "queries": [], "sql_script": "-- No exams selected", "dry_run": True}
 
     import diagflow.db.diagflow_db as cfg_db
     local_assignments = cfg_db.get_all_local_assignments()
@@ -453,18 +438,54 @@ def push_selected_to_slis(exammoreid_list: list[int]) -> dict:
         else:
             failed.append({"exammoreid": exammoreid, "error": result.get("error")})
 
-    logger.info("push_selected_complete", total=len(exammoreid_list), succeeded=len(succeeded), failed=len(failed))
+    script_lines = ["BEGIN TRANSACTION;"] + [f"  {q}" for q in queries] + ["COMMIT;"]
+    formatted_script = "\n".join(script_lines)
+
+    logger.info("push_selected_dry_run_complete", total=len(exammoreid_list), succeeded=len(succeeded))
     return {
         "total": len(exammoreid_list),
         "succeeded": succeeded,
         "failed": failed,
         "queries": queries,
+        "sql_script": formatted_script,
+        "dry_run": True,
     }
 
 
 # ─────────────────────────────────────────────────────────────────
 #  Sync Diagnosticians and Doctors
 # ─────────────────────────────────────────────────────────────────
+
+def sync_diagnosticians() -> dict:
+    """
+    Pull diagnosticians from Slis DB (EXEC getdiagnosticsList) or mock DB,
+    and insert NEW ones into local diagflow.db (active=0 default, ON CONFLICT DO NOTHING).
+    """
+    import diagflow.db.diagflow_db as cfg_db
+
+def normalize_diag_id(raw_id) -> int | None:
+    if raw_id is None:
+        return None
+    try:
+        return int(float(str(raw_id).strip()))
+    except (ValueError, TypeError):
+        return None
+
+
+def normalize_doctor_id(raw_id) -> str:
+    if raw_id is None:
+        return ""
+    s = str(raw_id).strip()
+    if s.endswith(".0"):
+        s = s[:-2]
+    try:
+        f = float(s)
+        if f.is_integer():
+            return str(int(f))
+    except (ValueError, TypeError):
+        pass
+    return s
+
 
 def sync_diagnosticians() -> dict:
     """
@@ -488,7 +509,7 @@ def sync_diagnosticians() -> dict:
 
             for row in rows:
                 r_dict = {k.lower(): v for k, v in row.items()}
-                diag_id = r_dict.get("personelid")
+                diag_id = normalize_diag_id(r_dict.get("personelid"))
                 diag_name = r_dict.get("docname")
                 if diag_id is not None and diag_name:
                     cur = local_con.execute("""
@@ -504,15 +525,16 @@ def sync_diagnosticians() -> dict:
             con.close()
 
             for row in rows:
-                diag_id = row['PERSONELID']
+                diag_id = normalize_diag_id(row['PERSONELID'])
                 diag_name = row['DOCNAME']
-                cur = local_con.execute("""
-                    INSERT INTO diagnosticians (id, name, active) 
-                    VALUES (?, ?, 0) 
-                    ON CONFLICT(id) DO NOTHING
-                """, (diag_id, str(diag_name).strip()))
-                if cur.rowcount > 0:
-                    synced_count += 1
+                if diag_id is not None and diag_name:
+                    cur = local_con.execute("""
+                        INSERT INTO diagnosticians (id, name, active) 
+                        VALUES (?, ?, 0) 
+                        ON CONFLICT(id) DO NOTHING
+                    """, (diag_id, str(diag_name).strip()))
+                    if cur.rowcount > 0:
+                        synced_count += 1
 
         local_con.commit()
         local_con.close()
@@ -548,14 +570,14 @@ def sync_doctors() -> dict:
 
             for row in rows:
                 r_dict = {k.lower(): v for k, v in row.items()}
-                doc_id = r_dict.get("code")
+                doc_id = normalize_doctor_id(r_dict.get("code"))
                 doc_name = r_dict.get("docname")
-                if doc_id is not None and doc_name:
+                if doc_id and doc_name:
                     cur = local_con.execute("""
                         INSERT INTO doctors (id, name) 
                         VALUES (?, ?) 
                         ON CONFLICT(id) DO NOTHING
-                    """, (str(doc_id).strip(), str(doc_name).strip()))
+                    """, (doc_id, str(doc_name).strip()))
                     if cur.rowcount > 0:
                         synced_count += 1
         else:
@@ -564,15 +586,16 @@ def sync_doctors() -> dict:
             con.close()
 
             for row in rows:
-                doc_id = str(row['CODE']).strip()
+                doc_id = normalize_doctor_id(row['CODE'])
                 doc_name = str(row['DOCNAME']).strip()
-                cur = local_con.execute("""
-                    INSERT INTO doctors (id, name) 
-                    VALUES (?, ?) 
-                    ON CONFLICT(id) DO NOTHING
-                """, (doc_id, doc_name))
-                if cur.rowcount > 0:
-                    synced_count += 1
+                if doc_id and doc_name:
+                    cur = local_con.execute("""
+                        INSERT INTO doctors (id, name) 
+                        VALUES (?, ?) 
+                        ON CONFLICT(id) DO NOTHING
+                    """, (doc_id, doc_name))
+                    if cur.rowcount > 0:
+                        synced_count += 1
 
         local_con.commit()
         local_con.close()

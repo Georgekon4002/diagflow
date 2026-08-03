@@ -40,12 +40,68 @@ let dateRangePicker = null;
 let adminToken = sessionStorage.getItem('adminToken') || null;
 
 
+let dbStatusInfo = { status: 'mock', error: null };
+
+function normalizeModalityCode(cat) {
+    if (!cat) return 'MRI';
+    const s = String(cat).toUpperCase().trim();
+    if (s.includes('MRA') || s.includes('ΑΓΓΕΙΟ')) return 'MRA';
+    if (s.includes('ΜΑΓΝΗΤ') || s.includes('MRI')) return 'MRI';
+    if (s.includes('ΑΞΟΝ') || s.includes('CT')) return 'CT';
+    return s;
+}
+
+async function checkDbStatus() {
+    try {
+        const res = await apiCall('/slis/status', 'GET');
+        if (res) {
+            dbStatusInfo = res;
+            updateDbStatusBadge();
+        }
+    } catch { /* Fallback to mock */ }
+}
+
+function updateDbStatusBadge() {
+    const badge = document.getElementById('db-status-badge');
+    const textEl = document.getElementById('db-status-text');
+    if (!badge || !textEl) return;
+
+    badge.classList.remove('mock', 'connected', 'error');
+    if (dbStatusInfo.status === 'connected') {
+        badge.classList.add('connected');
+        textEl.textContent = '🟢 Connected to Slis DB';
+        badge.title = 'Συνδέθηκε επιτυχώς στη βάση Slis';
+    } else if (dbStatusInfo.status === 'error') {
+        badge.classList.add('error');
+        textEl.textContent = '🔴 Slis DB Error';
+        badge.title = 'Αποτυχία σύνδεσης: ' + (dbStatusInfo.error || 'Άγνωστο σφάλμα') + ' (κάντε κλικ για λεπτομέρειες)';
+    } else {
+        badge.classList.add('mock');
+        textEl.textContent = '🟡 Mock Slis DB';
+        badge.title = 'Χρήση τοπικής δοκιμαστικής βάσης (Mock Slis DB)';
+    }
+}
+
+function showDbStatusDetails() {
+    if (dbStatusInfo.status === 'error' && dbStatusInfo.error) {
+        showToast(`❌ Σφάλμα Σύνδεσης Slis DB: ${dbStatusInfo.error}`, 'error');
+    } else if (dbStatusInfo.status === 'connected') {
+        showToast('🟢 Επιτυχής σύνδεση στη βάση Slis DB!', 'success');
+    } else {
+        showToast('🟡 Χρήση Mock Slis DB (SQLite)', 'info');
+    }
+}
+
+
 // ══════════════════════════════════════════════
 //  Initialization
 // ══════════════════════════════════════════════
 
 document.addEventListener('DOMContentLoaded', async () => {
     restoreAdminState();
+    checkDbStatus();
+
+    document.getElementById('override-select')?.addEventListener('change', updateProposalModalButtons);
 
     // Initialize date range picker
     dateRangePicker = flatpickr("#filter-date-range", {
@@ -451,6 +507,8 @@ function matchesFilters(exam, search, selectedModalities, selectedLabs, dateFrom
     if (search) {
         const patName = exam.patient_name || `${exam.fname || ''} ${exam.lname || ''}`.trim();
         const notesStr = exam.notes || exam.comments || '';
+        const suggestedName = exam.suggestion ? (exam.suggestion.suggested_diagnostician_name || '') : '';
+        const assignedName = exam.code || exam.diagnostician_name || exam.assigned_diagnostician_name || '';
         const haystackRaw = [
             String(exam.extracode || exam.exam_id || ''),
             patName,
@@ -460,11 +518,20 @@ function matchesFilters(exam, search, selectedModalities, selectedLabs, dateFrom
             exam.examname || '',
             String(exam.demogid || exam.patient_id || ''),
             String(exam.examnumcode || ''),
-            exam.code || exam.diagnostician_name || exam.assigned_diagnostician_name || '',
+            assignedName,
+            suggestedName,
             notesStr
         ].join(' ');
+
         const haystack = normalizeGreek(haystackRaw);
-        if (!haystack.includes(search)) return false;
+        const searchTokens = normalizeGreek(search).split(/\s+/).filter(Boolean);
+        const matchesAll = searchTokens.every(token => {
+            if (haystack.includes(token)) return true;
+            const tokenStem = getGreekStem(token);
+            if (tokenStem.length >= 3 && haystack.includes(tokenStem)) return true;
+            return false;
+        });
+        if (!matchesAll) return false;
     }
     return true;
 }
@@ -628,7 +695,8 @@ function renderPendingRows(exams) {
         const hasSuggestion = exam.suggestion != null;
         const dateStr = formatDateDMY(exam.visitdate || exam.request_date);
         const cleanName = cleanExamName(exam.examname || exam.exam_title || '');
-        const catClass = (exam.category || exam.modality || '').toLowerCase();
+        const normCat = normalizeModalityCode(exam.category || exam.modality);
+        const catClass = normCat.toLowerCase();
         const patientName = exam.patient_name || `${exam.fname || ''} ${exam.lname || ''}`.trim() || '—';
         const notesHtml = buildNotesCell(exam.notes || exam.comments || '');
         const oldVisitHtml = buildOldVisitCell(exam);
@@ -651,7 +719,7 @@ function renderPendingRows(exams) {
                 </td>
 ${groupedCols}
                 <td style="border-left: 1px solid rgba(255, 255, 255, 0.2);">
-                    <span class="modality-badge ${catClass}">${exam.category || exam.modality || '—'}</span>
+                    <span class="modality-badge ${catClass}">${normCat}</span>
                 </td>
                 <td class="examnumcode-cell">${exam.examnumcode || '—'}</td>
                 <td class="exam-name-cell" style="border-right: 1px solid rgba(255, 255, 255, 0.2);"><span class="body-part-tag" title="${escapeHtmlFull(exam.examname || '')}">${cleanName || '—'}</span></td>
@@ -683,35 +751,62 @@ ${groupedCols}
     fetchVisibleSuggestions(exams);
 }
 
-function fetchVisibleSuggestions(exams) {
+function updateExamSuggestionRow(exam) {
+    const tr = document.getElementById(`row-${exam.exam_id}`);
+    if (!tr) return;
+    const suggCell = tr.querySelector('.suggestion-cell');
+    const lastTd = tr.querySelector('td:last-child');
+    if (exam.suggestion) {
+        if (suggCell) {
+            suggCell.innerHTML = `<span class="suggested-name">${escapeHtmlFull(exam.suggestion.suggested_diagnostician_name)}</span>
+                                  <span class="suggested-score">${Math.round(exam.suggestion.confidence_score * 100)}%</span>`;
+        }
+        if (lastTd) {
+            lastTd.innerHTML = `<div class="btn-group"><button class="btn btn-view" onclick="viewSuggestion('${exam.exam_id}')">Προβολή</button></div>`;
+        }
+    }
+}
+
+async function fetchVisibleSuggestions(exams) {
     const missing = exams.filter(e => !e.suggestion && !e._fetchingSuggestion);
     if (missing.length === 0) return;
 
-    missing.forEach(async exam => {
-        exam._fetchingSuggestion = true;
-        try {
-            const btn = document.getElementById(`sugg-btn-${exam.exam_id}`);
-            if (btn) btn.innerHTML = '<span class="spinner" style="width:14px;height:14px;border-width:2px;margin:auto;"></span>';
+    const overlay = document.getElementById('refreshing-suggestions-modal');
+    if (overlay && pendingExams.some(e => e._wasInvalidated)) {
+        overlay.style.display = 'flex';
+    }
 
-            let suggestion = await apiCall('/assignments/suggest', 'POST', { exam_id: exam.exam_id });
-            if (!suggestion) suggestion = getMockSuggestion(exam.exam_id);
-            exam.suggestion = suggestion;
+    try {
+        await Promise.all(missing.map(async exam => {
+            exam._fetchingSuggestion = true;
+            try {
+                let suggestion = await apiCall('/assignments/suggest', 'POST', { exam_id: exam.exam_id });
+                if (!suggestion) suggestion = getMockSuggestion(exam.exam_id);
+                exam.suggestion = suggestion;
+                exam._wasInvalidated = false;
 
-            // Re-render if it's still visible
-            if (currentTab === 'pending') {
-                const tr = document.getElementById(`row-${exam.exam_id}`);
-                if (tr) {
-                    const rowSelected = selectedExams.has(exam.exam_id);
-                    // To avoid full re-render, we just re-run applyFilters which is fast
-                    applyFilters();
+                if (currentTab === 'pending') {
+                    updateExamSuggestionRow(exam);
                 }
+            } catch (e) {
+                exam._fetchingSuggestion = false;
+                exam._wasInvalidated = false;
             }
-        } catch (e) {
+        }));
+    } finally {
+        if (overlay) overlay.style.display = 'none';
+    }
+}
+
+function invalidatePendingSuggestions() {
+    pendingExams.forEach(exam => {
+        if (exam.suggestion) {
+            exam.suggestion = null;
             exam._fetchingSuggestion = false;
-            const btn = document.getElementById(`sugg-btn-${exam.exam_id}`);
-            if (btn) btn.innerHTML = '<span class="btn-text">Πρόταση</span>';
+            exam._wasInvalidated = true;
         }
     });
+    applyFilters();
 }
 
 
@@ -754,7 +849,8 @@ function renderAssignedRows(exams) {
     tbody.innerHTML = exams.map((exam, i) => {
         const dateStr = formatDateDMY(exam.visitdate || exam.request_date);
         const cleanName = cleanExamName(exam.examname || exam.exam_title || '');
-        const catClass = (exam.category || exam.modality || '').toLowerCase();
+        const normCat = normalizeModalityCode(exam.category || exam.modality);
+        const catClass = normCat.toLowerCase();
         const patientName = exam.patient_name || `${exam.fname || ''} ${exam.lname || ''}`.trim() || '—';
         const diagName = exam.code || exam.diagnostician_name || exam.assigned_diagnostician_name || '—';
         const notesHtml = buildNotesCell(exam.notes || exam.comments || '');
@@ -788,7 +884,7 @@ function renderAssignedRows(exams) {
                 </td>
 ${groupedCols}
                 <td style="border-left: 1px solid rgba(255, 255, 255, 0.2);">
-                    <span class="modality-badge ${catClass}">${exam.category || exam.modality || '—'}</span>
+                    <span class="modality-badge ${catClass}">${normCat}</span>
                 </td>
                 <td class="examnumcode-cell">${exam.examnumcode || '—'}</td>
                 <td class="exam-name-cell" style="border-right: 1px solid rgba(255, 255, 255, 0.2);"><span class="body-part-tag" title="${escapeHtmlFull(exam.examname || '')}">${cleanName || '—'}</span></td>
@@ -874,9 +970,12 @@ async function changeAssignment(examId) {
 //  Suggestion Modal
 // ══════════════════════════════════════════════
 
+let selectedAlternativeId = null;
+
 function openSuggestionModal(examId, suggestion) {
     currentExamId = examId;
     currentSuggestion = suggestion;
+    selectedAlternativeId = null;
     let exam = pendingExams.find(e => e.exam_id === examId);
     if (!exam) exam = assignedExams.find(e => e.exam_id === examId);
 
@@ -941,7 +1040,7 @@ function openSuggestionModal(examId, suggestion) {
             if (alt.eliminated) {
                 // Eliminated by hard filter — shown with red background
                 return `
-                    <div class="alternative-item eliminated" onclick="selectAlternative(${alt.id}, '${escapeHtml(alt.name)}', true)">
+                    <div class="alternative-item eliminated" data-diag-id="${alt.id}" onclick="selectAlternative('${alt.id}', '${escapeHtml(alt.name)}', true, event)">
                         <span class="alt-rank">—</span>
                         <span class="alt-name">${alt.name}</span>
                         <span class="alt-eliminated-badge">⛔ Εξαιρέθηκε</span>
@@ -950,7 +1049,7 @@ function openSuggestionModal(examId, suggestion) {
                 `;
             } else if (Math.round(alt.score * 100) === 0) {
                 return `
-                    <div class="alternative-item eliminated" onclick="selectAlternative(${alt.id}, '${escapeHtml(alt.name)}', true)">
+                    <div class="alternative-item eliminated" data-diag-id="${alt.id}" onclick="selectAlternative('${alt.id}', '${escapeHtml(alt.name)}', true, event)">
                         <span class="alt-rank">—</span>
                         <span class="alt-name">${alt.name}</span>
                         <span class="alt-eliminated-badge">⛔ 0% Βαθμολογία</span>
@@ -960,7 +1059,7 @@ function openSuggestionModal(examId, suggestion) {
             } else {
                 const rank = rankCounter++;
                 return `
-                    <div class="alternative-item" onclick="selectAlternative(${alt.id}, '${escapeHtml(alt.name)}', false)">
+                    <div class="alternative-item" data-diag-id="${alt.id}" onclick="selectAlternative('${alt.id}', '${escapeHtml(alt.name)}', false, event)">
                         <span class="alt-rank">#${rank}</span>
                         <span class="alt-name">${alt.name}</span>
                         <span class="alt-score">${Math.round(alt.score * 100)}%</span>
@@ -1001,6 +1100,106 @@ function openSuggestionModal(examId, suggestion) {
 
     document.getElementById('suggestion-modal').style.display = 'flex';
     document.body.style.overflow = 'hidden';
+    updateProposalModalButtons();
+}
+
+function updateProposalModalButtons() {
+    const overrideSelect = document.getElementById('override-select');
+    const btnOverride = document.getElementById('btn-override');
+    const btnConfirm = document.getElementById('btn-confirm');
+    if (!btnOverride || !btnConfirm) return;
+
+    const selectVal = overrideSelect ? overrideSelect.value : '';
+    const activeAltId = selectVal || selectedAlternativeId || '';
+
+    let proposedSurname = 'Διαγνώστη';
+    if (currentSuggestion && currentSuggestion.suggested_diagnostician_name) {
+        proposedSurname = currentSuggestion.suggested_diagnostician_name.trim().split(/\s+/)[0];
+    }
+
+    if (!activeAltId) {
+        // State 1: Confirm is active, Override is disabled
+        btnConfirm.disabled = false;
+        btnConfirm.className = 'btn btn-primary';
+        btnConfirm.style.background = 'var(--gradient-primary)';
+        btnConfirm.style.color = '#ffffff';
+        btnConfirm.style.opacity = '1';
+        btnConfirm.style.cursor = 'pointer';
+        btnConfirm.style.pointerEvents = 'auto';
+        btnConfirm.style.boxShadow = '0 2px 8px rgba(99, 102, 241, 0.3)';
+        btnConfirm.innerHTML = `✓ Επιβεβαίωση ${escapeHtmlFull(proposedSurname)}`;
+
+        btnOverride.disabled = true;
+        btnOverride.className = 'btn btn-secondary';
+        btnOverride.style.background = 'var(--bg-tertiary)';
+        btnOverride.style.color = 'var(--text-tertiary)';
+        btnOverride.style.border = '1px solid var(--border-color)';
+        btnOverride.style.opacity = '0.4';
+        btnOverride.style.cursor = 'not-allowed';
+        btnOverride.style.pointerEvents = 'none';
+        btnOverride.style.boxShadow = 'none';
+    } else {
+        // State 2: Override is active (vibrant solid amber/orange), Confirm is disabled (gray)
+        btnOverride.disabled = false;
+        btnOverride.className = 'btn btn-warning-active';
+        btnOverride.style.background = '#f59e0b';
+        btnOverride.style.color = '#ffffff';
+        btnOverride.style.border = 'none';
+        btnOverride.style.opacity = '1';
+        btnOverride.style.cursor = 'pointer';
+        btnOverride.style.pointerEvents = 'auto';
+        btnOverride.style.boxShadow = '0 3px 12px rgba(245, 158, 11, 0.45)';
+
+        btnConfirm.disabled = true;
+        btnConfirm.className = 'btn btn-secondary';
+        btnConfirm.style.background = 'var(--bg-tertiary)';
+        btnConfirm.style.color = 'var(--text-tertiary)';
+        btnConfirm.style.border = '1px solid var(--border-color)';
+        btnConfirm.style.opacity = '0.4';
+        btnConfirm.style.cursor = 'not-allowed';
+        btnConfirm.style.pointerEvents = 'none';
+        btnConfirm.style.boxShadow = 'none';
+        btnConfirm.innerHTML = `✓ Επιβεβαίωση ${escapeHtmlFull(proposedSurname)}`;
+    }
+}
+
+function selectAlternative(diagId, diagName, isEliminated, evt) {
+    selectedAlternativeId = diagId ? String(diagId) : null;
+
+    const select = document.getElementById('override-select');
+    if (select) {
+        let matchedIndex = -1;
+        for (let i = 0; i < select.options.length; i++) {
+            const opt = select.options[i];
+            if (opt.value && String(opt.value) === String(diagId)) {
+                matchedIndex = i;
+                break;
+            }
+        }
+        if (matchedIndex === -1 && diagName) {
+            const normDiagName = normalizeGreek(diagName);
+            for (let i = 0; i < select.options.length; i++) {
+                const opt = select.options[i];
+                if (opt.value && normalizeGreek(opt.text).includes(normDiagName)) {
+                    matchedIndex = i;
+                    break;
+                }
+            }
+        }
+        if (matchedIndex !== -1) {
+            select.selectedIndex = matchedIndex;
+            selectedAlternativeId = String(select.options[matchedIndex].value);
+        }
+    }
+
+    document.querySelectorAll('.alternative-item').forEach(el => el.classList.remove('selected-alt'));
+    const targetItem = (evt && (evt.currentTarget || (evt.target && evt.target.closest('.alternative-item')))) ||
+                       document.querySelector(`.alternative-item[data-diag-id="${diagId}"]`);
+    if (targetItem) {
+        targetItem.classList.add('selected-alt');
+    }
+
+    updateProposalModalButtons();
 }
 
 function closeModal() {
@@ -1008,44 +1207,16 @@ function closeModal() {
     document.body.style.overflow = '';
     currentExamId = null;
     currentSuggestion = null;
-    // Bug fix: re-enable buttons for next use
-    const btnConfirm = document.getElementById('btn-confirm');
-    const btnOverride = document.getElementById('btn-override');
-    if (btnConfirm) { btnConfirm.disabled = false; btnConfirm.innerHTML = '✓ Επιβεβαίωση'; }
-    if (btnOverride) { btnOverride.disabled = false; btnOverride.innerHTML = 'Αλλαγή'; }
-}
-
-/**
- * Invalidate cached suggestions on all currently visible pending exams,
- * then trigger background re-scoring so they reflect the latest daily counts
- * (which just changed because a new assignment was confirmed/overridden).
- *
- * Only exams that already had a suggestion are invalidated — exams that were
- * still waiting for their first suggestion are left alone (they'll get fresh
- * results from their in-flight request).
- */
-function invalidatePendingSuggestions() {
-    // Reset suggestion cache and fetching flag on every pending exam
-    pendingExams.forEach(exam => {
-        if (exam.suggestion) {
-            exam.suggestion = null;
-            exam._fetchingSuggestion = false;
-        }
-    });
-    // Trigger re-scoring for whatever is currently visible on the page
-    applyFilters();
-}
-
-function selectAlternative(id, name, isEliminated) {
+    selectedAlternativeId = null;
+    document.querySelectorAll('.alternative-item').forEach(el => el.classList.remove('selected-alt'));
     const select = document.getElementById('override-select');
-    select.value = id.toString();
-    if (isEliminated) {
-        // Pre-fill a reason prompt for eliminated ones
-        const reasonInput = document.getElementById('override-reason');
-        if (!reasonInput.value) reasonInput.placeholder = 'Αιτιολογία παράκαμψης κανόνα (απαιτείται)';
-    }
-    document.getElementById('override-section').scrollIntoView({ behavior: 'smooth' });
+    if (select) select.value = '';
+    const reasonInput = document.getElementById('override-reason');
+    if (reasonInput) reasonInput.value = '';
+    updateProposalModalButtons();
 }
+
+
 
 
 // ══════════════════════════════════════════════
@@ -1108,14 +1279,18 @@ async function overrideAssignment() {
     const select = document.getElementById('override-select');
     const reason = document.getElementById('override-reason').value;
 
-    if (!select.value) {
+    const activeVal = select.value || selectedAlternativeId;
+    if (!activeVal) {
         showToast('Επιλέξτε εναλλακτικό ακτινοδιαγνώστη', 'warning');
         return;
     }
 
-    const overrideId = parseInt(select.value);
-    const optText = select.options[select.selectedIndex].text;
-    const overrideName = optText.split(' (')[0].replace(' ⛔ Εξαιρέθηκε', '');
+    const overrideId = parseInt(activeVal);
+    let overrideName = 'Διαγνώστης';
+    if (select.selectedIndex >= 0 && select.options[select.selectedIndex]?.value) {
+        const optText = select.options[select.selectedIndex].text;
+        overrideName = optText.split(' (')[0].replace(' ⛔ Εξαιρέθηκε', '').replace(' ⛔ 0%', '').trim();
+    }
 
     const btn = document.getElementById('btn-override');
     btn.innerHTML = '<span class="loading-spinner"></span>';
@@ -2118,8 +2293,30 @@ async function handleRefreshClick() {
     }
 }
 
+function showSqlModal(sqlScript) {
+    const modal = document.getElementById('sql-script-modal');
+    const content = document.getElementById('sql-script-content');
+    if (content) content.textContent = sqlScript || '-- Δεν παράχθηκε SQL script';
+    if (modal) modal.style.display = 'flex';
+    document.body.style.overflow = 'hidden';
+}
+
+function closeSqlModal() {
+    const modal = document.getElementById('sql-script-modal');
+    if (modal) modal.style.display = 'none';
+    document.body.style.overflow = '';
+}
+
+function copySqlToClipboard() {
+    const content = document.getElementById('sql-script-content')?.textContent;
+    if (content) {
+        navigator.clipboard.writeText(content);
+        showToast('📋 Το SQL script αντιγράφηκε στο πρόχειρο!', 'success');
+    }
+}
+
 /**
- * Update a SINGLE exam on Slis using its exammoreid.
+ * Update a SINGLE exam on Slis using its exammoreid (Dry-run mode: shows SQL script preview).
  */
 async function updateExamOnSlis(examId, exammoreid) {
     if (!exammoreid) {
@@ -2130,15 +2327,13 @@ async function updateExamOnSlis(examId, exammoreid) {
         const result = await apiCall('/slis/push-selected', 'POST', {
             exammoreid_list: [exammoreid]
         });
-        if (result && result.succeeded && result.succeeded.length > 0) {
-            // Remove this exam from the local assignedExams list
-            assignedExams = assignedExams.filter(e => e.exam_id !== examId);
-            renderAssignedTable();
-            updateTabCounts();
-            showToast(`✅ Εξέταση ${examId} ενημερώθηκε στο Slis`, 'success');
+        if (result && result.sql_script) {
+            showSqlModal(result.sql_script);
+        } else if (result && result.queries && result.queries.length > 0) {
+            showSqlModal(result.queries.join('\n'));
         } else {
             const err = result?.failed?.[0]?.error || 'Άγνωστο σφάλμα';
-            showToast(`❌ Αποτυχία ενημέρωσης: ${err}`, 'error');
+            showToast(`❌ Αποτυχία δημιουργίας SQL script: ${err}`, 'error');
         }
     } catch (err) {
         showToast(`Σφάλμα: ${err.message}`, 'error');
@@ -2146,7 +2341,7 @@ async function updateExamOnSlis(examId, exammoreid) {
 }
 
 /**
- * Update ALL assigned-not-yet-synced exams on Slis.
+ * Update ALL assigned-not-yet-synced exams on Slis (Dry-run mode: shows SQL script preview).
  */
 async function updateAllToSlis() {
     if (assignedExams.length === 0) {
@@ -2155,33 +2350,31 @@ async function updateAllToSlis() {
     }
 
     const btn = document.getElementById('btn-update-slis-all');
-    const originalHTML = btn.innerHTML;
-    btn.innerHTML = '<span class="loading-spinner"></span>';
-    btn.disabled = true;
+    const originalHTML = btn ? btn.innerHTML : '';
+    if (btn) {
+        btn.innerHTML = '<span class="loading-spinner"></span>';
+        btn.disabled = true;
+    }
 
     try {
         const result = await apiCall('/slis/push-all', 'POST');
-        const ok = result?.succeeded?.length || 0;
-        const fail = result?.failed?.length || 0;
-
-        if (ok > 0) {
-            await loadAssignedExams();
-            showToast(`✅ ${ok} εξετάσεις ενημερώθηκαν στο Slis${fail > 0 ? ` (${fail} αποτυχίες)` : ''}`, 'success');
-        } else if (fail > 0) {
-            showToast(`❌ Αποτυχία ενημέρωσης ${fail} εξετάσεων`, 'error');
+        if (result && result.sql_script) {
+            showSqlModal(result.sql_script);
         } else {
             showToast('Δεν υπάρχουν εξετάσεις για ενημέρωση', 'info');
         }
     } catch (err) {
         showToast(`Σφάλμα: ${err.message}`, 'error');
     } finally {
-        btn.innerHTML = originalHTML;
-        btn.disabled = false;
+        if (btn) {
+            btn.innerHTML = originalHTML;
+            btn.disabled = false;
+        }
     }
 }
 
 /**
- * Update SELECTED assigned exams on Slis.
+ * Update SELECTED assigned exams on Slis (Dry-run mode: shows SQL script preview).
  */
 async function updateSelectedToSlis() {
     if (selectedAssignedExams.size === 0) {
@@ -2189,7 +2382,6 @@ async function updateSelectedToSlis() {
         return;
     }
 
-    // Collect exammoreid values for selected exams
     const exammoreidList = [];
     const examIdList = Array.from(selectedAssignedExams);
     examIdList.forEach(examId => {
@@ -2206,19 +2398,10 @@ async function updateSelectedToSlis() {
         const result = await apiCall('/slis/push-selected', 'POST', {
             exammoreid_list: exammoreidList
         });
-        const ok = result?.succeeded?.length || 0;
-        const fail = result?.failed?.length || 0;
-
-        if (ok > 0) {
-            // Remove successfully synced exams from the local list
-            const syncedExammoreidSet = new Set(result.succeeded);
-            assignedExams = assignedExams.filter(e => !syncedExammoreidSet.has(e.exammoreid));
-            clearAssignedSelection();
-            renderAssignedTable();
-            updateTabCounts();
-            showToast(`✅ ${ok} εξετάσεις ενημερώθηκαν στο Slis${fail > 0 ? ` (${fail} αποτυχίες)` : ''}`, 'success');
+        if (result && result.sql_script) {
+            showSqlModal(result.sql_script);
         } else {
-            showToast(`❌ Αποτυχία ενημέρωσης`, 'error');
+            showToast(`❌ Αποτυχία παραγωγής SQL script`, 'error');
         }
     } catch (err) {
         showToast(`Σφάλμα: ${err.message}`, 'error');

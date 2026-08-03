@@ -33,9 +33,11 @@ _DB_PATH = _PROJECT_ROOT / "db" / "diagflow.db"
 @contextmanager
 def _conn() -> Generator[sqlite3.Connection, None, None]:
     _DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    con = sqlite3.connect(_DB_PATH)
+    con = sqlite3.connect(_DB_PATH, timeout=10.0)
     con.row_factory = sqlite3.Row
+    con.execute("PRAGMA journal_mode = WAL")
     con.execute("PRAGMA foreign_keys = ON")
+    con.execute("PRAGMA busy_timeout = 5000")
     try:
         yield con
         con.commit()
@@ -443,31 +445,42 @@ def get_oncall_diagnostician(date_str: str) -> dict | None:
 
 # ── Doctors ───────────────────────────────────────────────────────────────────
 
+def _normalize_greek_str(s: str) -> str:
+    if not s:
+        return ""
+    import unicodedata
+    s = unicodedata.normalize("NFD", str(s))
+    s = "".join(c for c in s if unicodedata.category(c) != "Mn")
+    return s.upper().strip()
+
+
 def get_all_doctors(q: str = "", skip: int = 0, limit: int = 50) -> dict:
     with _conn() as con:
-        base_query = """
+        rows = con.execute("""
+            SELECT doc.id, doc.name, GROUP_CONCAT(diag.name, ', ') as partner_name 
             FROM doctors doc
             LEFT JOIN partnerships p ON doc.id = p.issuing_doctor_id
             LEFT JOIN diagnosticians diag ON p.preferred_diagnostician_id = diag.id
-        """
-        if q:
-            like_q = f"%{q}%"
-            where_clause = "WHERE doc.name LIKE ? OR doc.id LIKE ? OR diag.name LIKE ?"
-            total = con.execute(f"SELECT count(DISTINCT doc.id) {base_query} {where_clause}", (like_q, like_q, like_q)).fetchone()[0]
-            rows = con.execute(
-                f"SELECT doc.id, doc.name, GROUP_CONCAT(diag.name, ', ') as partner_name {base_query} {where_clause} GROUP BY doc.id, doc.name ORDER BY doc.name LIMIT ? OFFSET ?",
-                (like_q, like_q, like_q, limit, skip)
-            ).fetchall()
-        else:
-            total = con.execute(f"SELECT count(DISTINCT doc.id) {base_query}").fetchone()[0]
-            rows = con.execute(
-                f"SELECT doc.id, doc.name, GROUP_CONCAT(diag.name, ', ') as partner_name {base_query} GROUP BY doc.id, doc.name ORDER BY doc.name LIMIT ? OFFSET ?",
-                (limit, skip)
-            ).fetchall()
-    return {
-        "items": [_row_to_dict(r) for r in rows],
-        "total": total
-    }
+            GROUP BY doc.id, doc.name
+            ORDER BY doc.name
+        """).fetchall()
+
+    all_items = [_row_to_dict(r) for r in rows]
+
+    if q:
+        norm_tokens = [_normalize_greek_str(t) for t in q.split() if t]
+        filtered = []
+        for d in all_items:
+            haystack = _normalize_greek_str(f"{d.get('id', '')} {d.get('name', '')} {d.get('partner_name', '')}")
+            if all(token in haystack for token in norm_tokens):
+                filtered.append(d)
+        total = len(filtered)
+        paged = filtered[skip : skip + limit] if limit else filtered[skip:]
+        return {"items": paged, "total": total}
+    else:
+        total = len(all_items)
+        paged = all_items[skip : skip + limit] if limit else all_items[skip:]
+        return {"items": paged, "total": total}
 
 
 def upsert_doctor(doctor_id: str, name: str) -> dict:
@@ -666,11 +679,11 @@ ALLOWED_MODALITY_QUOTA_FIELDS = {'diagnostician_id', 'modality', 'max_count', 'i
 
 DEFAULT_ADMIN_USERNAME = "admin"
 # bcrypt hash of "admin1234" (cost=12). Change via the Admin Panel UI.
-DEFAULT_ADMIN_PASSWORD_HASH = "$2b$12$0qxEPV2WtZ00AhsmOgAbJOQuiessOk/m5jq4x55CB/c680fNiW13i"
+DEFAULT_ADMIN_PASSWORD_HASH = "$2b$12$SsLUct5RLmZJBwDQDBQ7xusD4CrjabY8EX9q.gKZjZbch5HZ2Ovly"
 
 DEFAULT_IT_SUPPORT_USERNAME = "it_support"
 # bcrypt hash of "it_support1234" (cost=12).
-DEFAULT_IT_SUPPORT_PASSWORD_HASH = "$2b$12$6klwZqROtRrIi2RwZgIwKuaGpapOHqUFCQJfWsR1rSLG40X31RnPG"
+DEFAULT_IT_SUPPORT_PASSWORD_HASH = "$2b$12$dk9gH/KU49ZmcFDnQo8bl.D7q8/wcHT.icrlAFlJ8Kd9E3AjItrFa"
 
 def update_exam_routing_rule(rule_id: int, update_data: dict) -> dict | None:
     if update_data:
@@ -834,28 +847,24 @@ def _ensure_admin_users_table(con):
         "role TEXT NOT NULL DEFAULT 'admin', "
         "is_active INTEGER NOT NULL DEFAULT 1)"
     )
-    # Perform migration if needed
-    con.execute(
-        "CREATE TABLE IF NOT EXISTS system_settings ("
-        "key TEXT PRIMARY KEY, value TEXT NOT NULL)"
-    )
-    count = con.execute("SELECT COUNT(*) as c FROM admin_users").fetchone()["c"]
-    if count == 0:
-        # Migrate from system_settings
-        u_row = con.execute("SELECT value FROM system_settings WHERE key = 'admin_username'").fetchone()
-        p_row = con.execute("SELECT value FROM system_settings WHERE key = 'admin_password_hash'").fetchone()
-        username = u_row["value"] if u_row else DEFAULT_ADMIN_USERNAME
-        password_hash = p_row["value"] if p_row else DEFAULT_ADMIN_PASSWORD_HASH
-        
+
+    # Ensure 'admin' account exists
+    admin_row = con.execute("SELECT id FROM admin_users WHERE username = 'admin'").fetchone()
+    if not admin_row:
         con.execute(
-            "INSERT INTO admin_users (username, password_hash, role) VALUES (?, ?, 'admin')",
-            (username, password_hash)
+            "INSERT OR IGNORE INTO admin_users (username, password_hash, role, is_active) VALUES (?, ?, 'admin', 1)",
+            (DEFAULT_ADMIN_USERNAME, DEFAULT_ADMIN_PASSWORD_HASH)
         )
-        # Seed it_support account automatically as requested
+
+    # Ensure 'it_support' account exists
+    it_row = con.execute("SELECT id FROM admin_users WHERE username = 'it_support'").fetchone()
+    if not it_row:
         con.execute(
-            "INSERT INTO admin_users (username, password_hash, role) VALUES (?, ?, 'it_support')",
+            "INSERT OR IGNORE INTO admin_users (username, password_hash, role, is_active) VALUES (?, ?, 'it_support', 1)",
             (DEFAULT_IT_SUPPORT_USERNAME, DEFAULT_IT_SUPPORT_PASSWORD_HASH)
         )
+
+    con.commit()
 
 def get_admin_user_by_username(username: str) -> dict | None:
     with _conn() as con:

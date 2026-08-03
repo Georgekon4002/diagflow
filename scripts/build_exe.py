@@ -34,9 +34,16 @@ def build():
         print("\n  PyInstaller not found. Installing...")
         subprocess.run([sys.executable, "-m", "pip", "install", "pyinstaller"], check=True)
 
+    # Kill any running DiagFlow.exe process to release file locks
+    try:
+        subprocess.run(["taskkill", "/F", "/IM", "DiagFlow.exe"], capture_output=True)
+    except Exception:
+        pass
+
     # Build the PyInstaller command
     cmd = [
         sys.executable, "-m", "PyInstaller",
+        "--clean",
         "--onefile",
         "--noconsole",               # No terminal window — desktop app feel
         "--name", "DiagFlow",
@@ -100,7 +107,12 @@ def build():
         db_dst = ROOT / "dist" / "db"
         if db_src.exists():
             print(f"  Copying database files from {db_src} to {db_dst}...")
-            shutil.copytree(db_src, db_dst, dirs_exist_ok=True)
+            shutil.copytree(
+                db_src,
+                db_dst,
+                dirs_exist_ok=True,
+                ignore=shutil.ignore_patterns("*.db-wal", "*.db-shm", "*.db-journal")
+            )
 
         env_example = ROOT / ".env.example"
         if env_example.exists():

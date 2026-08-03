@@ -27,9 +27,9 @@ MOCK_SLIS_DB = TEMPLATES_DIR / "mock_slis.db"
 
 # Password Hashes (bcrypt cost 12):
 # admin -> admin1234
-ADMIN_PASS_HASH = "$2b$12$0qxEPV2WtZ00AhsmOgAbJOQuiessOk/m5jq4x55CB/c680fNiW13i"
+ADMIN_PASS_HASH = "$2b$12$SsLUct5RLmZJBwDQDBQ7xusD4CrjabY8EX9q.gKZjZbch5HZ2Ovly"
 # it_support -> it_support1234
-IT_SUPPORT_PASS_HASH = "$2b$12$6klwZqROtRrIi2RwZgIwKuaGpapOHqUFCQJfWsR1rSLG40X31RnPG"
+IT_SUPPORT_PASS_HASH = "$2b$12$dk9gH/KU49ZmcFDnQo8bl.D7q8/wcHT.icrlAFlJ8Kd9E3AjItrFa"
 
 
 def build_diagflow_sql() -> str:

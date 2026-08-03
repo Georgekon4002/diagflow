@@ -174,12 +174,12 @@ INSERT INTO pamakristos_schedule (weekday, diagnostician_id) VALUES
 
 -- Availability Records
 INSERT INTO availability (diagnostician_id, date, status, is_pamakristos_oncall, notes) VALUES
-(1, '2026-07-31', 'available', 0, NULL),
-(2, '2026-07-31', 'available', 1, 'Εφημερία Παμμακάριστος'),
-(3, '2026-07-31', 'available', 0, NULL),
-(4, '2026-07-31', 'absent', 0, 'Άδεια'),
-(5, '2026-07-31', 'available', 0, NULL),
-(6, '2026-07-31', 'available', 0, NULL);
+(1, '2026-08-03', 'available', 0, NULL),
+(2, '2026-08-03', 'available', 1, 'Εφημερία Παμμακάριστος'),
+(3, '2026-08-03', 'available', 0, NULL),
+(4, '2026-08-03', 'absent', 0, 'Άδεια'),
+(5, '2026-08-03', 'available', 0, NULL),
+(6, '2026-08-03', 'available', 0, NULL);
 
 -- Exam Routing Rules
 INSERT INTO exam_routing_rules (lab_id, is_pamakristos, exam_codes, diagnostician_id, description, issuing_doctor_id, issuing_doctor_name, is_active) VALUES
@@ -204,7 +204,7 @@ INSERT INTO system_settings (key, value) VALUES
 
 -- Admin Users (Admin & IT Support)
 INSERT INTO admin_users (username, password_hash, role, is_active) VALUES
-('admin', '$2b$12$0qxEPV2WtZ00AhsmOgAbJOQuiessOk/m5jq4x55CB/c680fNiW13i', 'admin', 1),
-('it_support', '$2b$12$6klwZqROtRrIi2RwZgIwKuaGpapOHqUFCQJfWsR1rSLG40X31RnPG', 'it_support', 1);
+('admin', '$2b$12$SsLUct5RLmZJBwDQDBQ7xusD4CrjabY8EX9q.gKZjZbch5HZ2Ovly', 'admin', 1),
+('it_support', '$2b$12$dk9gH/KU49ZmcFDnQo8bl.D7q8/wcHT.icrlAFlJ8Kd9E3AjItrFa', 'it_support', 1);
 
 COMMIT;

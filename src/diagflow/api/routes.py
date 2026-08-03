@@ -755,6 +755,18 @@ async def admin_list_diagnosticians(_=Depends(_require_admin)):
     return cfg_db.get_all_diagnosticians()
 
 
+@router.post("/admin/diagnosticians/sync")
+async def admin_sync_diagnosticians(_=Depends(_require_admin)):
+    from diagflow.services.slis_sync import sync_diagnosticians
+    return sync_diagnosticians()
+
+
+@router.post("/admin/doctors/sync")
+async def admin_sync_doctors(_=Depends(_require_admin)):
+    from diagflow.services.slis_sync import sync_doctors
+    return sync_doctors()
+
+
 @router.post("/admin/diagnosticians")
 async def admin_create_diagnostician(
     req: DiagnosticianCreateRequest,
@@ -1054,6 +1066,13 @@ async def slis_pull():
         "expired": result.get("expired", 0),
         "total_pending": result.get("total_pending", 0),
     }
+
+
+@router.get("/slis/status")
+async def slis_status():
+    """Return the current Slis DB connection status and error details if any."""
+    from diagflow.main import SLIS_STATUS
+    return SLIS_STATUS
 
 
 @router.post("/slis/push-all")
