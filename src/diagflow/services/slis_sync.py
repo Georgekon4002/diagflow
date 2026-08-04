@@ -222,16 +222,19 @@ def pull_from_slis() -> dict:
                         "laboratoryname": row_dict.get("laboratoryname"),
                         "wardid": row_dict.get("wardid"),
                         "wcode": str(row_dict.get("wcode")) if row_dict.get("wcode") else None,
-                        "wname": row_dict.get("wname"),
-                        "diagnostis": None,
-                        "personelid": row_dict.get("personelid"),
-                        "code": row_dict.get("code"),
-                        "name": row_dict.get("name"),
                         "notes": row_dict.get("notes"),
                         "exammoreid": exammoreid,
                         "category": norm_cat,
                     }
                 )
+
+                # Populate exam_dictionary in diagflow.db with pulled exam codes
+                if row_dict.get("examnumcode") and row_dict.get("examname"):
+                    try:
+                        import diagflow.db.diagflow_db as cfg_db
+                        cfg_db.upsert_exam_dictionary_entry(str(row_dict["examnumcode"]), str(row_dict["examname"]), norm_cat)
+                    except Exception:
+                        pass
 
             con.commit()
 

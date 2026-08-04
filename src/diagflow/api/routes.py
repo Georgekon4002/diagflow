@@ -27,11 +27,13 @@ Admin endpoints (backed by diagflow.db — persistent):
 """
 
 from datetime import date, datetime
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Header
 from pydantic import BaseModel
 
+from diagflow.config import settings
 from diagflow.api.dependencies import (
     get_assignment_service,
     get_diagnostician_service,
@@ -637,24 +639,37 @@ async def get_dashboard():
     """Get today's assigned exams per diagnostician."""
     dashboard_data = cfg_db.get_dashboard_data()
     
-    # Resolve exam descriptions from mock SLIS
+    # Resolve exam descriptions from exam_dictionary in diagflow.db and slis_exams
     try:
-        from diagflow.services.assignment import _get_mock_db
-        con = _get_mock_db()
+        dict_entries = cfg_db.get_exam_dictionary()
+        exam_dict_map = {str(e["code"]): e["name"] for e in dict_entries}
+        
         all_exam_ids = []
         for d in dashboard_data:
             all_exam_ids.extend(d.get("assigned_exam_ids", []))
         
+        exam_names_from_slis = {}
         if all_exam_ids:
-            placeholders = ",".join("?" * len(all_exam_ids))
-            rows = con.execute(f"SELECT exammoreid, examname FROM slis_exams WHERE exammoreid IN ({placeholders})", tuple(all_exam_ids)).fetchall()
-            exam_names = {str(r["exammoreid"]): r["examname"] for r in rows}
-            
-            for d in dashboard_data:
-                d["exam_names"] = {}
-                for eid in d.get("assigned_exam_ids", []):
-                    name = exam_names.get(str(eid), "Unknown Exam")
-                    d["exam_names"][name] = d["exam_names"].get(name, 0) + 1
+            try:
+                from diagflow.services.assignment import _get_mock_db
+                con = _get_mock_db()
+                placeholders = ",".join("?" * len(all_exam_ids))
+                rows = con.execute(f"SELECT exammoreid, examname, examnumcode FROM slis_exams WHERE exammoreid IN ({placeholders})", tuple(all_exam_ids)).fetchall()
+                for r in rows:
+                    eid_str = str(r["exammoreid"])
+                    name = r["examname"] or exam_dict_map.get(str(r.get("examnumcode", "")), "")
+                    if name:
+                        exam_names_from_slis[eid_str] = name
+                con.close()
+            except Exception:
+                pass
+
+        for d in dashboard_data:
+            d["exam_names"] = {}
+            for eid in d.get("assigned_exam_ids", []):
+                eid_str = str(eid)
+                name = exam_names_from_slis.get(eid_str) or exam_dict_map.get(eid_str) or f"Εξέταση {eid_str}"
+                d["exam_names"][name] = d["exam_names"].get(name, 0) + 1
     except Exception as e:
         print(f"Failed to fetch dashboard exam names: {e}")
         
@@ -729,11 +744,24 @@ async def admin_update_weekly_schedule(
 # ─────────────────────────────────────────────────────
 
 @router.get("/admin/exam-categories")
-async def admin_get_exam_categories(
-    svc: AssignmentService = Depends(get_assignment_service),
-    _=Depends(_require_admin)
-):
-    return svc.get_exam_categories()
+async def admin_get_exam_categories(_=Depends(_require_admin)):
+    items = cfg_db.get_exam_dictionary()
+    if not items:
+        slis_db_path = Path(settings.mock_slis_db_path)
+        if slis_db_path.exists():
+            import sqlite3
+            with sqlite3.connect(slis_db_path) as con:
+                con.row_factory = sqlite3.Row
+                rows = con.execute(
+                    "SELECT DISTINCT examnumcode AS examnumcode, examname AS name, category FROM slis_exams "
+                    "WHERE examnumcode IS NOT NULL AND examnumcode != ''"
+                ).fetchall()
+                items = [dict(r) for r in rows]
+                for item in items:
+                    cfg_db.upsert_exam_dictionary_entry(
+                        str(item["examnumcode"]), str(item.get("name") or ""), str(item.get("category") or "")
+                    )
+    return items
 
 class DiagnosticianCreateRequest(BaseModel):
     name: str
@@ -979,9 +1007,58 @@ async def admin_list_skills(
 
 @router.post("/admin/skills")
 async def admin_set_skill(req: SkillSetRequest, _=Depends(_require_admin)):
+    diag_id = req.diagnostician_id
+    code = req.exam_code.strip()
+
+    diag = cfg_db.get_diagnostician(diag_id)
+    if not diag:
+        raise HTTPException(status_code=404, detail="Ο διαγνώστης δεν βρέθηκε")
+
+    diag_name = diag.get("name", f"ID {diag_id}")
+    can_ct = bool(diag.get("can_ct", False))
+    can_mri = bool(diag.get("can_mri", False))
+
+    existing = cfg_db.get_skills(diag_id)
+    if any(str(s.get("exam_code")) == str(code) for s in existing):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Η δεξιότητα {code} υπάρχει ήδη για τον/την {diag_name}"
+        )
+
+    category = ""
+    dict_entries = cfg_db.get_exam_dictionary()
+    matched = next((e for e in dict_entries if str(e.get("examnumcode")) == str(code)), None)
+    if matched:
+        category = (matched.get("category") or "").upper().strip()
+        name = matched.get("name") or ""
+    else:
+        name = ""
+
+    if not category:
+        name_upper = name.upper()
+        if "CT" in name_upper or "ΑΞΟΝ" in name_upper or code.startswith("21"):
+            category = "CT"
+        elif "MRA" in name_upper or "ΑΓΓΕΙΟ" in name_upper or code.startswith("228"):
+            category = "MRA"
+        elif "MRI" in name_upper or "ΜΑΓΝΗΤ" in name_upper or code.startswith("22"):
+            category = "MRI"
+        else:
+            category = "CT" if code.startswith("21") else "MRI"
+
+    if category == "CT" and not can_ct:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Ο/Η {diag_name} δεν πραγματοποιεί Αξονικές (CT). Δεν μπορείτε να προσθέσετε τον κωδικό {code}."
+        )
+    if category in ("MRI", "MRA") and not can_mri:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Ο/Η {diag_name} δεν πραγματοποιεί Μαγνητικές (MRI/MRA). Δεν μπορείτε να προσθέσετε τον κωδικό {code}."
+        )
+
     return cfg_db.upsert_skill(
-        diagnostician_id=req.diagnostician_id,
-        exam_code=req.exam_code,
+        diagnostician_id=diag_id,
+        exam_code=code,
         is_preferred=req.is_preferred,
     )
 

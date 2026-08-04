@@ -44,14 +44,18 @@
                     <span class="admin-nav-icon">🩺</span>
                     Ιατροί
                 </button>
+                <button class="admin-nav-item" id="nav-exams" onclick="showSection('exams')">
+                    <span class="admin-nav-icon">📋</span>
+                    Εξετάσεις
+                </button>
                 <button class="admin-nav-item" id="nav-diagnosticians" onclick="showSection('diagnosticians')">
                     <span class="admin-nav-icon">👨‍⚕️</span>
                     Διαγνώστες
                 </button>
                 <button class="admin-nav-item admin-nav-subitem" id="nav-availability"
                     onclick="showSection('availability')">
-                    <span class="admin-nav-icon">📅</span>
-                    Διαθεσιμότητα
+                    <span class="admin-nav-icon">🌴</span>
+                    Άδειες
                 </button>
                 <button class="admin-nav-item admin-nav-subitem" id="nav-skills" onclick="showSection('skills')">
                     <span class="admin-nav-icon">🎯</span>
@@ -200,10 +204,13 @@
                     </div>
                 </div>
 
-                <!-- ════════════ SECTION: Διαθεσιμότητα ════════════ -->
+                <!-- ════════════ SECTION: Άδειες ════════════ -->
                 <div id="section-availability" class="admin-section" style="display:none;">
                     <div class="admin-card">
-                        <div class="admin-card-title">📅 Ορισμός Διαθεσιμότητας</div>
+                        <div class="admin-card-title">🌴 Ορισμός Άδειας</div>
+                        <p style="color:var(--text-secondary);font-size:var(--font-size-sm);margin-bottom:var(--space-md);">
+                            Επιλέξτε διαγνώστη και εύρος ημερομηνιών κατά τις οποίες θα βρίσκεται σε άδεια.
+                        </p>
                         <div class="admin-form">
                             <div class="form-group" style="margin:0;">
                                 <label class="form-label">Διαγνώστης</label>
@@ -216,7 +223,7 @@
                             </div>
                             <div class="form-group" style="margin:0;">
                                 <label class="form-label">Σημειώσεις</label>
-                                <input type="text" id="avail-notes" class="form-input" placeholder="Προαιρετικό">
+                                <input type="text" id="avail-notes" class="form-input" placeholder="Προαιρετικό (π.χ. Κανονική Άδεια)">
                             </div>
                             <div class="form-group admin-form-actions" style="margin:0;">
                                 <button class="btn btn-primary" onclick="setAvailability()">Αποθήκευση</button>
@@ -241,6 +248,51 @@
                     </div>
                 </div>
 
+                <!-- ════════════ SECTION: Εξετάσεις ════════════ -->
+                <div id="section-exams" class="admin-section" style="display:none;">
+                    <!-- ─── Floating Action Bar for Selected Exams ─── -->
+                    <div id="exams-floating-bar" class="floating-action-bar" style="display: none;">
+                        <div class="fab-content" style="gap: 16px; flex-wrap: wrap;">
+                            <span id="exams-fab-count" class="fab-count">0 επιλεγμένες εξετάσεις</span>
+                            
+                            <div style="display: flex; align-items: center; gap: 8px;">
+                                <label style="font-size: 13px; font-weight: 500; color: var(--text-primary);">Διαγνώστης:</label>
+                                <select id="exams-fab-diag-select" class="form-input filter-select" style="max-width: 240px; font-size: 13px; padding: 4px 8px;">
+                                    <option value="">— Επιλέξτε —</option>
+                                </select>
+                            </div>
+
+                            <label style="display: flex; align-items: center; gap: 6px; font-size: 13px; cursor: pointer; color: var(--text-primary);">
+                                <input type="checkbox" id="exams-fab-preferred" style="accent-color: var(--accent-primary); width: 15px; height: 15px;">
+                                Προτίμηση
+                            </label>
+
+                            <button class="btn btn-primary btn-sm" onclick="addSelectedExamsAsSkills()">
+                                🎯 Προσθήκη ως Δεξιότητες
+                            </button>
+                            
+                            <button class="btn btn-secondary btn-sm" onclick="clearExamsSelection()">
+                                Ακύρωση
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="admin-card">
+                        <div class="admin-card-title" style="display: flex; justify-content: space-between; align-items: center; flex-wrap:wrap; gap:12px;">
+                            📋 Κατάλογος Εξετάσεων (Exam Dictionary)
+                            <input type="text" id="exams-search-input" class="form-input" placeholder="Αναζήτηση με κωδικό ή όνομα..."
+                                style="width: 280px; font-weight: normal; font-size: var(--font-size-sm);"
+                                onkeyup="filterExamsDictionary(this.value)">
+                        </div>
+                        <p style="color:var(--text-secondary);font-size:var(--font-size-sm);margin-bottom:16px;">
+                            Πλήρης λίστα όλων των κωδικών εξετάσεων ταξινομημένων ανά κατηγορία (CT, MRI, MRA) και ανατομική ομάδα.
+                        </p>
+                        <div id="exams-dictionary-container">
+                            <!-- Populated dynamically via JS -->
+                        </div>
+                    </div>
+                </div>
+
                 <!-- ════════════ SECTION: Δεξιότητες ════════════ -->
                 <div id="section-skills" class="admin-section" style="display:none;">
                     <div class="admin-card">
@@ -251,8 +303,8 @@
                                 <select id="skill-diag" class="form-input filter-select" style="width:100%;"></select>
                             </div>
                             <div class="form-group" style="margin:0;">
-                                <label class="form-label">Κωδικός Εξέτασης</label>
-                                <input type="text" id="skill-exam-code" class="form-input" placeholder="π.χ. 22100">
+                                <label class="form-label">Κωδικός Εξέτασης (μονός ή πολλαπλοί με κόμμα)</label>
+                                <input type="text" id="skill-exam-code" class="form-input" placeholder="π.χ. 22140, 22141, 22150">
                             </div>
                             <div class="form-group" style="margin:0;">
                                 <label class="form-label">Προτίμηση</label>
@@ -266,6 +318,11 @@
                             <div class="form-group admin-form-actions" style="margin:0;">
                                 <button class="btn btn-primary" onclick="setSkill()">Αποθήκευση</button>
                             </div>
+                        </div>
+                        <div style="margin-top:16px; padding-top:12px; border-top:1px solid var(--border-color); display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+                            <span style="font-size:13px; color:var(--text-secondary); font-weight:500;">Μαζική Προσθήκη για τον επιλεγμένο διαγνώστη:</span>
+                            <button class="btn btn-secondary btn-sm" onclick="addBulkSkills('CT')">⚡ + Όλες οι CT εξετάσεις</button>
+                            <button class="btn btn-secondary btn-sm" onclick="addBulkSkills('MRI')">⚡ + Όλες οι MRI/MRA εξετάσεις</button>
                         </div>
                     </div>
 

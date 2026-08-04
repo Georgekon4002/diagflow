@@ -436,15 +436,13 @@ def _get_assigned_exams_from_db() -> list[dict]:
         return []
 
 def _get_exam_categories_from_db() -> list[dict]:
-    """Fetch exam categories from the SQLite mock DB."""
+    """Fetch exam categories from diagflow.db exam_dictionary table."""
     try:
-        con = _get_mock_db()
-        cur = con.execute("SELECT examnumcode, name, category FROM exam_categories")
-        rows = [dict(r) for r in cur.fetchall()]
-        con.close()
-        return rows
+        import diagflow.db.diagflow_db as cfg_db
+        entries = cfg_db.get_exam_dictionary()
+        return [{"examnumcode": e["code"], "name": e["name"], "category": e["category"]} for e in entries]
     except Exception as e:
-        logger.error("mock_db_read_failed", error=str(e))
+        logger.error("exam_dictionary_read_failed", error=str(e))
         return []
 
 

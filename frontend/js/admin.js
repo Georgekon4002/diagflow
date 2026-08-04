@@ -31,6 +31,57 @@ let totalDiags = 0;
 let diagSearchQuery = '';
 
 let EXAM_CODE_MAP = {};
+let RAW_EXAM_CATEGORIES = [];
+
+function cleanExamName(raw) {
+    if (!raw) return '';
+    return raw
+        .replace(/\(MRI\)/gi, '')
+        .replace(/\(CT\)/gi, '')
+        .replace(/\(MRA\)/gi, '')
+        .replace(/ΜΑΓΝΗΤΙΚΗ\s*/gi, '')
+        .replace(/ΑΞΟΝΙΚΗ\s*/gi, '')
+        .replace(/ΑΓΓΕΙΟΓΡΑΦΙΑ\s*/gi, '')
+        .replace(/ΤΟΜΟΓΡΑΦΙΑ\s*/gi, '')
+        .replace(/\s{2,}/g, ' ')
+        .trim();
+}
+
+function formatSimplifiedExamName(name, category, code) {
+    const cleaned = cleanExamName(name);
+    let cat = (category || '').toUpperCase().trim();
+    if (!cat) {
+        if (/CT|ΑΞΟΝ/i.test(name)) cat = 'CT';
+        else if (/MRA|ΑΓΓΕΙΟ/i.test(name)) cat = 'MRA';
+        else if (/MRI|ΜΑΓΝΗΤ/i.test(name)) cat = 'MRI';
+        else cat = 'MRI';
+    }
+    return `${cat} ${cleaned || name || code}`.trim();
+}
+
+function escapeHtml(str) {
+    if (str === null || str === undefined) return '';
+    return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+}
+
+async function loadExamCategories() {
+    try {
+        const data = await apiCall('/admin/exam-categories');
+        if (data && data.length > 0) {
+            RAW_EXAM_CATEGORIES = data;
+            data.forEach(ex => {
+                EXAM_CODE_MAP[String(ex.examnumcode)] = ex.name;
+            });
+        }
+    } catch {
+        console.warn("Could not load exam categories");
+    }
+}
 
 let dbStatusInfo = { status: 'mock', error: null };
 
@@ -82,13 +133,11 @@ function showDbStatusDetails() {
 document.addEventListener('DOMContentLoaded', async () => {
     checkDbStatus();
     if (!adminToken) {
-        // Not logged in — redirect back
         showToast('Απαιτείται σύνδεση διαχειριστή.', 'error');
         setTimeout(() => window.location.href = 'index.html', 1500);
         return;
     }
 
-    // Set today's date defaults
     const today = formatDateLocal(new Date());
     
     const fpConfig = {
@@ -96,19 +145,21 @@ document.addEventListener('DOMContentLoaded', async () => {
         altInput: true,
         altFormat: "d/m/Y",
         defaultDate: today,
-        firstDayOfWeek: 1, // Monday
+        firstDayOfWeek: 1,
         locale: "gr"
     };
     
-    flatpickr("#oncall-date", fpConfig);
-    flatpickr("#avail-date", {
-        ...fpConfig,
-        mode: "range",
-        defaultDate: [today, today]
-    });
+    if (typeof flatpickr !== 'undefined') {
+        const oncallEl = document.getElementById('oncall-date');
+        if (oncallEl) flatpickr("#oncall-date", fpConfig);
+        const availEl = document.getElementById('avail-date');
+        if (availEl) flatpickr("#avail-date", {
+            ...fpConfig,
+            mode: "range",
+            defaultDate: [today, today]
+        });
+    }
 
-    
-    // Update top right role badge
     const adminRole = sessionStorage.getItem('adminRole');
     const roleBadgeNode = document.getElementById('header-role-text');
     if (roleBadgeNode && adminRole === 'it_support') {
@@ -120,20 +171,6 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     await loadAll();
     showSection('oncall');
-
-    // Set up mutual exclusion for advanced exam routing
-    const advRouteDocSearch = document.getElementById('adv-route-doc-search');
-    const advRoutePam = document.getElementById('adv-route-pam');
-    if (advRouteDocSearch && advRoutePam) {
-        advRoutePam.addEventListener('change', () => {
-            if (advRoutePam.checked) {
-                advRouteDocSearch.value = '';
-                document.getElementById('adv-route-doc').value = '';
-            }
-            updateAdvRouteMutualExclusion();
-        });
-        advRouteDocSearch.addEventListener('input', updateAdvRouteMutualExclusion);
-    }
 });
 
 async function loadAll() {
@@ -150,19 +187,6 @@ async function loadAll() {
         loadSystemWeights(),
         loadAdminUsers(),
     ]);
-}
-
-async function loadExamCategories() {
-    try {
-        const data = await apiCall('/admin/exam-categories');
-        if (data) {
-            data.forEach(ex => {
-                EXAM_CODE_MAP[String(ex.examnumcode)] = ex.name;
-            });
-        }
-    } catch {
-        console.warn("Could not load exam categories");
-    }
 }
 
 
@@ -214,10 +238,11 @@ async function apiCall(endpoint, method = 'GET', body = null) {
 const SECTION_TITLES = {
     oncall: 'Παμμακάριστος',
     diagnosticians: 'Διαγνώστες',
-    availability: 'Διαθεσιμότητα',
+    availability: 'Άδειες',
     skills: 'Δεξιότητες & Χωρητικότητα',
     partnerships: 'Συνεργασίες Ιατρών',
     doctors: 'Ιατροί',
+    exams: 'Εξετάσεις',
     advanced: 'Για Προχωρημένους'
 };
 
@@ -233,6 +258,10 @@ function showSection(name) {
     if (nav) nav.classList.add('active');
 
     document.getElementById('admin-page-title').textContent = SECTION_TITLES[name] || name;
+
+    if (name === 'exams') {
+        renderExamsSection();
+    }
 }
 
 function goBack() {
@@ -786,7 +815,8 @@ function renderSkills() {
         diagSkills.forEach((s, index) => {
             const isPreferred = s.is_preferred || false;
             const examCode = s.exam_code || '—';
-            const examTitle = s.exam_name || s.exam_title || s.body_part || s.exam_code || '—';
+            const rawTitle = s.exam_name || s.exam_title || EXAM_CODE_MAP[examCode] || s.body_part || examCode || '—';
+            const examTitle = formatSimplifiedExamName(rawTitle, s.category, examCode);
             
             html += `<tr class="skills-row-${diagIdForCollapse}" style="display:none; background:#fafafa;">
                 <td style="padding-left:32px;"></td>
@@ -1079,34 +1109,525 @@ async function setSkill() {
     const selEl = document.getElementById('skill-diag');
     const diagId = parseInt(selEl.value);
     const diagName = selEl.options[selEl.selectedIndex]?.dataset?.name || '';
-    const exam_code = document.getElementById('skill-exam-code').value.trim();
+    const rawInput = document.getElementById('skill-exam-code').value.trim();
     const is_preferred = document.getElementById('skill-preferred').checked;
 
     if (!diagId) { showToast('Επιλέξτε διαγνώστη', 'warning'); return; }
-    if (!exam_code) { showToast('Εισάγετε κωδικό εξέτασης', 'warning'); return; }
+    if (!rawInput) { showToast('Εισάγετε κωδικό εξέτασης', 'warning'); return; }
 
-    if (Object.keys(EXAM_CODE_MAP).length > 0 && !EXAM_CODE_MAP[exam_code]) {
-        showToast(`Ο κωδικός εξέτασης ${exam_code} δεν βρέθηκε στις κατηγορίες.`, 'warning');
+    const targetDiag = diagnosticians.find(d => d.id === diagId);
+
+    const codes = rawInput.split(/[\s,]+/).map(c => c.trim()).filter(Boolean);
+    if (codes.length === 0) { showToast('Εισάγετε τουλάχιστον έναν έγκυρο κωδικό εξέτασης', 'warning'); return; }
+
+    let addedCount = 0;
+    for (const code of codes) {
+        // 1. Check if skill already exists for this diagnostician
+        const exists = skills.some(s => s.diagnostician_id === diagId && String(s.exam_code) === String(code));
+        if (exists) {
+            showToast(`⚠️ Η δεξιότητα ${code} υπάρχει ήδη για τον/την ${diagName}`, 'warning');
+            continue;
+        }
+
+        // 2. Determine modality of the exam code
+        const examObj = (RAW_EXAM_CATEGORIES || []).find(ex => String(ex.examnumcode) === String(code));
+        const examName = examObj ? examObj.name : (EXAM_CODE_MAP[code] || '');
+        let cat = (examObj?.category || '').toUpperCase().trim();
+        if (!cat) {
+            if (/CT|ΑΞΟΝ/i.test(examName) || /^21/.test(code)) cat = 'CT';
+            else if (/MRA|ΑΓΓΕΙΟ/i.test(examName) || /^228/.test(code)) cat = 'MRA';
+            else if (/MRI|ΜΑΓΝΗΤ/i.test(examName) || /^22/.test(code)) cat = 'MRI';
+            else cat = /^21/.test(code) ? 'CT' : 'MRI';
+        }
+
+        // 3. Prohibit adding skill if diagnostician does not evaluate this modality
+        if (targetDiag) {
+            if (cat === 'CT' && !targetDiag.can_ct) {
+                showToast(`❌ Ο/Η ${diagName} δεν πραγματοποιεί Αξονικές (CT). Δεν προστέθηκε ο κωδικός ${code}.`, 'error');
+                continue;
+            }
+            if ((cat === 'MRI' || cat === 'MRA') && !targetDiag.can_mri) {
+                showToast(`❌ Ο/Η ${diagName} δεν πραγματοποιεί Μαγνητικές (MRI/MRA). Δεν προστέθηκε ο κωδικός ${code}.`, 'error');
+                continue;
+            }
+        }
+
+        const exam_title = examName || `Εξέταση ${code}`;
+        const record = { diagnostician_id: diagId, diagnostician_name: diagName, exam_code: code, exam_title, is_preferred };
+        try {
+            const result = await apiCall('/admin/skills', 'POST', record);
+            skills = skills.filter(s => !(s.diagnostician_id === diagId && String(s.exam_code) === String(code)));
+            if (result) skills.push(result);
+            else skills.push({ id: Date.now() + Math.random(), ...record });
+            addedCount++;
+        } catch {
+            skills = skills.filter(s => !(s.diagnostician_id === diagId && String(s.exam_code) === String(code)));
+            skills.push({ id: Date.now() + Math.random(), ...record });
+            addedCount++;
+        }
+    }
+
+    document.getElementById('skill-exam-code').value = '';
+    renderSkills();
+    if (addedCount > 0) {
+        showToast(`✅ Προστέθηκαν ${addedCount} νέες δεξιότητες για τον/την ${diagName}`, 'success');
+    }
+}
+
+async function addBulkSkills(targetModality) {
+    const selEl = document.getElementById('skill-diag');
+    const diagId = parseInt(selEl.value);
+    const diagName = selEl.options[selEl.selectedIndex]?.dataset?.name || '';
+
+    if (!diagId) { showToast('Επιλέξτε διαγνώστη πρώτα', 'warning'); return; }
+
+    const targetDiag = diagnosticians.find(d => d.id === diagId);
+    if (targetDiag) {
+        if (targetModality === 'CT' && !targetDiag.can_ct) {
+            showToast(`❌ Ο/Η ${diagName} δεν πραγματοποιεί Αξονικές (CT).`, 'error');
+            return;
+        }
+        if (targetModality === 'MRI' && !targetDiag.can_mri) {
+            showToast(`❌ Ο/Η ${diagName} δεν πραγματοποιεί Μαγνητικές (MRI/MRA).`, 'error');
+            return;
+        }
+    }
+
+    let matchingExams = [];
+    if (RAW_EXAM_CATEGORIES && RAW_EXAM_CATEGORIES.length > 0) {
+        matchingExams = RAW_EXAM_CATEGORIES.filter(ex => {
+            const cat = (ex.category || '').toUpperCase();
+            if (targetModality === 'CT') return cat === 'CT';
+            if (targetModality === 'MRI') return cat === 'MRI' || cat === 'MRA';
+            return false;
+        });
+    } else {
+        for (const [code, name] of Object.entries(EXAM_CODE_MAP)) {
+            if (targetModality === 'CT' && /CT|ΑΞΟΝ/i.test(name)) matchingExams.push({ examnumcode: code, name, category: 'CT' });
+            else if (targetModality === 'MRI' && /MRI|MRA|ΜΑΓΝΗΤ|ΑΓΓΕΙΟ/i.test(name)) matchingExams.push({ examnumcode: code, name, category: 'MRI' });
+        }
+    }
+
+    if (matchingExams.length === 0) {
+        showToast(`Δεν βρέθηκαν εξετάσεις κατηγορίας ${targetModality}`, 'warning');
         return;
     }
 
-    // Build title from code map
-    const exam_title = EXAM_CODE_MAP[exam_code] || `Εξέταση ${exam_code}`;
+    let count = 0;
+    let skippedCount = 0;
+    for (const ex of matchingExams) {
+        const code = String(ex.examnumcode);
+        const exists = skills.some(s => s.diagnostician_id === diagId && String(s.exam_code) === code);
+        if (exists) {
+            skippedCount++;
+            continue;
+        }
 
-    const record = { diagnostician_id: diagId, diagnostician_name: diagName, exam_code, exam_title, is_preferred };
-
-    try {
-        const result = await apiCall('/admin/skills', 'POST', record);
-        skills = skills.filter(s => !(s.diagnostician_id === diagId && s.exam_code === exam_code));
-        if (result) skills.push(result);
-        else skills.push({ id: Date.now(), ...record });
-    } catch {
-        skills = skills.filter(s => !(s.diagnostician_id === diagId && s.exam_code === exam_code));
-        skills.push({ id: Date.now(), ...record });
+        const name = ex.name || EXAM_CODE_MAP[code] || `Εξέταση ${code}`;
+        const record = { diagnostician_id: diagId, diagnostician_name: diagName, exam_code: code, exam_title: name, is_preferred: false };
+        try {
+            const result = await apiCall('/admin/skills', 'POST', record);
+            skills = skills.filter(s => !(s.diagnostician_id === diagId && String(s.exam_code) === code));
+            if (result) skills.push(result);
+            else skills.push({ id: Date.now() + Math.random(), ...record });
+            count++;
+        } catch {
+            skills = skills.filter(s => !(s.diagnostician_id === diagId && String(s.exam_code) === code));
+            skills.push({ id: Date.now() + Math.random(), ...record });
+            count++;
+        }
     }
 
     renderSkills();
-    showToast(`✅ Δεξιότητα ενημερώθηκε: ${diagName} — ${exam_code}`, 'success');
+    if (count > 0) {
+        showToast(`✅ Προστέθηκαν ${count} εξετάσεις ${targetModality} ως δεξιότητες στον/στην ${diagName}`, 'success');
+    } else if (skippedCount > 0) {
+        showToast(`ℹ️ Όλες οι εξετάσεις ${targetModality} υπάρχουν ήδη ως δεξιότητες για τον/την ${diagName}`, 'info');
+    }
+}
+
+let selectedExamCodes = new Set();
+let examsSearchQuery = '';
+
+function filterExamsDictionary(query) {
+    examsSearchQuery = (query || '').toLowerCase().trim();
+    renderExamsSection();
+}
+
+function groupExamByAnatomicalRegion(name) {
+    const n = (name || '').toUpperCase();
+    if (/ΕΓΚΕΦΑΛ|ΚΡΑΝΙ|ΤΡΑΧΗΛ|ΑΥΧΕΝ|ΣΠΛΑΧΝ/i.test(n)) return { key: 'head', title: '🧠 Εγκέφαλος & Κρανίο' };
+    if (/ΣΠΟΝΔΥΛ|ΟΣΦΥ|ΘΩΡΑΚΙΚΗ ΜΟΙΡΑ|ΜΟΣΣ/i.test(n)) return { key: 'spine', title: '🦴 Σπονδυλική Στήλη' };
+    if (/ΘΩΡΑΚ|ΚΟΙΛΙ|ΗΠΑΤ|ΠΑΓΚΡΕ|ΛΕΚΑΝ|ΜΑΣΤ/i.test(n)) return { key: 'body', title: '🫁 Θώρακας & Κοιλία' };
+    if (/ΓΟΝΑΤ|ΙΣΧΙ|ΩΜ|ΠΟΔΟΚΝΗΜ|ΑΚΡ|ΜΥΟΣΚΕΛ|ΑΡΘΡ|ΧΕΙΡ|ΑΓΚΩΝ/i.test(n)) return { key: 'msk', title: '🦵 Μυοσκελετικό & Αρθρώσεις' };
+    if (/ΑΓΓΕΙΟ|ΑΟΡΤ|ΚΑΡΩΤ|ΦΛΕΒ|ΑΡΤΗΡ|MRA/i.test(n)) return { key: 'vessels', title: '🫀 Αγγεία & Αγγειογραφίες' };
+    return { key: 'other', title: '📋 Λοιπές Εξετάσεις' };
+}
+
+function toggleExamsGroup(groupId) {
+    const el = document.getElementById('exams-group-body-' + groupId);
+    const icon = document.getElementById('exams-group-icon-' + groupId);
+    if (!el) return;
+    if (el.style.display === 'none') {
+        el.style.display = 'block';
+        if (icon) icon.style.transform = 'rotate(90deg)';
+    } else {
+        el.style.display = 'none';
+        if (icon) icon.style.transform = 'rotate(0deg)';
+    }
+}
+
+function toggleExamSelection(code) {
+    if (selectedExamCodes.has(code)) {
+        selectedExamCodes.delete(code);
+    } else {
+        selectedExamCodes.add(code);
+    }
+    updateExamsGroupCheckboxState();
+    updateExamsFloatingBar();
+}
+
+function toggleSelectAllGroupExams(event, groupId) {
+    event.stopPropagation();
+    const groupCheckbox = document.getElementById('chk-group-' + groupId);
+    const headerCheckbox = document.getElementById('chk-tbl-header-' + groupId);
+    const isChecked = groupCheckbox ? groupCheckbox.checked : (headerCheckbox ? headerCheckbox.checked : false);
+    
+    if (groupCheckbox) groupCheckbox.checked = isChecked;
+    if (headerCheckbox) headerCheckbox.checked = isChecked;
+
+    const checkboxes = document.querySelectorAll('.exam-chk-group-' + groupId);
+    checkboxes.forEach(chk => {
+        const code = chk.value;
+        chk.checked = isChecked;
+        if (isChecked) {
+            selectedExamCodes.add(code);
+        } else {
+            selectedExamCodes.delete(code);
+        }
+    });
+
+    updateExamsGroupCheckboxState();
+    updateExamsFloatingBar();
+}
+
+function updateExamsGroupCheckboxState() {
+    const groupCheckboxes = document.querySelectorAll('.group-select-checkbox');
+    groupCheckboxes.forEach(groupChk => {
+        const groupId = groupChk.dataset.groupId;
+        const examCheckboxes = document.querySelectorAll('.exam-chk-group-' + groupId);
+        if (examCheckboxes.length === 0) return;
+        const allChecked = Array.from(examCheckboxes).every(c => c.checked);
+        const someChecked = Array.from(examCheckboxes).some(c => c.checked);
+        groupChk.checked = allChecked;
+        groupChk.indeterminate = !allChecked && someChecked;
+
+        const headerChk = document.getElementById('chk-tbl-header-' + groupId);
+        if (headerChk) {
+            headerChk.checked = allChecked;
+            headerChk.indeterminate = !allChecked && someChecked;
+        }
+    });
+}
+
+function clearExamsSelection() {
+    selectedExamCodes.clear();
+    const examCheckboxes = document.querySelectorAll('.exam-select-checkbox');
+    examCheckboxes.forEach(c => c.checked = false);
+    const groupCheckboxes = document.querySelectorAll('.group-select-checkbox');
+    groupCheckboxes.forEach(c => {
+        c.checked = false;
+        c.indeterminate = false;
+    });
+    updateExamsFloatingBar();
+}
+
+function updateExamsFloatingBar() {
+    const fab = document.getElementById('exams-floating-bar');
+    const countEl = document.getElementById('exams-fab-count');
+    const selectEl = document.getElementById('exams-fab-diag-select');
+    if (!fab || !countEl || !selectEl) return;
+
+    if (selectedExamCodes.size === 0) {
+        fab.style.display = 'none';
+        return;
+    }
+
+    fab.style.display = 'flex';
+    countEl.textContent = `${selectedExamCodes.size} επιλεγμέν${selectedExamCodes.size === 1 ? 'η εξέταση' : 'ες εξετάσεις'}`;
+
+    // Determine modalities of selected exams
+    let hasCT = false;
+    let hasMRI = false;
+
+    selectedExamCodes.forEach(code => {
+        let cat = '';
+        const examObj = (RAW_EXAM_CATEGORIES || []).find(ex => String(ex.examnumcode || ex.code) === String(code));
+        const examName = examObj ? examObj.name : (EXAM_CODE_MAP[code] || '');
+        cat = (examObj?.category || '').toUpperCase().trim();
+        if (!cat) {
+            if (/CT|ΑΞΟΝ/i.test(examName) || /^21/.test(code)) cat = 'CT';
+            else if (/MRA|ΑΓΓΕΙΟ/i.test(examName) || /^228/.test(code)) cat = 'MRA';
+            else if (/MRI|ΜΑΓΝΗΤ/i.test(examName) || /^22/.test(code)) cat = 'MRI';
+            else cat = /^21/.test(code) ? 'CT' : 'MRI';
+        }
+
+        if (cat === 'CT') hasCT = true;
+        if (cat === 'MRI' || cat === 'MRA') hasMRI = true;
+    });
+
+    const currentSelectedDiagId = selectEl.value;
+
+    // Filter active diagnosticians based on capability rules:
+    // Selected CT code -> Exclude MRI-only diagnosticians (can_ct == false)
+    // Selected MRI code -> Exclude CT-only diagnosticians (can_mri == false)
+    // Both CT & MRI selected -> Exclude diagnosticians that don't do both
+    const activeDiags = (diagnosticians || []).filter(d => d.active).sort((a, b) => a.name.localeCompare(b.name, 'el'));
+    const eligibleDiags = activeDiags.filter(d => {
+        if (hasCT && !d.can_ct) return false;
+        if (hasMRI && !d.can_mri) return false;
+        return true;
+    });
+
+    let optionsHtml = '<option value="">— Επιλέξτε —</option>';
+    if (eligibleDiags.length === 0) {
+        optionsHtml = '<option value="">⚠️ Κανένας διαθέσιμος διαγνώστης (CT/MRI περιορισμοί)</option>';
+    } else {
+        optionsHtml += eligibleDiags.map(d => {
+            let tags = [];
+            if (d.can_ct && !d.can_mri) tags.push('CT');
+            else if (!d.can_ct && d.can_mri) tags.push('MRI');
+            const tagStr = tags.length > 0 ? ` (${tags.join(', ')})` : '';
+            return `<option value="${d.id}" data-name="${escapeHtml(d.name)}">${escapeHtml(d.name)}${tagStr}</option>`;
+        }).join('');
+    }
+
+    selectEl.innerHTML = optionsHtml;
+    if (currentSelectedDiagId && eligibleDiags.some(d => String(d.id) === String(currentSelectedDiagId))) {
+        selectEl.value = currentSelectedDiagId;
+    }
+}
+
+async function addSelectedExamsAsSkills() {
+    const selectEl = document.getElementById('exams-fab-diag-select');
+    const diagId = parseInt(selectEl.value);
+    if (!diagId) {
+        showToast('Επιλέξτε διαγνώστη', 'warning');
+        return;
+    }
+
+    const diagName = selectEl.options[selectEl.selectedIndex]?.dataset?.name || '';
+    const is_preferred = document.getElementById('exams-fab-preferred').checked;
+
+    if (selectedExamCodes.size === 0) {
+        showToast('Δεν έχουν επιλεγεί εξετάσεις', 'warning');
+        return;
+    }
+
+    const codesToAdd = Array.from(selectedExamCodes);
+    let addedCount = 0;
+    let skippedCount = 0;
+
+    for (const code of codesToAdd) {
+        // Prevent duplicate addition
+        const exists = skills.some(s => s.diagnostician_id === diagId && String(s.exam_code) === String(code));
+        if (exists) {
+            skippedCount++;
+            continue;
+        }
+
+        const examObj = (RAW_EXAM_CATEGORIES || []).find(ex => String(ex.examnumcode || ex.code) === String(code));
+        const examName = examObj ? examObj.name : (EXAM_CODE_MAP[code] || `Εξέταση ${code}`);
+
+        const record = {
+            diagnostician_id: diagId,
+            diagnostician_name: diagName,
+            exam_code: code,
+            exam_title: examName,
+            is_preferred: is_preferred
+        };
+
+        try {
+            const result = await apiCall('/admin/skills', 'POST', record);
+            skills = skills.filter(s => !(s.diagnostician_id === diagId && String(s.exam_code) === String(code)));
+            if (result) skills.push(result);
+            else skills.push({ id: Date.now() + Math.random(), ...record });
+            addedCount++;
+        } catch {
+            skills = skills.filter(s => !(s.diagnostician_id === diagId && String(s.exam_code) === String(code)));
+            skills.push({ id: Date.now() + Math.random(), ...record });
+            addedCount++;
+        }
+    }
+
+    renderSkills();
+
+    if (addedCount > 0 && skippedCount > 0) {
+        showToast(`✅ Προστέθηκαν ${addedCount} νέες δεξιότητες στον/στην ${diagName} (${skippedCount} υπήρχαν ήδη)`, 'success');
+    } else if (addedCount > 0) {
+        showToast(`✅ Προστέθηκαν ${addedCount} νέες δεξιότητες στον/στην ${diagName}`, 'success');
+    } else if (skippedCount > 0) {
+        showToast(`ℹ️ Όλες οι επιλεγμένες εξετάσεις (${skippedCount}) υπάρχουν ήδη ως δεξιότητες για τον/την ${diagName}`, 'info');
+    }
+
+    clearExamsSelection();
+}
+
+async function renderExamsSection() {
+    const container = document.getElementById('exams-dictionary-container');
+    if (!container) return;
+
+    if (!RAW_EXAM_CATEGORIES || RAW_EXAM_CATEGORIES.length === 0) {
+        await loadExamCategories();
+    }
+
+    if (!RAW_EXAM_CATEGORIES || RAW_EXAM_CATEGORIES.length === 0) {
+        if (Object.keys(EXAM_CODE_MAP).length > 0) {
+            RAW_EXAM_CATEGORIES = Object.entries(EXAM_CODE_MAP).map(([code, name]) => ({
+                examnumcode: code,
+                name: name,
+                category: /CT|ΑΞΟΝ/i.test(name) ? 'CT' : (/MRA|ΑΓΓΕΙΟ/i.test(name) ? 'MRA' : 'MRI')
+            }));
+        }
+    }
+
+    if (!RAW_EXAM_CATEGORIES || RAW_EXAM_CATEGORIES.length === 0) {
+        container.innerHTML = '<div style="color:var(--text-tertiary); padding:20px; text-align:center;">Φόρτωση ή δεν βρέθηκαν εξετάσεις...</div>';
+        return;
+    }
+
+    let filtered = RAW_EXAM_CATEGORIES;
+    if (examsSearchQuery) {
+        filtered = RAW_EXAM_CATEGORIES.filter(ex => {
+            const code = String(ex.examnumcode || '');
+            const name = (ex.name || '').toLowerCase();
+            return code.includes(examsSearchQuery) || name.includes(examsSearchQuery);
+        });
+    }
+
+    if (filtered.length === 0) {
+        container.innerHTML = `<div style="color:var(--text-tertiary); padding:20px; text-align:center;">Δεν βρέθηκαν εξετάσεις που να ταιριάζουν με "${escapeHtml(examsSearchQuery)}"</div>`;
+        return;
+    }
+
+    const modalityGroups = { CT: [], MRI: [], MRA: [], OTHER: [] };
+    filtered.forEach(ex => {
+        let cat = (ex.category || '').toUpperCase().trim();
+        if (!cat) {
+            if (/CT|ΑΞΟΝ/i.test(ex.name)) cat = 'CT';
+            else if (/MRA|ΑΓΓΕΙΟ/i.test(ex.name)) cat = 'MRA';
+            else if (/MRI|ΜΑΓΝΗΤ/i.test(ex.name)) cat = 'MRI';
+            else cat = 'OTHER';
+        }
+        if (modalityGroups[cat]) modalityGroups[cat].push(ex);
+        else modalityGroups.OTHER.push(ex);
+    });
+
+    let html = '';
+    const catLabels = {
+        CT: '🩻 Αξονικές Τομογραφίες (CT)',
+        MRI: '🧲 Μαγνητικές Τομογραφίες (MRI)',
+        MRA: '🩸 Μαγνητικές Αγγειογραφίες (MRA)',
+        OTHER: '📋 Λοιπές Εξετάσεις'
+    };
+
+    const isAutoExpanded = Boolean(examsSearchQuery);
+
+    for (const [modKey, examsList] of Object.entries(modalityGroups)) {
+        if (examsList.length === 0) continue;
+
+        const anatGroups = {};
+        examsList.forEach(ex => {
+            const region = groupExamByAnatomicalRegion(ex.name);
+            if (!anatGroups[region.key]) {
+                anatGroups[region.key] = { title: region.title, exams: [] };
+            }
+            anatGroups[region.key].exams.push(ex);
+        });
+
+        html += `
+            <div style="margin-bottom: 28px; border: 1px solid var(--border-color); border-radius: 8px; overflow: hidden; background: var(--bg-primary);">
+                <div style="background: var(--surface-color); padding: 12px 16px; font-weight: 700; font-size: 15px; border-bottom: 1px solid var(--border-color); color: var(--accent-primary); display: flex; justify-content: space-between; align-items: center;">
+                    <span>${catLabels[modKey] || modKey}</span>
+                    <span style="font-size: 12px; background: var(--bg-tertiary); padding: 2px 8px; border-radius: 12px; font-weight: 600; color: var(--text-secondary);">${examsList.length} εξετάσεις</span>
+                </div>
+                <div style="padding: 12px 16px;">
+        `;
+
+        for (const [key, anat] of Object.entries(anatGroups)) {
+            const groupId = `${modKey}_${key}`;
+            const groupExamsCodes = anat.exams.map(e => String(e.code || e.examnumcode || e.exam_code || ''));
+            const allChecked = groupExamsCodes.length > 0 && groupExamsCodes.every(c => selectedExamCodes.has(c));
+            const someChecked = groupExamsCodes.some(c => selectedExamCodes.has(c));
+
+            html += `
+                <div style="margin-bottom: 16px; border: 1px solid var(--border-color); border-radius: 6px; overflow: hidden;">
+                    <div onclick="toggleExamsGroup('${groupId}')" 
+                         style="cursor:pointer; font-weight: 600; font-size: 13px; color: var(--text-primary); padding: 10px 14px; background: var(--surface-color); display: flex; align-items: center; justify-content: space-between; user-select: none;">
+                        <div style="display: flex; align-items: center; gap: 8px;">
+                            <span id="exams-group-icon-${groupId}" style="display:inline-block; width:16px; transition:transform 0.2s; ${isAutoExpanded ? 'transform:rotate(90deg);' : ''}">▶</span>
+                            <input type="checkbox" id="chk-group-${groupId}" class="group-select-checkbox" data-group-id="${groupId}" ${allChecked ? 'checked' : ''} onclick="toggleSelectAllGroupExams(event, '${groupId}')" title="Επιλογή όλων στην ομάδα" style="accent-color:var(--accent-primary); width:16px; height:16px; cursor:pointer;">
+                            <span>${anat.title}</span> 
+                            <span style="font-weight:normal; font-size:12px; color:var(--text-tertiary);">(${anat.exams.length})</span>
+                        </div>
+                        <span style="font-size:11px; color:var(--text-tertiary); font-weight:normal;">Κάντε κλικ για ανάπτυξη/σύμπτυξη</span>
+                    </div>
+                    <div id="exams-group-body-${groupId}" style="display: ${isAutoExpanded ? 'block' : 'none'}; padding: 8px 14px 14px 14px; background: var(--bg-primary); border-top: 1px solid var(--border-color);">
+                        <table class="admin-table" style="font-size: 13px; margin: 0;">
+                            <thead>
+                                <tr>
+                                    <th style="width: 40px; text-align: center;">
+                                        <input type="checkbox" id="chk-tbl-header-${groupId}" ${allChecked ? 'checked' : ''} onclick="toggleSelectAllGroupExams(event, '${groupId}')" style="accent-color:var(--accent-primary); width:15px; height:15px; cursor:pointer;" title="Επιλογή όλων στην ομάδα">
+                                    </th>
+                                    <th style="width: 110px;">Κωδικός</th>
+                                    <th>Ονομασία Εξέτασης (Πλήρης & Απλοποιημένη)</th>
+                                    <th style="width: 100px; text-align: center;">Κατηγορία</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+            `;
+
+            anat.exams.forEach(ex => {
+                const code = String(ex.code || ex.examnumcode || ex.exam_code || '');
+                const fullName = ex.name || '—';
+                const simplified = formatSimplifiedExamName(fullName, modKey, code);
+                const catClass = (modKey || '').toLowerCase();
+                const isChecked = selectedExamCodes.has(code);
+
+                html += `
+                    <tr>
+                        <td style="text-align: center;">
+                            <input type="checkbox" class="exam-select-checkbox exam-chk-group-${groupId}" value="${code}" ${isChecked ? 'checked' : ''} onchange="toggleExamSelection('${code}')" style="accent-color:var(--accent-primary); width:15px; height:15px; cursor:pointer;">
+                        </td>
+                        <td style="font-family: monospace; font-weight: 700; color: #8122FF; font-size: 13px;">${escapeHtml(code)}</td>
+                        <td>
+                            <div style="font-weight: 600; color: var(--text-primary);">${escapeHtml(simplified)}</div>
+                            <div style="font-size: 11px; color: var(--text-tertiary);">${escapeHtml(fullName)}</div>
+                        </td>
+                        <td style="text-align: center;">
+                            <span class="modality-badge ${catClass}">${escapeHtml(modKey)}</span>
+                        </td>
+                    </tr>
+                `;
+            });
+
+            html += `
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            `;
+        }
+
+        html += `
+                </div>
+            </div>
+        `;
+    }
+
+    container.innerHTML = html;
+    updateExamsGroupCheckboxState();
+    updateExamsFloatingBar();
 }
 
 async function deleteSkill(id) {

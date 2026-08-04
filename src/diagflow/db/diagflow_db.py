@@ -31,14 +31,39 @@ else:
 _DB_PATH = _PROJECT_ROOT / "db" / "diagflow.db"
 
 
+_schema_initialized = False
+
+
 @contextmanager
 def _conn() -> Generator[sqlite3.Connection, None, None]:
+    global _schema_initialized
     _DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     con = sqlite3.connect(_DB_PATH, timeout=10.0)
     con.row_factory = sqlite3.Row
     con.execute("PRAGMA journal_mode = WAL")
     con.execute("PRAGMA foreign_keys = ON")
     con.execute("PRAGMA busy_timeout = 5000")
+    if not _schema_initialized:
+        try:
+            cols = [row[1] for row in con.execute("PRAGMA table_info(local_assignments)").fetchall()]
+            if cols and "extracode" not in cols:
+                con.execute("ALTER TABLE local_assignments ADD COLUMN extracode TEXT DEFAULT NULL")
+            con.execute(
+                "CREATE TABLE IF NOT EXISTS exam_dictionary ("
+                "code TEXT PRIMARY KEY, name TEXT NOT NULL, category TEXT)"
+            )
+            # Remove any duplicate diagnostician_skills entries and ensure unique index
+            con.execute(
+                "DELETE FROM diagnostician_skills WHERE rowid NOT IN ("
+                "SELECT MIN(rowid) FROM diagnostician_skills GROUP BY diagnostician_id, exam_code)"
+            )
+            con.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_skills_diag_code ON diagnostician_skills(diagnostician_id, exam_code)"
+            )
+            con.commit()
+            _schema_initialized = True
+        except Exception:
+            pass
     try:
         yield con
         con.commit()
@@ -155,12 +180,16 @@ def get_skills(diagnostician_id: int | None = None) -> list[dict]:
 
 def upsert_skill(diagnostician_id: int, exam_code: str,
                  is_preferred: bool = False) -> dict:
+    code_str = str(exam_code).strip()
     with _conn() as con:
         con.execute(
+            "DELETE FROM diagnostician_skills WHERE diagnostician_id = ? AND exam_code = ?",
+            (diagnostician_id, code_str),
+        )
+        con.execute(
             "INSERT INTO diagnostician_skills (diagnostician_id, exam_code, is_preferred) "
-            "VALUES (?, ?, ?) "
-            "ON CONFLICT(diagnostician_id, exam_code) DO UPDATE SET is_preferred=excluded.is_preferred",
-            (diagnostician_id, exam_code, int(is_preferred)),
+            "VALUES (?, ?, ?)",
+            (diagnostician_id, code_str, int(is_preferred)),
         )
         row = con.execute(
             "SELECT ds.id, ds.diagnostician_id, d.name AS diagnostician_name, "
@@ -168,7 +197,7 @@ def upsert_skill(diagnostician_id: int, exam_code: str,
             "FROM diagnostician_skills ds "
             "JOIN diagnosticians d ON d.id = ds.diagnostician_id "
             "WHERE ds.diagnostician_id = ? AND ds.exam_code = ?",
-            (diagnostician_id, exam_code),
+            (diagnostician_id, code_str),
         ).fetchone()
     return _row_to_dict(row)
 
@@ -206,6 +235,62 @@ def get_all_skills_grouped() -> dict[int, list[dict]]:
             "is_preferred": bool(r["is_preferred"])
         })
     return result
+
+
+DEFAULT_EXAM_SEED = [
+    {"code": "22140", "name": "ΑΞΟΝΙΚΗ ΤΟΜΟΓΡΑΦΙΑ ΘΩΡΑΚΑ", "category": "CT"},
+    {"code": "22141", "name": "ΑΞΟΝΙΚΗ ΤΟΜΟΓΡΑΦΙΑ ΚΟΙΛΙΑΣ", "category": "CT"},
+    {"code": "22142", "name": "ΑΞΟΝΙΚΗ ΤΟΜΟΓΡΑΦΙΑ ΕΓΚΕΦΑΛΟΥ", "category": "CT"},
+    {"code": "22143", "name": "ΑΞΟΝΙΚΗ ΤΟΜΟΓΡΑΦΙΑ ΣΠΟΝΔΥΛΙΚΗΣ ΣΤΗΛΗΣ", "category": "CT"},
+    {"code": "22144", "name": "ΑΞΟΝΙΚΗ ΤΟΜΟΓΡΑΦΙΑ ΤΡΑΧΗΛΟΥ", "category": "CT"},
+    {"code": "22145", "name": "ΑΞΟΝΙΚΗ ΤΟΜΟΓΡΑΦΙΑ ΚΑΤΩ ΚΟΙΛΙΑΣ & ΛΕΚΑΝΗΣ", "category": "CT"},
+    {"code": "22146", "name": "ΑΞΟΝΙΚΗ ΤΟΜΟΓΡΑΦΙΑ ΑΓΓΕΙΟΓΡΑΦΙΑ (CTA)", "category": "CT"},
+    {"code": "21000", "name": "ΑΞΟΝΙΚΗ ΤΟΜΟΓΡΑΦΙΑ (CT) ΓΕΝΙΚΗ", "category": "CT"},
+    {"code": "22150", "name": "ΜΑΓΝΗΤΙΚΗ ΤΟΜΟΓΡΑΦΙΑ ΕΓΚΕΦΑΛΟΥ", "category": "MRI"},
+    {"code": "22151", "name": "ΜΑΓΝΗΤΙΚΗ ΤΟΜΟΓΡΑΦΙΑ ΣΠΟΝΔΥΛΙΚΗΣ ΣΤΗΛΗΣ", "category": "MRI"},
+    {"code": "22152", "name": "ΜΑΓΝΗΤΙΚΗ ΤΟΜΟΓΡΑΦΙΑ ΘΩΡΑΚΑ", "category": "MRI"},
+    {"code": "22153", "name": "ΜΑΓΝΗΤΙΚΗ ΤΟΜΟΓΡΑΦΙΑ ΑΝΩ & ΚΑΤΩ ΚΟΙΛΙΑΣ", "category": "MRI"},
+    {"code": "22154", "name": "ΜΑΓΝΗΤΙΚΗ ΤΟΜΟΓΡΑΦΙΑ ΓΟΝΑΤΟΣ / ΑΡΘΡΩΣΗΣ", "category": "MRI"},
+    {"code": "22155", "name": "ΜΑΓΝΗΤΙΚΗ ΤΟΜΟΓΡΑΦΙΑ ΙΣΧΙΟΥ", "category": "MRI"},
+    {"code": "22156", "name": "ΜΑΓΝΗΤΙΚΗ ΤΟΜΟΓΡΑΦΙΑ ΩΜΟΥ", "category": "MRI"},
+    {"code": "22705", "name": "ΜΑΓΝΗΤΙΚΗ ΦΑΣΜΑΤΟΣΚΟΠΙΑ (MRS)", "category": "MRI"},
+    {"code": "22630", "name": "ΜΑΓΝΗΤΙΚΗ ΑΓΓΕΙΟΓΡΑΦΙΑ ΕΓΚΕΦΑΛΟΥ (MRA)", "category": "MRA"},
+    {"code": "22631", "name": "ΜΑΓΝΗΤΙΚΗ ΑΓΓΕΙΟΓΡΑΦΙΑ ΤΡΑΧΗΛΟΥ / ΚΑΡΩΤΙΔΩΝ (MRA)", "category": "MRA"},
+    {"code": "22632", "name": "ΜΑΓΝΗΤΙΚΗ ΑΓΓΕΙΟΓΡΑΦΙΑ ΑΟΡΤΗΣ & ΑΓΓΕΙΩΝ", "category": "MRA"},
+]
+
+
+def get_exam_dictionary() -> list[dict]:
+    with _conn() as con:
+        rows = con.execute("SELECT code AS examnumcode, code, name, category FROM exam_dictionary ORDER BY CAST(code AS INTEGER), code").fetchall()
+        if not rows or len(rows) < 300:
+            slis_db_path = _PROJECT_ROOT / "db" / "mock_slis.db"
+            if slis_db_path.exists():
+                try:
+                    with sqlite3.connect(slis_db_path) as con_slis:
+                        slis_rows = con_slis.execute("SELECT examnumcode, name, category FROM exam_categories").fetchall()
+                        if slis_rows:
+                            con.executemany(
+                                "INSERT INTO exam_dictionary (code, name, category) VALUES (?, ?, ?) "
+                                "ON CONFLICT(code) DO UPDATE SET name=excluded.name, category=excluded.category",
+                                [(str(r[0]), str(r[1]), str(r[2] or "")) for r in slis_rows],
+                            )
+                            con.commit()
+                            rows = con.execute("SELECT code AS examnumcode, code, name, category FROM exam_dictionary ORDER BY CAST(code AS INTEGER), code").fetchall()
+                except Exception:
+                    pass
+    return [_row_to_dict(r) for r in rows]
+
+
+def upsert_exam_dictionary_entry(code: str, name: str, category: str = "") -> None:
+    if not code:
+        return
+    with _conn() as con:
+        con.execute(
+            "INSERT INTO exam_dictionary (code, name, category) VALUES (?, ?, ?) "
+            "ON CONFLICT(code) DO UPDATE SET name=excluded.name, category=excluded.category",
+            (code.strip(), name.strip(), category.strip()),
+        )
 
 
 # ── Partnerships ──────────────────────────────────────────────────────────────
@@ -525,22 +610,22 @@ def delete_doctor(doctor_id: str) -> bool:
 def upsert_local_assignment(exammoreid: int, diagnostician_id: int, diagnostician_name: str, assigned_at: str, modality: str | None = None, extracode: str | None = None, is_auto: bool = False, rule_desc: str | None = None) -> dict:
     with _conn() as con:
         con.execute(
-            "INSERT INTO local_assignments (exammoreid, diagnostician_id, diagnostician_name, assigned_at, is_auto, rule_desc) VALUES (?, ?, ?, ?, ?, ?) "
-            "ON CONFLICT(exammoreid) DO UPDATE SET diagnostician_id=excluded.diagnostician_id, diagnostician_name=excluded.diagnostician_name, assigned_at=excluded.assigned_at, is_auto=excluded.is_auto, rule_desc=excluded.rule_desc",
-            (exammoreid, diagnostician_id, diagnostician_name, assigned_at, int(is_auto), rule_desc),
+            "INSERT INTO local_assignments (exammoreid, diagnostician_id, diagnostician_name, assigned_at, is_auto, rule_desc, extracode) VALUES (?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(exammoreid) DO UPDATE SET diagnostician_id=excluded.diagnostician_id, diagnostician_name=excluded.diagnostician_name, assigned_at=excluded.assigned_at, is_auto=excluded.is_auto, rule_desc=excluded.rule_desc, extracode=excluded.extracode",
+            (exammoreid, diagnostician_id, diagnostician_name, assigned_at, int(is_auto), rule_desc, extracode),
         )
         con.execute(
             "INSERT OR REPLACE INTO assignment_log (exammoreid, diagnostician_id, assigned_at, modality, extracode) VALUES (?, ?, ?, ?, ?)",
             (exammoreid, diagnostician_id, assigned_at, modality, extracode),
         )
         row = con.execute(
-            "SELECT exammoreid, diagnostician_id, diagnostician_name, assigned_at, is_auto, rule_desc FROM local_assignments WHERE exammoreid = ?", (exammoreid,)
+            "SELECT exammoreid, diagnostician_id, diagnostician_name, assigned_at, is_auto, rule_desc, extracode FROM local_assignments WHERE exammoreid = ?", (exammoreid,)
         ).fetchone()
     return _row_to_dict(row)
 
 def get_all_local_assignments() -> dict[int, dict]:
     with _conn() as con:
-        rows = con.execute("SELECT exammoreid, diagnostician_id, diagnostician_name, assigned_at, is_auto, rule_desc FROM local_assignments").fetchall()
+        rows = con.execute("SELECT exammoreid, diagnostician_id, diagnostician_name, assigned_at, is_auto, rule_desc, extracode FROM local_assignments").fetchall()
         return {r["exammoreid"]: _row_to_dict(r) for r in rows}
 
 def get_daily_assignment_counts() -> dict[int, dict]:
@@ -566,6 +651,21 @@ def delete_local_assignment(exammoreid: int) -> bool:
 
 def mark_local_assignment_synced(exammoreid: int, synced_at: str | None = None) -> bool:
     return delete_local_assignment(exammoreid)
+
+def get_exam_dictionary() -> list[dict]:
+    with _conn() as con:
+        rows = con.execute("SELECT code, name, category FROM exam_dictionary ORDER BY category, code").fetchall()
+        return [_row_to_dict(r) for r in rows]
+
+def upsert_exam_dictionary_entry(code: str, name: str, category: str | None = None) -> dict:
+    with _conn() as con:
+        con.execute(
+            "INSERT INTO exam_dictionary (code, name, category) VALUES (?, ?, ?) "
+            "ON CONFLICT(code) DO UPDATE SET name=excluded.name, category=COALESCE(excluded.category, exam_dictionary.category)",
+            (str(code).strip(), name.strip(), category),
+        )
+        row = con.execute("SELECT code, name, category FROM exam_dictionary WHERE code = ?", (str(code).strip(),)).fetchone()
+    return _row_to_dict(row)
 
 def get_dashboard_data() -> list[dict]:
     with _conn() as con:
@@ -596,7 +696,7 @@ def get_dashboard_data() -> list[dict]:
         # 1. Fetch from local_assignments (ONLY FOR TODAY)
         local_rows = con.execute(
             """
-            SELECT diagnostician_id, exammoreid
+            SELECT diagnostician_id, exammoreid, extracode
             FROM local_assignments
             WHERE substr(assigned_at, 1, 10) = date('now', 'localtime')
             """
@@ -646,7 +746,7 @@ def get_dashboard_data() -> list[dict]:
         if not category and exammoreid in exam_details:
             category = exam_details[exammoreid][1]
 
-        order_val = str(extracode) if extracode else (str(exammoreid) if exammoreid else None)
+        order_val = str(extracode).strip() if (extracode is not None and str(extracode).strip() != "") else None
         if order_val:
             dashboard_map[d_id]["assigned_orders"].append(order_val)
 
@@ -657,7 +757,7 @@ def get_dashboard_data() -> list[dict]:
             dashboard_map[d_id]["modality_counts"][mod] += 1
 
     for r in local_rows:
-        process_record(r["diagnostician_id"], r["exammoreid"])
+        process_record(r["diagnostician_id"], r["exammoreid"], r["extracode"] if "extracode" in r.keys() else None)
 
     for r in log_rows:
         process_record(r["diagnostician_id"], r["exammoreid"], r["extracode"], r["category"])

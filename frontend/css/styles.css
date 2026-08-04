@@ -2349,6 +2349,35 @@ div[style*="overflow-x:auto"] {
     white-space: nowrap;
     font-size: 13px;
     font-weight: 500;
+    .modality-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 3px 12px;
+    border-radius: var(--radius-full, 9999px);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+}
+
+.modality-badge.mra {
+    background: #fef3c7;
+    color: #b45309;
+    border: 1px solid #fde68a;
+}
+
+.modality-badge.ct {
+    background: #e0f2fe;
+    color: #0284c7;
+    border: 1px solid #bae6fd;
+}
+
+.modality-badge.mri {
+    background: #f3e8ff;
+    color: #7e22ce;
+    border: 1px solid #e9d5ff;
+}
     border: 1px solid #4a4a4a;
     pointer-events: none;
 }

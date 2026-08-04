@@ -2534,10 +2534,27 @@ async function loadDashboard() {
                 examsHtml = `<div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border-color);">
                     <div style="font-size: 12px; color: var(--text-secondary); margin-bottom: 4px;">Εξετάσεις:</div>`;
                 for (const [name, qty] of Object.entries(d.exam_names)) {
-                    let safeName = escapeHtml(name);
-                    safeName = safeName.replace(/ΜΑΓΝΗΤΙΚΗ\s+ΤΟΜΟΓΡΑΦΙΑ\s*(?:\(MRI\))?\s*/gi, '<strong>MRI</strong> ');
-                    safeName = safeName.replace(/ΑΞΟΝΙΚΗ\s+ΤΟΜΟΓΡΑΦΙΑ\s*(?:\(CT\))?\s*/gi, '<strong>CT</strong> ');
-                    examsHtml += `<div style="font-size: 11px; margin-bottom: 2px;">${safeName} - <strong>${qty}</strong></div>`;
+                    let modTag = 'MRI';
+                    if (/CT|ΑΞΟΝ/i.test(name)) modTag = 'CT';
+                    else if (/MRA|ΑΓΓΕΙΟ/i.test(name)) modTag = 'MRA';
+
+                    let cleaned = name
+                        .replace(/\(MRI\)/gi, '')
+                        .replace(/\(CT\)/gi, '')
+                        .replace(/\(MRA\)/gi, '')
+                        .replace(/ΜΑΓΝΗΤΙΚΗ\s*/gi, '')
+                        .replace(/ΑΞΟΝΙΚΗ\s*/gi, '')
+                        .replace(/ΑΓΓΕΙΟΓΡΑΦΙΑ\s*/gi, '')
+                        .replace(/ΤΟΜΟΓΡΑΦΙΑ\s*/gi, '')
+                        .replace(/\s{2,}/g, ' ')
+                        .trim();
+
+                    if (cleaned.toUpperCase().startsWith(modTag)) {
+                        cleaned = cleaned.substring(modTag.length).trim();
+                    }
+
+                    let safeCleaned = escapeHtml(cleaned || name);
+                    examsHtml += `<div style="font-size: 11px; margin-bottom: 2px;"><strong>${modTag}</strong> ${safeCleaned} - <strong>${qty}</strong></div>`;
                 }
                 examsHtml += `</div>`;
             }
