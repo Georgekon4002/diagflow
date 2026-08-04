@@ -8,6 +8,7 @@ already in use.
 """
 import sqlite3
 import sys
+from datetime import date, datetime
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Generator
@@ -592,15 +593,16 @@ def get_dashboard_data() -> list[dict]:
                 "modality_limits": modality_limits.get(did, {})
             }
 
-        # 1. Fetch from local_assignments
+        # 1. Fetch from local_assignments (ONLY FOR TODAY)
         local_rows = con.execute(
             """
             SELECT diagnostician_id, exammoreid
             FROM local_assignments
+            WHERE substr(assigned_at, 1, 10) = date('now', 'localtime')
             """
         ).fetchall()
 
-        # 2. Fetch from assignment_log
+        # 2. Fetch from assignment_log (ONLY FOR TODAY)
         log_rows = con.execute(
             """
             SELECT diagnostician_id, exammoreid, extracode, modality as category
@@ -609,17 +611,20 @@ def get_dashboard_data() -> list[dict]:
             """
         ).fetchall()
 
-    # 3. Fetch from mock_slis.db (assigned exams and detail map)
+    # 3. Fetch from mock_slis.db (assigned exams for TODAY only)
     slis_rows = []
     exam_details = {}
     try:
         from diagflow.services.assignment import _get_mock_db
         con_slis = _get_mock_db()
-        cur_slis = con_slis.execute("SELECT exammoreid, extracode, category, diagnostis FROM slis_exams")
+        cur_slis = con_slis.execute("SELECT exammoreid, extracode, category, diagnostis, visitdate FROM slis_exams")
+        today_str = date.today().isoformat()
         for r in cur_slis.fetchall():
             eid = r["exammoreid"]
             exam_details[eid] = (r["extracode"], r["category"])
-            if r["diagnostis"] is not None:
+            vdate = r["visitdate"] if "visitdate" in r.keys() else None
+            # Count towards today's dashboard ONLY if assigned AND the exam visit date is today
+            if r["diagnostis"] is not None and (not vdate or str(vdate)[:10] == today_str):
                 slis_rows.append({"diagnostician_id": r["diagnostis"], "exammoreid": eid, "extracode": r["extracode"], "category": r["category"]})
         con_slis.close()
     except Exception:
