@@ -6,7 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="description" content="DiagFlow — Πίνακας Διαχείρισης">
     <title>DiagFlow — Admin Panel</title>
-    <link rel="icon" type="image/png" href="media/logo_multiple.png">
+    <link rel="icon" type="image/png" href="media/logos/logo_multiple.png">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap"
@@ -29,8 +29,8 @@
                     <span style="font-size: 14px;">←</span> Αρχική
                 </button>
                 <div class="admin-sidebar-logo">
-                    <img src="media/logo_multiple.png" alt="Logo">
-                    <img src="media/textbox.png" alt="DiagFlow">
+                    <img src="media/logos/logo_multiple.png" alt="Logo">
+                    <img src="media/logos/textbox.png" alt="DiagFlow">
                 </div>
                 <div class="admin-sidebar-title">Admin Panel</div>
             </div>
@@ -282,7 +282,8 @@
                             📋 Κατάλογος Εξετάσεων (Exam Dictionary)
                             <input type="text" id="exams-search-input" class="form-input" placeholder="Αναζήτηση με κωδικό ή όνομα..."
                                 style="width: 280px; font-weight: normal; font-size: var(--font-size-sm);"
-                                onkeyup="filterExamsDictionary(this.value)">
+                                onkeyup="filterExamsDictionary(this.value)"
+                                oninput="filterExamsDictionary(this.value)">
                         </div>
                         <p style="color:var(--text-secondary);font-size:var(--font-size-sm);margin-bottom:16px;">
                             Πλήρης λίστα όλων των κωδικών εξετάσεων ταξινομημένων ανά κατηγορία (CT, MRI, MRA) και ανατομική ομάδα.

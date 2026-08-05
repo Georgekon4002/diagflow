@@ -39,6 +39,7 @@ function cleanExamName(raw) {
         .replace(/\(MRI\)/gi, '')
         .replace(/\(CT\)/gi, '')
         .replace(/\(MRA\)/gi, '')
+        .replace(/\b(CT|MRI|MRA)\b/gi, '')
         .replace(/ΜΑΓΝΗΤΙΚΗ\s*/gi, '')
         .replace(/ΑΞΟΝΙΚΗ\s*/gi, '')
         .replace(/ΑΓΓΕΙΟΓΡΑΦΙΑ\s*/gi, '')
@@ -49,14 +50,7 @@ function cleanExamName(raw) {
 
 function formatSimplifiedExamName(name, category, code) {
     const cleaned = cleanExamName(name);
-    let cat = (category || '').toUpperCase().trim();
-    if (!cat) {
-        if (/CT|ΑΞΟΝ/i.test(name)) cat = 'CT';
-        else if (/MRA|ΑΓΓΕΙΟ/i.test(name)) cat = 'MRA';
-        else if (/MRI|ΜΑΓΝΗΤ/i.test(name)) cat = 'MRI';
-        else cat = 'MRI';
-    }
-    return `${cat} ${cleaned || name || code}`.trim();
+    return (cleaned || name || code).trim();
 }
 
 function escapeHtml(str) {
@@ -1254,14 +1248,108 @@ function filterExamsDictionary(query) {
     renderExamsSection();
 }
 
-function groupExamByAnatomicalRegion(name) {
-    const n = (name || '').toUpperCase();
-    if (/ΕΓΚΕΦΑΛ|ΚΡΑΝΙ|ΤΡΑΧΗΛ|ΑΥΧΕΝ|ΣΠΛΑΧΝ/i.test(n)) return { key: 'head', title: '🧠 Εγκέφαλος & Κρανίο' };
-    if (/ΣΠΟΝΔΥΛ|ΟΣΦΥ|ΘΩΡΑΚΙΚΗ ΜΟΙΡΑ|ΜΟΣΣ/i.test(n)) return { key: 'spine', title: '🦴 Σπονδυλική Στήλη' };
-    if (/ΘΩΡΑΚ|ΚΟΙΛΙ|ΗΠΑΤ|ΠΑΓΚΡΕ|ΛΕΚΑΝ|ΜΑΣΤ/i.test(n)) return { key: 'body', title: '🫁 Θώρακας & Κοιλία' };
-    if (/ΓΟΝΑΤ|ΙΣΧΙ|ΩΜ|ΠΟΔΟΚΝΗΜ|ΑΚΡ|ΜΥΟΣΚΕΛ|ΑΡΘΡ|ΧΕΙΡ|ΑΓΚΩΝ/i.test(n)) return { key: 'msk', title: '🦵 Μυοσκελετικό & Αρθρώσεις' };
-    if (/ΑΓΓΕΙΟ|ΑΟΡΤ|ΚΑΡΩΤ|ΦΛΕΒ|ΑΡΤΗΡ|MRA/i.test(n)) return { key: 'vessels', title: '🫀 Αγγεία & Αγγειογραφίες' };
-    return { key: 'other', title: '📋 Λοιπές Εξετάσεις' };
+function groupExamByAnatomicalRegion(name, category, code) {
+    const c = String(code || '').trim();
+    const n = normalizeGreek(name || '');
+    const cat = (category || '').toUpperCase().trim();
+
+    // Specific exam code overrides
+    if (c) {
+        if (cat === 'CT' || /^21/.test(c)) {
+            if (['21641', '21405', '21408'].includes(c)) return { key: 'ct_other', title: '📋 Λοιπές Εξετάσεις', order: 99 };
+            if (['21680', '21602', '21650'].includes(c)) return { key: 'ct_pelvis', title: '🦴 Λεκάνη', order: 13 };
+            if (['21725', '21701'].includes(c)) return { key: 'ct_lower', title: '🦵 Κάτω Άκρα', order: 2, subgroup: { key: 'amfo', title: '(Αμφω)', order: 3 } };
+            if (['21102'].includes(c)) return { key: 'ct_abdomen', title: '🩺 Κοιλία', order: 10 };
+        } else {
+            if (['22056', '22057'].includes(c)) return { key: 'mri_head', title: '👤 Κεφαλή', order: 11 };
+            if (['22201'].includes(c)) return { key: 'mri_chest', title: '🫁 Θώρακας', order: 2 };
+            if (['22506', '22550', '22551', '22525', '22472'].includes(c)) return { key: 'mri_pelvis', title: '🦴 Λεκάνη', order: 12 };
+            if (['22204'].includes(c)) return { key: 'mri_upper', title: '💪 Άνω Άκρα', order: 4, subgroup: { key: 'left', title: '(Αριστερό)', order: 1 } };
+            if (['22709', '22481', '22560', '22705', '22708'].includes(c)) return { key: 'mri_other', title: '📋 Λοιπές Εξετάσεις', order: 99 };
+        }
+    }
+
+    const isRight = /ΔΕΞΙ|ΔΕΞΙΑ|\bΔΕΞ\b/.test(n);
+    const isLeft = /ΑΡΙΣΤΕΡ|ΑΡΙΣΤΕΡΑ|\bΑΡΙ\b|\bΑΡ\b/.test(n);
+    const isBilateral = /ΑΜΦΩ|ΑΜΦΟΤΕΡ|ΑΜΦ|\bΑΚΡΩΝ\b|\bΑΚΡΑ\b/.test(n);
+
+    if (cat === 'CT') {
+        if (/ΑΓΓΕΙΟΓΡΑΦ|ΑΞΑ\b/.test(n)) {
+            return { key: 'ct_angio', title: '🩸 Αγγειογραφίες', order: 11 };
+        }
+        if (/ΚΑΡΔΙ|ΑΟΡΤ|CALCIUM SCORE|ΣΤΕΦΑΝΙΟ|ΦΛΕΒΟΓΡΑΦΙ|TAVI/.test(n)) {
+            return { key: 'ct_cardiac', title: '🫀 Καρδιά & Αγγεία', order: 12 };
+        }
+        if (/Σ\.?Σ\.?|ΣΠΟΝΔΥΛ|ΑΥΧΕΝΙΚ|ΘΩΡΑΚΙΚ|ΟΣΦΥ|ΙΕΡΟΚΟΚΚΥΓ|ΑΜΣΣ|ΘΜΣΣ|ΘΟΜΣΣ|ΟΜΣΣ|ΟΙΜΣΣ|ΙΚΜΣΣ/.test(n)) {
+            return { key: 'ct_spine', title: '🦴 Σπονδυλική Στήλη', order: 9 };
+        }
+        if (/ΩΜ|ΩΜΟΠΛΑΤ|ΜΑΣΧΑΛ|ΒΡΑΧΙΟΝ|ΑΝΤΙΒΡΑΧ|ΑΓΚΩΝ|ΠΗΧΕΟΚΑΡΠ|ΚΑΡΠ|ΑΚΡ.*ΧΕΙΡ|ΣΚΑΦΟΕΙΔ/.test(n)) {
+            let sub = { key: 'left', title: '(Αριστερό)', order: 1 };
+            if (isBilateral || /ΚΑΤ' ΩΜΩΝ/.test(n)) sub = { key: 'amfo', title: '(Αμφω)', order: 3 };
+            else if (isRight) sub = { key: 'right', title: '(Δεξί)', order: 2 };
+            return { key: 'ct_upper', title: '💪 Άνω Άκρα', order: 1, subgroup: sub };
+        }
+        if (/ΜΗΡ|ΓΟΝΑΤ|ΚΝΗΜ|ΠΟΔΟΚΝΗΜ|ΠΔΚΝΜ|ΑΚΡ.*ΠΟΔ|ΑΧΙΛΛ|ΤΑΡΣ|ΠΤΕΡΝ|ΓΛΟΥΤ|ΙΓΝΥΑΚ/.test(n)) {
+            let sub = { key: 'left', title: '(Αριστερό)', order: 1 };
+            if (isBilateral || /ΚΑΤΩ ΑΚΡΩΝ/.test(n)) sub = { key: 'amfo', title: '(Αμφω)', order: 3 };
+            else if (isRight) sub = { key: 'right', title: '(Δεξί)', order: 2 };
+            return { key: 'ct_lower', title: '🦵 Κάτω Άκρα', order: 2, subgroup: sub };
+        }
+        if (/ΘΩΡΑΚ|ΥΠΕΡΚΛΕΙΔ|ΣΤΕΡΝΟΚΛΕΙΔ|ΜΑΣΤΟΕΙΔ|ΜΑΣΤ/.test(n)) {
+            return { key: 'ct_chest', title: '🫁 Θώρακας', order: 8 };
+        }
+        if (/ΕΓΚΕΦΑΛ|ΥΠΟΦΥΣ|ΓΕΦΥΡΟΠΑΡΕΓΚΕΦΑΛ|ΠΡΟΣΩΠ|ΟΦΘΑΛΜ|ΕΣΩ ΑΚΟΥΣΤ|ΛΙΘΟΕΙΔ|ΠΑΡΑΡΡΙΝ|ΣΠΛΑΓΧΝ|ΡΙΝΟΦΑΡΥΓΓ|ΙΓΜΟΡΕΙ|ΥΠΟΓΝΑΘ|ΓΝΑΘ|ΠΑΡΩΤΙΔ|ΤΡΑΧΗΛ|ΚΡΑΝΙ|ΚΡΟΤΑΦΟΓΝΑΘ|ΟΔΟΝΤ|CB\/CT/.test(n)) {
+            return { key: 'ct_head', title: '🧠 Κεφαλή', order: 7 };
+        }
+        if (/ΚΟΙΛΙ|ΟΠΙΣΘΟΠΕΡΙΤ|ΠΥΕΛΟΓΡΑΦΙ|ΟΥΡΟΓΡΑΦΙ|ΚΟΛΟΝΟΣΚΟΠΗΣ|ΝΕΦΡ|ΕΠΙΝΕΦΡ|ΗΠΑΤ/.test(n)) {
+            return { key: 'ct_abdomen', title: '🩺 Κοιλία', order: 10 };
+        }
+        if (/ΛΕΚΑΝ|ΙΣΧΙ|ΤΟΥΡΚΙΚ|ΕΦΙΠΠΙ|ΛΑΓΟΝΙ|ΙΕΡΟΛΑΓΟΝ|ΕΛΑΣΣΟΝ|ΟΣΧΕ|ΒΟΥΒΩΝ|ΠΥΕΛ|FULL BODY/.test(n)) {
+            return { key: 'ct_pelvis', title: '🦴 Λεκάνη', order: 13 };
+        }
+        return { key: 'ct_other', title: '📋 Λοιπές Εξετάσεις', order: 99 };
+    } else {
+        if (cat === 'MRA' || /MRA|ΑΓΓΕΙΟΓΡΑΦ|MRCP|ΧΟΛΑΓΓΕΙΟ/.test(n)) {
+            return { key: 'mri_angio', title: '🩸 Αγγειογραφίες', order: 13 };
+        }
+        if (/ΑΡΘΡΟΓΡΑΦΙ|ΕΝΤΕΡΟΓΡΑΦΙ|ΠΡΟΣΤΑΤ|ΦΑΣΜΑΤΟΣΚΟΠΙΑ|ΑΓΓΕΙAΚΟΥ ΤΟΙΧΩΜΑΤΟΣ|PERFUSION|ΑΙΜΑΤΩΣΗ|ΦΛΕΒΟΓΡΑΦΙΑ|ΝΕΥΡΟΓΡΑΦΙΑ|ΔΕΣΜΙΔΟΓΡΑΦΙΑ|WHOLE BODY/.test(n)) {
+            return { key: 'mri_special', title: '✨ Αρθρογραφίες & Ειδικές', order: 14 };
+        }
+        if (/Σ\.?Σ\.?|ΣΠΟΝΔΥΛ|ΑΜΣΣ|ΘΜΣΣ|ΑΘΜΣΣ|ΘΟΜΣΣ|ΟΜΣΣ|ΟΙΜΣΣ|ΙΜΣΣ|ΙΚΜΣΣ|ΘΟΙΜΣΣ|ΜΟΙΡΑΣ/.test(n)) {
+            return { key: 'mri_spine', title: '🦴 Σπονδυλική Στήλη', order: 3 };
+        }
+        if (/ΕΓΚΕΦΑΛ|ΥΠΟΦΥΣ|ΓΕΦΥΡΟΠΑΡΕΓΚΕΦΑΛ/.test(n)) {
+            return { key: 'mri_brain', title: '🧠 Εγκέφαλος', order: 1 };
+        }
+        if (/ΑΟΡΤ|ΜΑΣΤ|ΚΑΡΔΙ/.test(n)) {
+            return { key: 'mri_aorta_breast', title: '🫀 Αορτή - Μαστοί', order: 9 };
+        }
+        if (/ΩΜ|ΩΜΟΠΛΑΤ|ΜΑΣΧΑΛ|ΒΡΑΧΙΟΝ|ΑΝΤΙΒΡΑΧ|ΑΓΚΩΝ|ΠΗΧΕΟΚΑΡΠ|ΚΑΡΠ|ΑΚΡ.*ΧΕΙΡ|ΑΚΡ.*ΧΕΡ/.test(n)) {
+            let sub = { key: 'left', title: '(Αριστερό)', order: 1 };
+            if (isBilateral) sub = { key: 'amfo', title: '(Αμφω)', order: 3 };
+            else if (isRight) sub = { key: 'right', title: '(Δεξί)', order: 2 };
+            return { key: 'mri_upper', title: '💪 Άνω Άκρα', order: 4, subgroup: sub };
+        }
+        if (/ΓΛΟΥΤ|ΜΗΡ|ΓΟΝΑΤ|ΚΝΗΜ|ΓΑΣΤΡΟΚΝΗΜ|ΠΟΔΟΚΝΗΜ|ΠΔΚΝΜ|ΤΑΡΣ|ΑΧΙΛΛ|ΑΚΡ.*ΠΟΔ/.test(n)) {
+            let sub = { key: 'left', title: '(Αριστερό)', order: 1 };
+            if (isBilateral || /ΓΛΟΥΤΩΝ/.test(n)) sub = { key: 'amfo', title: '(Αμφω)', order: 3 };
+            else if (isRight) sub = { key: 'right', title: '(Δεξί)', order: 2 };
+            return { key: 'mri_lower', title: '🦵 Κάτω Άκρα', order: 5, subgroup: sub };
+        }
+        if (/ΘΩΡΑΚ|ΜΕΣΟΘΩΡΑΚ|ΗΜΙΘΩΡΑΚ|ΣΤΕΡΝ|ΥΠΟΚΛΕΙΔ|ΥΠΕΡΚΛΕΙΔ|ΡΑΧΕΩΣ/.test(n)) {
+            return { key: 'mri_chest', title: '🫁 Θώρακας', order: 2 };
+        }
+        if (/ΠΑΡΩΤΙΔ|ΕΣΩ ΑΚΟΥΣΤ|ΛΙΘΟΕΙΔ|ΣΦΗΝΟΕΙΔ|ΡΙΝΟΦΑΡΥΓΓ|ΤΡΑΧΗΛ|ΓΝΑΘ|ΚΡΑΝΙ|ΣΠΛΑΓΧΝ|ΟΦΘΑΛΜ/.test(n)) {
+            return { key: 'mri_head', title: '👤 Κεφαλή', order: 11 };
+        }
+        if (/ΚΟΙΛΙ|ΗΠΑΤ|ΠΑΓΚΡΕΑΤ|ΝΕΦΡ|ΕΠΙΝΕΦΡ|ΟΠΙΣΘΟΠΕΡΙΤ|ΠΡΟΣΑΓΩΓ|ΟΡΘΟ|ΠΡΩΚΤ|ΟΣΧΕ|ΠΥΕΛΟΓΡΑΦΙ|ΟΥΡΕΟΓΡΑΦΙ/.test(n)) {
+            return { key: 'mri_abdomen', title: '🩺 Κοιλία', order: 10 };
+        }
+        if (/ΛΕΚΑΝ|ΙΣΧΙ|ΙΕΡΟΥ ΟΣΤΟΥ|ΚΟΚΚΥΓ|ΙΕΡΟΛΑΓΟΝ|ΤΟΥΡΚΙΚ|ΕΦΙΠΠΙ|ΣΥΡΙΓΓΙ|ΕΛΑΣΣΟΝ|ΚΡΟΤΑΦΟΓΝΑΘ|ΜΥΕΛΟΓΡΑΦΙΑ|ΠΕΡΙΝΕΟΥ/.test(n)) {
+            return { key: 'mri_pelvis', title: '🦴 Λεκάνη', order: 12 };
+        }
+        return { key: 'mri_other', title: '📋 Λοιπές Εξετάσεις', order: 99 };
+    }
 }
 
 function toggleExamsGroup(groupId) {
@@ -1283,6 +1371,65 @@ function toggleExamSelection(code) {
     } else {
         selectedExamCodes.add(code);
     }
+    updateExamsGroupCheckboxState();
+    updateExamsFloatingBar();
+}
+
+function toggleSelectAllModalityExams(event, modKey) {
+    event.stopPropagation();
+    const modCheckbox = document.getElementById('chk-modality-' + modKey);
+    const isChecked = modCheckbox ? modCheckbox.checked : false;
+
+    const modExams = (RAW_EXAM_CATEGORIES || []).filter(ex => {
+        let cat = (ex.category || '').toUpperCase().trim();
+        if (!cat) {
+            if (/CT|ΑΞΟΝ/i.test(ex.name)) cat = 'CT';
+            else if (/MRA|ΑΓΓΕΙΟ/i.test(ex.name)) cat = 'MRA';
+            else if (/MRI|ΜΑΓΝΗΤ/i.test(ex.name)) cat = 'MRI';
+            else cat = 'OTHER';
+        }
+        return cat === modKey;
+    });
+
+    modExams.forEach(ex => {
+        const code = String(ex.code || ex.examnumcode || ex.exam_code || '');
+        if (isChecked) {
+            selectedExamCodes.add(code);
+        } else {
+            selectedExamCodes.delete(code);
+        }
+    });
+
+    const examCheckboxes = document.querySelectorAll('.exam-select-checkbox');
+    examCheckboxes.forEach(chk => {
+        const code = chk.value;
+        if (selectedExamCodes.has(code)) {
+            chk.checked = true;
+        } else {
+            chk.checked = false;
+        }
+    });
+
+    updateExamsGroupCheckboxState();
+    updateExamsFloatingBar();
+}
+
+function toggleSelectAllSubgroupExams(event, groupId, subgroupId) {
+    event.stopPropagation();
+    const subCheckbox = document.getElementById('chk-subgroup-' + subgroupId);
+    const isChecked = subCheckbox ? subCheckbox.checked : false;
+
+    const checkboxes = document.querySelectorAll('.exam-chk-subgroup-' + subgroupId);
+    checkboxes.forEach(chk => {
+        const code = chk.value;
+        chk.checked = isChecked;
+        if (isChecked) {
+            selectedExamCodes.add(code);
+        } else {
+            selectedExamCodes.delete(code);
+        }
+    });
+
     updateExamsGroupCheckboxState();
     updateExamsFloatingBar();
 }
@@ -1312,6 +1459,17 @@ function toggleSelectAllGroupExams(event, groupId) {
 }
 
 function updateExamsGroupCheckboxState() {
+    const subgroupCheckboxes = document.querySelectorAll('.subgroup-select-checkbox');
+    subgroupCheckboxes.forEach(subChk => {
+        const subgroupId = subChk.dataset.subgroupId;
+        const examCheckboxes = document.querySelectorAll('.exam-chk-subgroup-' + subgroupId);
+        if (examCheckboxes.length === 0) return;
+        const allChecked = Array.from(examCheckboxes).every(c => c.checked);
+        const someChecked = Array.from(examCheckboxes).some(c => c.checked);
+        subChk.checked = allChecked;
+        subChk.indeterminate = !allChecked && someChecked;
+    });
+
     const groupCheckboxes = document.querySelectorAll('.group-select-checkbox');
     groupCheckboxes.forEach(groupChk => {
         const groupId = groupChk.dataset.groupId;
@@ -1328,14 +1486,48 @@ function updateExamsGroupCheckboxState() {
             headerChk.indeterminate = !allChecked && someChecked;
         }
     });
+
+    const modalityCheckboxes = document.querySelectorAll('.modality-select-checkbox');
+    modalityCheckboxes.forEach(modChk => {
+        const modKey = modChk.dataset.modality;
+        const modExams = (RAW_EXAM_CATEGORIES || []).filter(ex => {
+            let cat = (ex.category || '').toUpperCase().trim();
+            if (!cat) {
+                if (/CT|ΑΞΟΝ/i.test(ex.name)) cat = 'CT';
+                else if (/MRA|ΑΓΓΕΙΟ/i.test(ex.name)) cat = 'MRA';
+                else if (/MRI|ΜΑΓΝΗΤ/i.test(ex.name)) cat = 'MRI';
+                else cat = 'OTHER';
+            }
+            return cat === modKey;
+        });
+
+        if (modExams.length === 0) return;
+
+        const modCodes = modExams.map(ex => String(ex.code || ex.examnumcode || ex.exam_code || ''));
+        const allChecked = modCodes.length > 0 && modCodes.every(c => selectedExamCodes.has(c));
+        const someChecked = modCodes.some(c => selectedExamCodes.has(c));
+
+        modChk.checked = allChecked;
+        modChk.indeterminate = !allChecked && someChecked;
+    });
 }
 
 function clearExamsSelection() {
     selectedExamCodes.clear();
     const examCheckboxes = document.querySelectorAll('.exam-select-checkbox');
     examCheckboxes.forEach(c => c.checked = false);
+    const subgroupCheckboxes = document.querySelectorAll('.subgroup-select-checkbox');
+    subgroupCheckboxes.forEach(c => {
+        c.checked = false;
+        c.indeterminate = false;
+    });
     const groupCheckboxes = document.querySelectorAll('.group-select-checkbox');
     groupCheckboxes.forEach(c => {
+        c.checked = false;
+        c.indeterminate = false;
+    });
+    const modalityCheckboxes = document.querySelectorAll('.modality-select-checkbox');
+    modalityCheckboxes.forEach(c => {
         c.checked = false;
         c.indeterminate = false;
     });
@@ -1498,10 +1690,13 @@ async function renderExamsSection() {
 
     let filtered = RAW_EXAM_CATEGORIES;
     if (examsSearchQuery) {
+        const rawQuery = examsSearchQuery.toLowerCase().trim();
+        const normQuery = normalizeGreek(examsSearchQuery);
         filtered = RAW_EXAM_CATEGORIES.filter(ex => {
-            const code = String(ex.examnumcode || '');
+            const code = String(ex.code || ex.examnumcode || ex.exam_code || ex.id || '').toLowerCase().trim();
             const name = (ex.name || '').toLowerCase();
-            return code.includes(examsSearchQuery) || name.includes(examsSearchQuery);
+            const normName = normalizeGreek(ex.name || '');
+            return code.includes(rawQuery) || name.includes(rawQuery) || normName.includes(normQuery);
         });
     }
 
@@ -1536,29 +1731,61 @@ async function renderExamsSection() {
     for (const [modKey, examsList] of Object.entries(modalityGroups)) {
         if (examsList.length === 0) continue;
 
+        const modCodes = examsList.map(e => String(e.code || e.examnumcode || e.exam_code || ''));
+        const allModChecked = modCodes.length > 0 && modCodes.every(c => selectedExamCodes.has(c));
+
         const anatGroups = {};
         examsList.forEach(ex => {
-            const region = groupExamByAnatomicalRegion(ex.name);
+            const exCode = String(ex.code || ex.examnumcode || ex.exam_code || ex.id || '');
+            const region = groupExamByAnatomicalRegion(ex.name, modKey, exCode);
             if (!anatGroups[region.key]) {
-                anatGroups[region.key] = { title: region.title, exams: [] };
+                anatGroups[region.key] = {
+                    title: region.title,
+                    order: region.order,
+                    hasSubgroups: Boolean(region.subgroup),
+                    subgroups: {},
+                    exams: []
+                };
             }
-            anatGroups[region.key].exams.push(ex);
+            if (region.subgroup) {
+                const subKey = region.subgroup.key;
+                if (!anatGroups[region.key].subgroups[subKey]) {
+                    anatGroups[region.key].subgroups[subKey] = {
+                        title: region.subgroup.title,
+                        order: region.subgroup.order,
+                        exams: []
+                    };
+                }
+                anatGroups[region.key].subgroups[subKey].exams.push(ex);
+            } else {
+                anatGroups[region.key].exams.push(ex);
+            }
         });
+
+        const sortedAnatEntries = Object.entries(anatGroups).sort((a, b) => a[1].order - b[1].order);
 
         html += `
             <div style="margin-bottom: 28px; border: 1px solid var(--border-color); border-radius: 8px; overflow: hidden; background: var(--bg-primary);">
                 <div style="background: var(--surface-color); padding: 12px 16px; font-weight: 700; font-size: 15px; border-bottom: 1px solid var(--border-color); color: var(--accent-primary); display: flex; justify-content: space-between; align-items: center;">
-                    <span>${catLabels[modKey] || modKey}</span>
+                    <div style="display: flex; align-items: center; gap: 10px;">
+                        <input type="checkbox" id="chk-modality-${modKey}" class="modality-select-checkbox" data-modality="${modKey}" ${allModChecked ? 'checked' : ''} onclick="toggleSelectAllModalityExams(event, '${modKey}')" title="Επιλογή όλων στις ${catLabels[modKey] || modKey}" style="accent-color:var(--accent-primary); width:18px; height:18px; cursor:pointer;">
+                        <span>${catLabels[modKey] || modKey}</span>
+                    </div>
                     <span style="font-size: 12px; background: var(--bg-tertiary); padding: 2px 8px; border-radius: 12px; font-weight: 600; color: var(--text-secondary);">${examsList.length} εξετάσεις</span>
                 </div>
                 <div style="padding: 12px 16px;">
         `;
 
-        for (const [key, anat] of Object.entries(anatGroups)) {
+        for (const [key, anat] of sortedAnatEntries) {
             const groupId = `${modKey}_${key}`;
-            const groupExamsCodes = anat.exams.map(e => String(e.code || e.examnumcode || e.exam_code || ''));
+            let groupExamsCodes = [];
+            if (anat.hasSubgroups) {
+                groupExamsCodes = Object.values(anat.subgroups).flatMap(sg => sg.exams.map(e => String(e.code || e.examnumcode || e.exam_code || '')));
+            } else {
+                groupExamsCodes = anat.exams.map(e => String(e.code || e.examnumcode || e.exam_code || ''));
+            }
+            const totalCount = groupExamsCodes.length;
             const allChecked = groupExamsCodes.length > 0 && groupExamsCodes.every(c => selectedExamCodes.has(c));
-            const someChecked = groupExamsCodes.some(c => selectedExamCodes.has(c));
 
             html += `
                 <div style="margin-bottom: 16px; border: 1px solid var(--border-color); border-radius: 6px; overflow: hidden;">
@@ -1568,52 +1795,113 @@ async function renderExamsSection() {
                             <span id="exams-group-icon-${groupId}" style="display:inline-block; width:16px; transition:transform 0.2s; ${isAutoExpanded ? 'transform:rotate(90deg);' : ''}">▶</span>
                             <input type="checkbox" id="chk-group-${groupId}" class="group-select-checkbox" data-group-id="${groupId}" ${allChecked ? 'checked' : ''} onclick="toggleSelectAllGroupExams(event, '${groupId}')" title="Επιλογή όλων στην ομάδα" style="accent-color:var(--accent-primary); width:16px; height:16px; cursor:pointer;">
                             <span>${anat.title}</span> 
-                            <span style="font-weight:normal; font-size:12px; color:var(--text-tertiary);">(${anat.exams.length})</span>
+                            <span style="font-weight:normal; font-size:12px; color:var(--text-tertiary);">(${totalCount})</span>
                         </div>
-                        <span style="font-size:11px; color:var(--text-tertiary); font-weight:normal;">Κάντε κλικ για ανάπτυξη/σύμπτυξη</span>
                     </div>
                     <div id="exams-group-body-${groupId}" style="display: ${isAutoExpanded ? 'block' : 'none'}; padding: 8px 14px 14px 14px; background: var(--bg-primary); border-top: 1px solid var(--border-color);">
-                        <table class="admin-table" style="font-size: 13px; margin: 0;">
-                            <thead>
-                                <tr>
-                                    <th style="width: 40px; text-align: center;">
-                                        <input type="checkbox" id="chk-tbl-header-${groupId}" ${allChecked ? 'checked' : ''} onclick="toggleSelectAllGroupExams(event, '${groupId}')" style="accent-color:var(--accent-primary); width:15px; height:15px; cursor:pointer;" title="Επιλογή όλων στην ομάδα">
-                                    </th>
-                                    <th style="width: 110px;">Κωδικός</th>
-                                    <th>Ονομασία Εξέτασης (Πλήρης & Απλοποιημένη)</th>
-                                    <th style="width: 100px; text-align: center;">Κατηγορία</th>
-                                </tr>
-                            </thead>
-                            <tbody>
             `;
 
-            anat.exams.forEach(ex => {
-                const code = String(ex.code || ex.examnumcode || ex.exam_code || '');
-                const fullName = ex.name || '—';
-                const simplified = formatSimplifiedExamName(fullName, modKey, code);
-                const catClass = (modKey || '').toLowerCase();
-                const isChecked = selectedExamCodes.has(code);
+            if (anat.hasSubgroups) {
+                const sortedSubgroups = Object.entries(anat.subgroups).sort((a, b) => a[1].order - b[1].order);
+                for (const [subKey, sg] of sortedSubgroups) {
+                    const subgroupId = `${groupId}_sub_${subKey}`;
+                    const subExamsCodes = sg.exams.map(e => String(e.code || e.examnumcode || e.exam_code || ''));
+                    const allSubChecked = subExamsCodes.length > 0 && subExamsCodes.every(c => selectedExamCodes.has(c));
+
+                    html += `
+                        <div style="margin-top: 10px; margin-bottom: 14px; border: 1px solid var(--border-color); border-radius: 6px; overflow: hidden;">
+                            <div style="background: var(--bg-tertiary); padding: 8px 12px; display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 13px; color: var(--text-primary); border-bottom: 1px solid var(--border-color);">
+                                <input type="checkbox" id="chk-subgroup-${subgroupId}" class="subgroup-select-checkbox" data-subgroup-id="${subgroupId}" ${allSubChecked ? 'checked' : ''} onclick="toggleSelectAllSubgroupExams(event, '${groupId}', '${subgroupId}')" title="Επιλογή όλων στην υποομάδα ${sg.title}" style="accent-color:var(--accent-primary); width:15px; height:15px; cursor:pointer;">
+                                <span>${sg.title}</span>
+                                <span style="font-size: 11px; font-weight: normal; color: var(--text-tertiary);">(${sg.exams.length})</span>
+                            </div>
+                            <table class="admin-table" style="font-size: 13px; margin: 0;">
+                                <thead>
+                                    <tr>
+                                        <th style="width: 40px; text-align: center;"></th>
+                                        <th style="width: 110px;">ΚΩΔΙΚΟΣ</th>
+                                        <th>ΟΝΟΜΑ ΕΞΕΤΑΣΗΣ</th>
+                                        <th style="width: 100px; text-align: center;">ΚΑΤΗΓΟΡΙA</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                    `;
+
+                    sg.exams.forEach(ex => {
+                        const code = String(ex.code || ex.examnumcode || ex.exam_code || '');
+                        const fullName = ex.name || '—';
+                        const simplified = formatSimplifiedExamName(fullName, modKey, code);
+                        const catClass = (modKey || '').toLowerCase();
+                        const isChecked = selectedExamCodes.has(code);
+
+                        html += `
+                            <tr>
+                                <td style="text-align: center;">
+                                    <input type="checkbox" class="exam-select-checkbox exam-chk-group-${groupId} exam-chk-subgroup-${subgroupId}" value="${code}" ${isChecked ? 'checked' : ''} onchange="toggleExamSelection('${code}')" style="accent-color:var(--accent-primary); width:15px; height:15px; cursor:pointer;">
+                                </td>
+                                <td style="font-family: monospace; font-weight: 700; color: #8122FF; font-size: 13px;">${escapeHtml(code)}</td>
+                                <td>
+                                    <div style="font-weight: 600; color: var(--text-primary);">${escapeHtml(simplified)}</div>
+                                    <div style="font-size: 11px; color: var(--text-tertiary);">${escapeHtml(fullName)}</div>
+                                </td>
+                                <td style="text-align: center;">
+                                    <span class="modality-badge ${catClass}">${escapeHtml(modKey)}</span>
+                                </td>
+                            </tr>
+                        `;
+                    });
+
+                    html += `
+                                </tbody>
+                            </table>
+                        </div>
+                    `;
+                }
+            } else {
+                html += `
+                    <table class="admin-table" style="font-size: 13px; margin: 0;">
+                        <thead>
+                            <tr>
+                                <th style="width: 40px; text-align: center;"></th>
+                                <th style="width: 110px;">ΚΩΔΙΚΟΣ</th>
+                                <th>ΟΝΟΜΑ ΕΞΕΤΑΣΗΣ</th>
+                                <th style="width: 100px; text-align: center;">ΚΑΤΗΓΟΡΙA</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                `;
+
+                anat.exams.forEach(ex => {
+                    const code = String(ex.code || ex.examnumcode || ex.exam_code || '');
+                    const fullName = ex.name || '—';
+                    const simplified = formatSimplifiedExamName(fullName, modKey, code);
+                    const catClass = (modKey || '').toLowerCase();
+                    const isChecked = selectedExamCodes.has(code);
+
+                    html += `
+                        <tr>
+                            <td style="text-align: center;">
+                                <input type="checkbox" class="exam-select-checkbox exam-chk-group-${groupId}" value="${code}" ${isChecked ? 'checked' : ''} onchange="toggleExamSelection('${code}')" style="accent-color:var(--accent-primary); width:15px; height:15px; cursor:pointer;">
+                            </td>
+                            <td style="font-family: monospace; font-weight: 700; color: #8122FF; font-size: 13px;">${escapeHtml(code)}</td>
+                            <td>
+                                <div style="font-weight: 600; color: var(--text-primary);">${escapeHtml(simplified)}</div>
+                                <div style="font-size: 11px; color: var(--text-tertiary);">${escapeHtml(fullName)}</div>
+                            </td>
+                            <td style="text-align: center;">
+                                <span class="modality-badge ${catClass}">${escapeHtml(modKey)}</span>
+                            </td>
+                        </tr>
+                    `;
+                });
 
                 html += `
-                    <tr>
-                        <td style="text-align: center;">
-                            <input type="checkbox" class="exam-select-checkbox exam-chk-group-${groupId}" value="${code}" ${isChecked ? 'checked' : ''} onchange="toggleExamSelection('${code}')" style="accent-color:var(--accent-primary); width:15px; height:15px; cursor:pointer;">
-                        </td>
-                        <td style="font-family: monospace; font-weight: 700; color: #8122FF; font-size: 13px;">${escapeHtml(code)}</td>
-                        <td>
-                            <div style="font-weight: 600; color: var(--text-primary);">${escapeHtml(simplified)}</div>
-                            <div style="font-size: 11px; color: var(--text-tertiary);">${escapeHtml(fullName)}</div>
-                        </td>
-                        <td style="text-align: center;">
-                            <span class="modality-badge ${catClass}">${escapeHtml(modKey)}</span>
-                        </td>
-                    </tr>
+                        </tbody>
+                    </table>
                 `;
-            });
+            }
 
             html += `
-                            </tbody>
-                        </table>
                     </div>
                 </div>
             `;

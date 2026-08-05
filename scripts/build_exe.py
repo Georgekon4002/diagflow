@@ -47,7 +47,7 @@ def build():
         "--onefile",
         "--noconsole",               # No terminal window — desktop app feel
         "--name", "DiagFlow",
-        "--icon", str(ROOT / "media" / "logo.ico"),  # Use .ico format for Windows EXE
+        "--icon", str(ROOT / "media" / "logos" / "logo.ico"),  # Use .ico format for Windows EXE
         # Include the frontend directory as bundled data
         "--add-data", f"{FRONTEND};frontend",
         # Include the src package
@@ -89,6 +89,10 @@ def build():
         "--hidden-import", "apscheduler",
         "--hidden-import", "apscheduler.schedulers.asyncio",
         "--hidden-import", "webview",
+        "--hidden-import", "webview.platforms.winforms",
+        "--hidden-import", "webview.platforms.edgechromium",
+        "--hidden-import", "webview.platforms.win32",
+        "--hidden-import", "webview.platforms.mshtml",
         "--hidden-import", "pyodbc",
         "--hidden-import", "sqlalchemy.dialects.mssql",
         "--hidden-import", "bcrypt",

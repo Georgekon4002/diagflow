@@ -31,28 +31,26 @@ else:
 _DB_PATH = _PROJECT_ROOT / "db" / "diagflow.db"
 
 
-_schema_initialized = False
+_last_db_mtime = 0.0
 
 
-@contextmanager
-def _conn() -> Generator[sqlite3.Connection, None, None]:
-    global _schema_initialized
-    _DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    con = sqlite3.connect(_DB_PATH, timeout=10.0)
-    con.row_factory = sqlite3.Row
-    con.execute("PRAGMA journal_mode = WAL")
-    con.execute("PRAGMA foreign_keys = ON")
-    con.execute("PRAGMA busy_timeout = 5000")
-    if not _schema_initialized:
-        try:
-            cols = [row[1] for row in con.execute("PRAGMA table_info(local_assignments)").fetchall()]
-            if cols and "extracode" not in cols:
-                con.execute("ALTER TABLE local_assignments ADD COLUMN extracode TEXT DEFAULT NULL")
-            con.execute(
-                "CREATE TABLE IF NOT EXISTS exam_dictionary ("
-                "code TEXT PRIMARY KEY, name TEXT NOT NULL, category TEXT)"
-            )
-            # Remove any duplicate diagnostician_skills entries and ensure unique index
+def _ensure_schema(con: sqlite3.Connection) -> None:
+    try:
+        cols = [row[1] for row in con.execute("PRAGMA table_info(local_assignments)").fetchall()]
+        if cols and "extracode" not in cols:
+            con.execute("ALTER TABLE local_assignments ADD COLUMN extracode TEXT DEFAULT NULL")
+        
+        log_cols = [row[1] for row in con.execute("PRAGMA table_info(assignment_log)").fetchall()]
+        if log_cols and "extracode" not in log_cols:
+            con.execute("ALTER TABLE assignment_log ADD COLUMN extracode TEXT DEFAULT NULL")
+        if log_cols and "modality" not in log_cols:
+            con.execute("ALTER TABLE assignment_log ADD COLUMN modality TEXT DEFAULT NULL")
+
+        con.execute(
+            "CREATE TABLE IF NOT EXISTS exam_dictionary ("
+            "code TEXT PRIMARY KEY, name TEXT NOT NULL, category TEXT)"
+        )
+        if con.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='diagnostician_skills'").fetchone():
             con.execute(
                 "DELETE FROM diagnostician_skills WHERE rowid NOT IN ("
                 "SELECT MIN(rowid) FROM diagnostician_skills GROUP BY diagnostician_id, exam_code)"
@@ -60,10 +58,26 @@ def _conn() -> Generator[sqlite3.Connection, None, None]:
             con.execute(
                 "CREATE UNIQUE INDEX IF NOT EXISTS idx_skills_diag_code ON diagnostician_skills(diagnostician_id, exam_code)"
             )
-            con.commit()
-            _schema_initialized = True
-        except Exception:
-            pass
+        con.commit()
+    except Exception:
+        pass
+
+
+@contextmanager
+def _conn() -> Generator[sqlite3.Connection, None, None]:
+    global _last_db_mtime
+    _DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    con = sqlite3.connect(_DB_PATH, timeout=10.0)
+    con.row_factory = sqlite3.Row
+    con.execute("PRAGMA journal_mode = WAL")
+    con.execute("PRAGMA foreign_keys = ON")
+    con.execute("PRAGMA busy_timeout = 5000")
+    
+    current_mtime = _DB_PATH.stat().st_mtime if _DB_PATH.exists() else 0.0
+    if current_mtime != _last_db_mtime:
+        _ensure_schema(con)
+        _last_db_mtime = current_mtime
+
     try:
         yield con
         con.commit()

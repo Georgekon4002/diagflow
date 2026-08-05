@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="media/full_logo_multiple.png" alt="DiagFlow Logo" width="300" />
+  <img src="media/logos/full_logo_multiple.png" alt="DiagFlow Logo" width="300" />
 </div>
 
 # 📘 DiagFlow — Οδηγός Χρήστη
@@ -406,11 +406,11 @@
 ---
 
 <div align="center">
-  <img src="media/logo_multiple.png" alt="DiagFlow Logo" height="50" />
+  <img src="media/logos/logo_multiple.png" alt="DiagFlow Logo" height="50" />
   &nbsp;&nbsp;&nbsp;&nbsp;
-  <img src="media/textbox.png" alt="DiagFlow Textbox" height="50" />
+  <img src="media/logos/textbox.png" alt="DiagFlow Textbox" height="50" />
   &nbsp;&nbsp;&nbsp;&nbsp;
-  <img src="media/logo_transparent_crop.png" alt="DiagFlow Transparent Logo" height="50" />
+  <img src="media/logos/logo_transparent_crop.png" alt="DiagFlow Transparent Logo" height="50" />
 </div>
 
 ---

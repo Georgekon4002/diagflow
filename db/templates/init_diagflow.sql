@@ -24,12 +24,12 @@ CREATE TABLE availability (
     notes                   TEXT,
     UNIQUE(diagnostician_id, date)
 );
-INSERT INTO "availability" VALUES(1,1,'2026-08-03','available',0,NULL);
-INSERT INTO "availability" VALUES(2,2,'2026-08-03','available',1,'Εφημερία Παμμακάριστος');
-INSERT INTO "availability" VALUES(3,3,'2026-08-03','available',0,NULL);
-INSERT INTO "availability" VALUES(4,4,'2026-08-03','absent',0,'Άδεια');
-INSERT INTO "availability" VALUES(5,5,'2026-08-03','available',0,NULL);
-INSERT INTO "availability" VALUES(6,6,'2026-08-03','available',0,NULL);
+INSERT INTO "availability" VALUES(1,1,'2026-08-05','available',0,NULL);
+INSERT INTO "availability" VALUES(2,2,'2026-08-05','available',1,'Εφημερία Παμμακάριστος');
+INSERT INTO "availability" VALUES(3,3,'2026-08-05','available',0,NULL);
+INSERT INTO "availability" VALUES(4,4,'2026-08-05','absent',0,'Άδεια');
+INSERT INTO "availability" VALUES(5,5,'2026-08-05','available',0,NULL);
+INSERT INTO "availability" VALUES(6,6,'2026-08-05','available',0,NULL);
 CREATE TABLE diagnostician_skills (
     id                INTEGER PRIMARY KEY AUTOINCREMENT,
     diagnostician_id  INTEGER NOT NULL REFERENCES diagnosticians(id) ON DELETE CASCADE,
@@ -68,12 +68,12 @@ CREATE TABLE diagnosticians (
     preferred_lab_id INTEGER DEFAULT NULL,
     created_at       TEXT    DEFAULT (datetime('now'))
 );
-INSERT INTO "diagnosticians" VALUES(1,'ΑΛΕΞΙΟΥ ΑΛΕΞΑΝΔΡΟΣ',1,1,1,15,15,15,15,15,0,0,1,'2026-08-03 13:37:59');
-INSERT INTO "diagnosticians" VALUES(2,'ΒΑΡΔΑΣ ΒΑΣΙΛΕΙΟΣ',1,1,1,15,15,15,15,15,0,0,1,'2026-08-03 13:37:59');
-INSERT INTO "diagnosticians" VALUES(3,'ΓΕΩΡΓΙΑΔΟΥ ΓΕΩΡΓΙΑ',1,1,1,15,15,15,15,15,0,0,2,'2026-08-03 13:37:59');
-INSERT INTO "diagnosticians" VALUES(4,'ΔΗΜΟΥ ΔΗΜΗΤΡΙΟΣ',1,1,0,12,12,12,12,12,0,0,1,'2026-08-03 13:37:59');
-INSERT INTO "diagnosticians" VALUES(5,'ΕΥΑΓΓΕΛΑΤΟΣ ΕΥΑΓΓΕΛΟΣ',1,0,1,12,12,12,12,12,0,0,2,'2026-08-03 13:37:59');
-INSERT INTO "diagnosticians" VALUES(6,'ΖΑΧΑΡΗ ΖΩΗ',1,1,1,15,15,15,15,15,0,0,1,'2026-08-03 13:37:59');
+INSERT INTO "diagnosticians" VALUES(1,'ΑΛΕΞΙΟΥ ΑΛΕΞΑΝΔΡΟΣ',1,1,1,15,15,15,15,15,0,0,1,'2026-08-05 09:50:58');
+INSERT INTO "diagnosticians" VALUES(2,'ΒΑΡΔΑΣ ΒΑΣΙΛΕΙΟΣ',1,1,1,15,15,15,15,15,0,0,1,'2026-08-05 09:50:58');
+INSERT INTO "diagnosticians" VALUES(3,'ΓΕΩΡΓΙΑΔΟΥ ΓΕΩΡΓΙΑ',1,1,1,15,15,15,15,15,0,0,2,'2026-08-05 09:50:58');
+INSERT INTO "diagnosticians" VALUES(4,'ΔΗΜΟΥ ΔΗΜΗΤΡΙΟΣ',1,1,0,12,12,12,12,12,0,0,1,'2026-08-05 09:50:58');
+INSERT INTO "diagnosticians" VALUES(5,'ΕΥΑΓΓΕΛΑΤΟΣ ΕΥΑΓΓΕΛΟΣ',1,0,1,12,12,12,12,12,0,0,2,'2026-08-05 09:50:58');
+INSERT INTO "diagnosticians" VALUES(6,'ΖΑΧΑΡΗ ΖΩΗ',1,1,1,15,15,15,15,15,0,0,1,'2026-08-05 09:50:58');
 CREATE TABLE doctors (
     id          TEXT PRIMARY KEY,
     name        TEXT NOT NULL
@@ -119,7 +119,8 @@ CREATE TABLE local_assignments (
     diagnostician_name  TEXT    NOT NULL,
     assigned_at         TEXT    NOT NULL,
     is_auto             INTEGER NOT NULL DEFAULT 0,
-    rule_desc           TEXT
+    rule_desc           TEXT,
+    extracode           TEXT
 );
 CREATE TABLE modality_quotas (
     id                INTEGER PRIMARY KEY AUTOINCREMENT,

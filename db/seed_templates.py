@@ -47,7 +47,8 @@ CREATE TABLE IF NOT EXISTS local_assignments (
     diagnostician_name  TEXT    NOT NULL,
     assigned_at         TEXT    NOT NULL,
     is_auto             INTEGER NOT NULL DEFAULT 0,
-    rule_desc           TEXT
+    rule_desc           TEXT,
+    extracode           TEXT
 );
 
 CREATE TABLE IF NOT EXISTS availability (
