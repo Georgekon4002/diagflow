@@ -69,13 +69,161 @@ async function loadExamCategories() {
         if (data && data.length > 0) {
             RAW_EXAM_CATEGORIES = data;
             data.forEach(ex => {
-                EXAM_CODE_MAP[String(ex.examnumcode)] = ex.name;
+                const codeKey = String(ex.code || ex.examnumcode || ex.exam_code || '').trim();
+                if (codeKey) {
+                    EXAM_CODE_MAP[codeKey] = ex.name;
+                }
             });
         }
     } catch {
         console.warn("Could not load exam categories");
     }
 }
+
+// ── Multi-select Search Dropdown Helpers for Exam Codes ──────────────────────
+let selectedSkillExamCodes = new Set();
+let selectedRouteExamCodes = new Set();
+let openSkillsGroups = new Set();
+let openPartnershipsGroups = new Set();
+
+let selectedSkillItemIds = new Set();
+let skillsSearchQuery = '';
+
+let selectedPartnershipItemIds = new Set();
+let partnershipsSearchQuery = '';
+
+function onSkillsSearchInput(query) {
+    skillsSearchQuery = (query || '').toLowerCase().trim();
+    renderSkills();
+}
+
+function onPartnershipsSearchInput(query) {
+    partnershipsSearchQuery = (query || '').toLowerCase().trim();
+    renderPartnerships();
+}
+
+function onSkillExamSearchInput() {
+    renderExamSearchDropdown('skill');
+}
+
+function onSkillExamSearchFocus() {
+    renderExamSearchDropdown('skill');
+}
+
+function onAdvRouteExamSearchInput() {
+    renderExamSearchDropdown('route');
+}
+
+function onAdvRouteExamSearchFocus() {
+    renderExamSearchDropdown('route');
+}
+
+function renderExamSearchDropdown(type) {
+    const inputId = type === 'skill' ? 'skill-exam-search' : 'adv-route-codes-search';
+    const resultsId = type === 'skill' ? 'skill-exam-results' : 'adv-route-codes-results';
+    const selectedSet = type === 'skill' ? selectedSkillExamCodes : selectedRouteExamCodes;
+
+    const input = document.getElementById(inputId);
+    const results = document.getElementById(resultsId);
+    if (!input || !results) return;
+
+    const query = input.value.trim().toLowerCase();
+    const normQuery = typeof normalizeGreek === 'function' ? normalizeGreek(query) : query;
+
+    let categories = RAW_EXAM_CATEGORIES || [];
+    let filtered = categories;
+
+    if (query) {
+        filtered = categories.filter(ex => {
+            const code = String(ex.code || ex.examnumcode || ex.exam_code || '').toLowerCase().trim();
+            const name = (ex.name || '').toLowerCase();
+            const normName = typeof normalizeGreek === 'function' ? normalizeGreek(ex.name || '') : name;
+            return code.includes(query) || name.includes(query) || normName.includes(normQuery);
+        });
+    }
+
+    if (filtered.length === 0) {
+        results.innerHTML = '<div style="padding:10px; color:var(--text-secondary); text-align:center; font-size:13px;">Δεν βρέθηκαν εξετάσεις</div>';
+        results.style.display = 'block';
+        return;
+    }
+
+    results.innerHTML = filtered.slice(0, 100).map(ex => {
+        const code = String(ex.code || ex.examnumcode || ex.exam_code || '').trim();
+        const rawName = ex.name || EXAM_CODE_MAP[code] || '';
+        const shortName = typeof cleanExamName === 'function' 
+            ? cleanExamName(rawName) 
+            : rawName.replace(/^(ΑΞΟΝΙΚΗ|ΜΑΓΝΗΤΙΚΗ)\s+(ΤΟΜΟΓΡΑΦΙΑ|ΑΓΓΕΙΟΓΡΑΦΙΑ)\s*/i, '').trim();
+        let cat = (ex.category || '').toUpperCase().trim();
+        if (!cat) {
+            if (/CT|ΑΞΟΝ/i.test(rawName)) cat = 'CT';
+            else if (/MRA|ΑΓΓΕΙΟ/i.test(rawName)) cat = 'MRA';
+            else if (/MRI|ΜΑΓΝΗΤ/i.test(rawName)) cat = 'MRI';
+            else cat = 'OTHER';
+        }
+        const isChecked = selectedSet.has(code);
+
+        return `
+            <label class="exam-dropdown-item" style="display:flex; align-items:center; gap:10px; padding:8px 12px; cursor:pointer; font-size:13px; border-bottom:1px solid rgba(255,255,255,0.05); user-select:none;" onclick="event.stopPropagation();">
+                <input type="checkbox" value="${code}" ${isChecked ? 'checked' : ''} onchange="toggleExamCodeSelection('${type}', '${code}', event)" style="accent-color:var(--accent-primary); width:16px; height:16px; cursor:pointer; flex-shrink:0;">
+                <span style="font-weight:700; color:var(--accent-primary); font-family:monospace; font-size:13px; min-width:48px;">${code}</span>
+                <span style="color:var(--text-primary); flex:1; font-weight:500;" title="${escapeHtml(rawName)}">${escapeHtml(shortName || rawName)}</span>
+                <span class="modality-badge ${cat.toLowerCase()}" style="font-size:10px; padding:2px 6px; flex-shrink:0;">${cat}</span>
+            </label>
+        `;
+    }).join('');
+
+    results.style.display = 'block';
+}
+
+function toggleExamCodeSelection(type, code, event) {
+    const selectedSet = type === 'skill' ? selectedSkillExamCodes : selectedRouteExamCodes;
+    if (event.target.checked) {
+        selectedSet.add(code);
+    } else {
+        selectedSet.delete(code);
+    }
+    renderExamCodeTags(type);
+}
+
+function removeExamCodeSelection(type, code) {
+    const selectedSet = type === 'skill' ? selectedSkillExamCodes : selectedRouteExamCodes;
+    selectedSet.delete(code);
+    renderExamCodeTags(type);
+    renderExamSearchDropdown(type);
+}
+
+function renderExamCodeTags(type) {
+    const tagsId = type === 'skill' ? 'skill-exam-tags' : 'adv-route-codes-tags';
+    const selectedSet = type === 'skill' ? selectedSkillExamCodes : selectedRouteExamCodes;
+    const tagsContainer = document.getElementById(tagsId);
+    if (!tagsContainer) return;
+
+    if (selectedSet.size === 0) {
+        tagsContainer.innerHTML = '';
+        return;
+    }
+
+    tagsContainer.innerHTML = Array.from(selectedSet).map(code => {
+        const examObj = (RAW_EXAM_CATEGORIES || []).find(ex => String(ex.code || ex.examnumcode || '').trim() === code);
+        const fullName = examObj ? examObj.name : (EXAM_CODE_MAP[code] || '');
+        const tooltip = fullName ? `${code} — ${fullName}` : code;
+        return `<span title="${escapeHtml(tooltip)}" style="background:rgba(99,102,241,0.15); border:1px solid rgba(99,102,241,0.35); padding:3px 8px 3px 9px; border-radius:20px; font-size:12px; color:var(--accent-primary); font-family:monospace; font-weight:700; display:inline-flex; align-items:center; gap:4px; white-space:nowrap; cursor:default;">${escapeHtml(code)}<button type="button" onclick="removeExamCodeSelection('${type}', '${code}')" title="Αφαίρεση" style="background:none; border:none; color:rgba(99,102,241,0.6); font-size:13px; font-weight:bold; cursor:pointer; line-height:1; padding:0; margin-left:1px;">&times;</button></span>`;
+    }).join('');
+}
+
+document.addEventListener('click', function(e) {
+    const skillWrap = document.getElementById('skill-exam-search')?.parentElement;
+    if (skillWrap && !skillWrap.contains(e.target)) {
+        const res = document.getElementById('skill-exam-results');
+        if (res) res.style.display = 'none';
+    }
+    const routeWrap = document.getElementById('adv-route-codes-search')?.parentElement;
+    if (routeWrap && !routeWrap.contains(e.target)) {
+        const res = document.getElementById('adv-route-codes-results');
+        if (res) res.style.display = 'none';
+    }
+});
 
 let dbStatusInfo = { status: 'mock', error: null };
 
@@ -163,9 +311,36 @@ document.addEventListener('DOMContentLoaded', async () => {
         roleBadgeNode.parentElement.style.borderColor = '#d8b4fe';
     }
 
-    await loadAll();
+    showAdminLoadingModal('⏳ Φόρτωση Πίνακα Διαχείρισης', 'Εκτελούνται εργασίες παρασκηνίου ή φόρτωση δεδομένων. Παρακαλώ περιμένετε λίγο για την πλήρη φόρτωση των στοιχείων.');
+    try {
+        await loadAll();
+    } finally {
+        hideAdminLoadingModal();
+    }
     showSection('oncall');
 });
+
+function showAdminLoadingModal(title = '⏳ Φόρτωση Πίνακα Διαχείρισης', message = 'Εκτελούνται εργασίες παρασκηνίου ή φόρτωση δεδομένων. Παρακαλώ περιμένετε λίγο για την πλήρη φόρτωση των στοιχείων.') {
+    const modal = document.getElementById('admin-loading-modal');
+    const titleEl = document.getElementById('admin-loading-title');
+    const msgEl = document.getElementById('admin-loading-msg');
+    if (titleEl) titleEl.innerText = title;
+    if (msgEl) msgEl.innerText = message;
+    if (modal) {
+        modal.style.display = 'flex';
+        modal.style.opacity = '1';
+    }
+}
+
+function hideAdminLoadingModal() {
+    const modal = document.getElementById('admin-loading-modal');
+    if (modal) {
+        modal.style.opacity = '0';
+        setTimeout(() => {
+            modal.style.display = 'none';
+        }, 200);
+    }
+}
 
 async function loadAll() {
     await loadExamCategories();
@@ -182,6 +357,7 @@ async function loadAll() {
         loadAdminUsers(),
     ]);
 }
+
 
 
 // ══════════════════════════════════════════════
@@ -273,28 +449,7 @@ function adminLogout() {
 // ══════════════════════════════════════════════
 
 async function syncDiagnosticians() {
-    showToast('Συγχρονισμός διαγνωστών...', 'info');
-    const res = await apiCall('/admin/sync-diagnosticians', 'POST');
-    if (res && res.synced !== undefined) {
-        showToast(`Συγχρονίστηκαν ${res.synced} διαγνώστες από το Slis.`, 'success');
-        await loadDiagnosticians();
-    } else {
-        showToast('Σφάλμα κατά τον συγχρονισμό.', 'error');
-    }
-}
-
-async function syncDoctors() {
-    showToast('Συγχρονισμός ιατρών...', 'info');
-    const res = await apiCall('/admin/sync-doctors', 'POST');
-    if (res && res.synced !== undefined) {
-        showToast(`Συγχρονίστηκαν ${res.synced} ιατροί από το Slis.`, 'success');
-        await loadDoctors(0);
-    } else {
-        showToast('Σφάλμα κατά τον συγχρονισμό.', 'error');
-    }
-}
-
-async function syncDiagnosticians() {
+    showAdminLoadingModal('⏳ Συγχρονισμός Διαγνωστών', 'Γίνεται συγχρονισμός διαγνωστών με το σύστημα Slis. Παρακαλώ περιμένετε...');
     try {
         const res = await apiCall('/admin/diagnosticians/sync', 'POST');
         if (res && res.synced !== undefined) {
@@ -305,10 +460,13 @@ async function syncDiagnosticians() {
         await loadDiagnosticians();
     } catch (err) {
         showToast(`Σφάλμα συγχρονισμού: ${err.message}`, 'error');
+    } finally {
+        hideAdminLoadingModal();
     }
 }
 
 async function syncDoctors() {
+    showAdminLoadingModal('⏳ Συγχρονισμός Ιατρών', 'Γίνεται συγχρονισμός εκδιδόντων ιατρών με το σύστημα Slis. Παρακαλώ περιμένετε...');
     try {
         const res = await apiCall('/admin/doctors/sync', 'POST');
         if (res && res.synced !== undefined) {
@@ -319,8 +477,11 @@ async function syncDoctors() {
         await loadDoctors(0);
     } catch (err) {
         showToast(`Σφάλμα συγχρονισμού: ${err.message}`, 'error');
+    } finally {
+        hideAdminLoadingModal();
     }
 }
+
 
 async function loadDiagnosticians() {
     const data = await apiCall('/admin/diagnosticians');
@@ -616,6 +777,7 @@ async function toggleDiagCT(id, newCanCT) {
     if (!d) return;
     d.can_ct = newCanCT;
     try { await apiCall(`/admin/diagnosticians/${id}`, 'PUT', d); } catch { /* mock mode */ }
+    populateDiagnosticianSelects();
     showToast(`Η ικανότητα CT ενημερώθηκε: ${d.name}`, 'success');
 }
 
@@ -624,6 +786,7 @@ async function toggleDiagMRI(id, newCanMRI) {
     if (!d) return;
     d.can_mri = newCanMRI;
     try { await apiCall(`/admin/diagnosticians/${id}`, 'PUT', d); } catch { /* mock mode */ }
+    populateDiagnosticianSelects();
     showToast(`Η ικανότητα MRI ενημερώθηκε: ${d.name}`, 'success');
 }
 
@@ -780,40 +943,80 @@ function renderTodayOffSchedules() {
 
 function renderSkills() {
     const tbody = document.getElementById('skills-tbody');
+    if (!tbody) return;
+
     if (!skills.length) {
         tbody.innerHTML = '<tr><td colspan="5" style="color:var(--text-tertiary);text-align:center;padding:20px;">Δεν υπάρχουν δεδομένα δεξιοτήτων</td></tr>';
+        updateSkillsFloatingBar();
+        return;
+    }
+
+    let filteredSkills = skills;
+    if (skillsSearchQuery) {
+        const rawQuery = skillsSearchQuery.toLowerCase().trim();
+        const normQuery = typeof normalizeGreek === 'function' ? normalizeGreek(skillsSearchQuery) : rawQuery;
+        filteredSkills = skills.filter(s => {
+            const dName = (s.diagnostician_name || '').toLowerCase();
+            const normDName = typeof normalizeGreek === 'function' ? normalizeGreek(dName) : dName;
+            const dId = String(s.diagnostician_id || '').toLowerCase();
+            const eCode = String(s.exam_code || '').toLowerCase();
+            const eTitle = (s.exam_title || s.exam_name || s.body_part || '').toLowerCase();
+            const normETitle = typeof normalizeGreek === 'function' ? normalizeGreek(eTitle) : eTitle;
+            return dName.includes(rawQuery) || normDName.includes(normQuery) || dId.includes(rawQuery) || eCode.includes(rawQuery) || eTitle.includes(rawQuery) || normETitle.includes(normQuery);
+        });
+    }
+
+    if (!filteredSkills.length) {
+        tbody.innerHTML = `<tr><td colspan="5" style="color:var(--text-tertiary);text-align:center;padding:20px;">Δεν βρέθηκαν δεξιότητες που να ταιριάζουν με "${escapeHtml(skillsSearchQuery)}"</td></tr>`;
+        updateSkillsFloatingBar();
         return;
     }
 
     // Group by diagnostician
     const grouped = {};
-    skills.forEach(s => {
+    filteredSkills.forEach(s => {
         if (!grouped[s.diagnostician_name]) grouped[s.diagnostician_name] = [];
         grouped[s.diagnostician_name].push(s);
     });
 
     let html = '';
     for (const [diagName, diagSkills] of Object.entries(grouped)) {
-        // Main collapsible row
-        const diagIdForCollapse = diagSkills[0].diagnostician_id || diagName.replace(/\s+/g, '');
+        const diagIdForCollapse = String(diagSkills[0].diagnostician_id || diagName.replace(/\s+/g, ''));
+        if (skillsSearchQuery) {
+            openSkillsGroups.add(diagIdForCollapse);
+        }
+
+        const isOpen = openSkillsGroups.has(diagIdForCollapse);
+        const displayStyle = isOpen ? 'table-row' : 'none';
+        const iconTransform = isOpen ? 'rotate(90deg)' : 'rotate(0deg)';
+
+        const allDiagChecked = diagSkills.length > 0 && diagSkills.every(s => selectedSkillItemIds.has(String(s.id)));
+
         html += `
             <tr style="cursor:pointer; background:var(--surface-color); border-bottom:1px solid var(--border-color);" onclick="toggleSkillsRow('${diagIdForCollapse}')">
-                <td colspan="5" style="font-weight:600; padding:12px;">
-                    <span id="icon-${diagIdForCollapse}" style="display:inline-block; width:20px; transition:transform 0.2s;">▶</span> 
+                <td style="width:40px; text-align:center; padding:12px;" onclick="event.stopPropagation();">
+                    <input type="checkbox" class="skill-group-checkbox" id="chk-skill-group-${diagIdForCollapse}" ${allDiagChecked ? 'checked' : ''} onclick="toggleSelectDiagSkills(event, '${diagIdForCollapse}')" style="accent-color:var(--accent-primary); width:16px; height:16px; cursor:pointer;" title="Επιλογή όλων του διαγνώστη">
+                </td>
+                <td colspan="4" style="font-weight:600; padding:12px;">
+                    <span id="icon-${diagIdForCollapse}" style="display:inline-block; width:20px; transition:transform 0.2s; transform:${iconTransform};">▶</span> 
                     ${diagName} <span style="color:var(--text-tertiary); font-weight:normal; font-size:13px;">(${diagSkills.length} δεξιότητες)</span>
                 </td>
             </tr>
         `;
         
         // Children rows
-        diagSkills.forEach((s, index) => {
+        diagSkills.forEach((s) => {
             const isPreferred = s.is_preferred || false;
             const examCode = s.exam_code || '—';
             const rawTitle = s.exam_name || s.exam_title || EXAM_CODE_MAP[examCode] || s.body_part || examCode || '—';
             const examTitle = formatSimplifiedExamName(rawTitle, s.category, examCode);
+            const isChecked = selectedSkillItemIds.has(String(s.id));
+            const rowClass = isChecked ? 'selected-row' : '';
             
-            html += `<tr class="skills-row-${diagIdForCollapse}" style="display:none; background:#fafafa;">
-                <td style="padding-left:32px;"></td>
+            html += `<tr class="skills-row-${diagIdForCollapse} ${rowClass}" style="display:${displayStyle}; background:#fafafa;">
+                <td style="width:40px; text-align:center; padding:8px 12px;">
+                    <input type="checkbox" class="row-checkbox skill-chk-item skill-chk-diag-${diagIdForCollapse}" value="${s.id}" ${isChecked ? 'checked' : ''} onchange="toggleSelectSkillItem('${s.id}')">
+                </td>
                 <td style="font-family:monospace;font-size:var(--font-size-sm);">${examCode}</td>
                 <td style="font-size:var(--font-size-sm);">${examTitle}</td>
                 <td>
@@ -828,65 +1031,207 @@ function renderSkills() {
         });
     }
     tbody.innerHTML = html;
+    updateSkillsFloatingBar();
+}
+
+function toggleSelectSkillItem(id) {
+    const idStr = String(id);
+    if (selectedSkillItemIds.has(idStr)) {
+        selectedSkillItemIds.delete(idStr);
+    } else {
+        selectedSkillItemIds.add(idStr);
+    }
+    renderSkills();
+}
+
+function toggleSelectDiagSkills(event, diagId) {
+    event.stopPropagation();
+    const isChecked = event.target.checked;
+    const childChks = document.querySelectorAll('.skill-chk-diag-' + diagId);
+    childChks.forEach(chk => {
+        chk.checked = isChecked;
+        if (isChecked) selectedSkillItemIds.add(String(chk.value));
+        else selectedSkillItemIds.delete(String(chk.value));
+    });
+    renderSkills();
+}
+
+function toggleSelectAllSkills(isChecked) {
+    const allItemChks = document.querySelectorAll('.skill-chk-item');
+    allItemChks.forEach(chk => {
+        chk.checked = isChecked;
+        if (isChecked) selectedSkillItemIds.add(String(chk.value));
+        else selectedSkillItemIds.delete(String(chk.value));
+    });
+    renderSkills();
+}
+
+function updateSkillsFloatingBar() {
+    const fab = document.getElementById('skills-floating-bar');
+    const countEl = document.getElementById('skills-fab-count');
+    const actionsEl = document.getElementById('skills-fab-actions');
+    const topChk = document.getElementById('chk-skills-all');
+    if (!fab || !countEl) return;
+
+    const size = selectedSkillItemIds.size;
+    if (size === 0) {
+        fab.style.display = 'none';
+        if (topChk) { topChk.checked = false; topChk.indeterminate = false; }
+        return;
+    }
+
+    fab.style.display = 'flex';
+    countEl.textContent = `${size} επιλεγμέν${size === 1 ? 'η δεξιότητα' : 'ες δεξιότητες'}`;
+
+    const selectedItems = skills.filter(s => selectedSkillItemIds.has(String(s.id)));
+    const allPreferred = selectedItems.length > 0 && selectedItems.every(s => Boolean(s.is_preferred));
+    const allUnpreferred = selectedItems.length > 0 && selectedItems.every(s => !Boolean(s.is_preferred));
+
+    let actionsHtml = '';
+
+    if (allPreferred) {
+        actionsHtml += `<button class="btn btn-secondary btn-sm" onclick="bulkSetSkillsPreference(false)">☆ Αφαίρεση Προτίμησης</button>`;
+    } else if (allUnpreferred) {
+        actionsHtml += `<button class="btn btn-primary btn-sm" onclick="bulkSetSkillsPreference(true)">★ Ορισμός ως Προτιμώμενες</button>`;
+    } else {
+        actionsHtml += `<button class="btn btn-primary btn-sm" onclick="bulkSetSkillsPreference(true)">★ Ορισμός ως Προτιμώμενες</button>`;
+        actionsHtml += `<button class="btn btn-secondary btn-sm" onclick="bulkSetSkillsPreference(false)">☆ Αφαίρεση Προτίμησης</button>`;
+    }
+
+    actionsHtml += `<button class="btn btn-danger btn-sm" onclick="bulkDeleteSkills()">🗑️ Διαγραφή</button>`;
+    actionsHtml += `<button class="btn btn-ghost btn-sm" onclick="clearSkillsSelection()">✕ Ακύρωση</button>`;
+
+    if (actionsEl) actionsEl.innerHTML = actionsHtml;
+
+    const allItemChks = document.querySelectorAll('.skill-chk-item');
+    if (topChk && allItemChks.length > 0) {
+        const allChecked = Array.from(allItemChks).every(c => c.checked);
+        const someChecked = Array.from(allItemChks).some(c => c.checked);
+        topChk.checked = allChecked;
+        topChk.indeterminate = !allChecked && someChecked;
+    }
+}
+
+function clearSkillsSelection() {
+    selectedSkillItemIds.clear();
+    renderSkills();
+}
+
+async function bulkSetSkillsPreference(isPreferred) {
+    if (selectedSkillItemIds.size === 0) return;
+    const ids = Array.from(selectedSkillItemIds);
+    let updatedCount = 0;
+    for (const idStr of ids) {
+        const skillId = isNaN(Number(idStr)) ? idStr : Number(idStr);
+        const s = skills.find(x => String(x.id) === idStr);
+        if (!s) continue;
+        s.is_preferred = isPreferred;
+        try {
+            await apiCall(`/admin/skills/${skillId}`, 'PUT', s);
+            updatedCount++;
+        } catch { /* mock mode */ updatedCount++; }
+    }
+    renderSkills();
+    showToast(`✅ Ενημερώθηκαν ${updatedCount} δεξιότητες (${isPreferred ? 'Προτιμάται' : 'Όχι προτίμηση'})`, 'success');
+}
+
+async function bulkDeleteSkills() {
+    if (selectedSkillItemIds.size === 0) return;
+    if (!confirm(`Διαγραφή ${selectedSkillItemIds.size} επιλεγμένων δεξιοτήτων;`)) return;
+    const ids = Array.from(selectedSkillItemIds);
+    let deletedCount = 0;
+    for (const idStr of ids) {
+        const skillId = isNaN(Number(idStr)) ? idStr : Number(idStr);
+        try {
+            await apiCall(`/admin/skills/${skillId}`, 'DELETE');
+        } catch { /* mock mode */ }
+        skills = skills.filter(s => String(s.id) !== idStr);
+        deletedCount++;
+    }
+    clearSkillsSelection();
+    renderSkills();
+    showToast(`🗑️ Διαγράφηκαν ${deletedCount} δεξιότητες`, 'success');
 }
 
 // Helper to toggle skills display
 function toggleSkillsRow(diagId) {
-    const rows = document.querySelectorAll('.skills-row-' + diagId);
-    const icon = document.getElementById('icon-' + diagId);
-    let isHidden = false;
-    rows.forEach(r => {
-        if (r.style.display === 'none') {
-            r.style.display = 'table-row';
-            isHidden = true;
-        } else {
-            r.style.display = 'none';
-        }
-    });
-    if (icon) {
-        icon.style.transform = isHidden ? 'rotate(90deg)' : 'rotate(0deg)';
+    const idStr = String(diagId);
+    if (openSkillsGroups.has(idStr)) {
+        openSkillsGroups.delete(idStr);
+    } else {
+        openSkillsGroups.add(idStr);
     }
+    renderSkills();
 }
 
 function togglePartnershipsRow(diagId) {
-    const rows = document.querySelectorAll('.part-row-' + diagId);
-    const icon = document.getElementById('part-icon-' + diagId);
-    let isHidden = false;
-    rows.forEach(r => {
-        if (r.style.display === 'none') {
-            r.style.display = 'table-row';
-            isHidden = true;
-        } else {
-            r.style.display = 'none';
-        }
-    });
-    if (icon) {
-        icon.style.transform = isHidden ? 'rotate(90deg)' : 'rotate(0deg)';
+    const idStr = String(diagId);
+    if (openPartnershipsGroups.has(idStr)) {
+        openPartnershipsGroups.delete(idStr);
+    } else {
+        openPartnershipsGroups.add(idStr);
     }
+    renderPartnerships();
 }
 
 function renderPartnerships() {
     const tbody = document.getElementById('part-tbody');
+    if (!tbody) return;
+
     if (!partnerships.length) {
         tbody.innerHTML = '<tr><td colspan="5" style="color:var(--text-tertiary);text-align:center;padding:20px;">Δεν υπάρχουν συνεργασίες</td></tr>';
+        updatePartnershipsFloatingBar();
+        return;
+    }
+
+    let filteredPartnerships = partnerships;
+    if (partnershipsSearchQuery) {
+        const rawQuery = partnershipsSearchQuery.toLowerCase().trim();
+        const normQuery = typeof normalizeGreek === 'function' ? normalizeGreek(partnershipsSearchQuery) : rawQuery;
+        filteredPartnerships = partnerships.filter(p => {
+            const dName = (p.preferred_diagnostician_name || '').toLowerCase();
+            const normDName = typeof normalizeGreek === 'function' ? normalizeGreek(dName) : dName;
+            const dId = String(p.preferred_diagnostician_id || '').toLowerCase();
+            const docName = (p.issuing_doctor_name || '').toLowerCase();
+            const normDocName = typeof normalizeGreek === 'function' ? normalizeGreek(docName) : docName;
+            const docId = String(p.issuing_doctor_id || '').toLowerCase();
+            return dName.includes(rawQuery) || normDName.includes(normQuery) || dId.includes(rawQuery) || docName.includes(rawQuery) || normDocName.includes(normQuery) || docId.includes(rawQuery);
+        });
+    }
+
+    if (!filteredPartnerships.length) {
+        tbody.innerHTML = `<tr><td colspan="5" style="color:var(--text-tertiary);text-align:center;padding:20px;">Δεν βρέθηκαν συνεργασίες που να ταιριάζουν με "${escapeHtml(partnershipsSearchQuery)}"</td></tr>`;
+        updatePartnershipsFloatingBar();
         return;
     }
 
     // Group by diagnostician
     const grouped = {};
-    partnerships.forEach(p => {
+    filteredPartnerships.forEach(p => {
         if (!grouped[p.preferred_diagnostician_name]) grouped[p.preferred_diagnostician_name] = [];
         grouped[p.preferred_diagnostician_name].push(p);
     });
 
     let html = '';
     for (const [diagName, diagPartners] of Object.entries(grouped)) {
-        // Main collapsible row
-        const diagIdForCollapse = diagPartners[0].preferred_diagnostician_id || diagName.replace(/\s+/g, '');
+        const diagIdForCollapse = String(diagPartners[0].preferred_diagnostician_id || diagName.replace(/\s+/g, ''));
+        if (partnershipsSearchQuery) {
+            openPartnershipsGroups.add(diagIdForCollapse);
+        }
+
+        const isOpen = openPartnershipsGroups.has(diagIdForCollapse);
+        const displayStyle = isOpen ? 'table-row' : 'none';
+        const iconTransform = isOpen ? 'rotate(90deg)' : 'rotate(0deg)';
+
+        const allDiagChecked = diagPartners.length > 0 && diagPartners.every(p => selectedPartnershipItemIds.has(String(p.id)));
+
         html += `
             <tr style="cursor:pointer; background:var(--surface-color); border-bottom:1px solid var(--border-color);" onclick="togglePartnershipsRow('${diagIdForCollapse}')">
-                <td colspan="5" style="font-weight:600; padding:12px;">
-                    <span id="part-icon-${diagIdForCollapse}" style="display:inline-block; width:20px; transition:transform 0.2s;">▶</span> 
+                <td style="width:40px; text-align:center; padding:12px;" onclick="event.stopPropagation();">
+                    <input type="checkbox" class="part-group-checkbox" id="chk-part-group-${diagIdForCollapse}" ${allDiagChecked ? 'checked' : ''} onclick="toggleSelectDiagPartnerships(event, '${diagIdForCollapse}')" style="accent-color:var(--accent-primary); width:16px; height:16px; cursor:pointer;" title="Επιλογή όλων του διαγνώστη">
+                </td>
+                <td colspan="4" style="font-weight:600; padding:12px;">
+                    <span id="part-icon-${diagIdForCollapse}" style="display:inline-block; width:20px; transition:transform 0.2s; transform:${iconTransform};">▶</span> 
                     <span style="color:var(--accent-primary);">${diagName}</span> <span style="color:var(--text-tertiary); font-weight:normal; font-size:13px;">(${diagPartners.length} συνεργασίες)</span>
                 </td>
             </tr>
@@ -904,9 +1249,13 @@ function renderPartnerships() {
         diagPartners.forEach(p => {
             const isActive = p.is_active === undefined ? true : Boolean(p.is_active);
             const isExclusive = Boolean(p.exclusive);
+            const isChecked = selectedPartnershipItemIds.has(String(p.id));
+            const rowClass = isChecked ? 'selected-row' : '';
             
-            html += `<tr class="part-row-${diagIdForCollapse}" style="display:none; background:#fafafa;">
-                <td style="padding-left:32px;"></td>
+            html += `<tr class="part-row-${diagIdForCollapse} ${rowClass}" style="display:${displayStyle}; background:#fafafa;">
+                <td style="width:40px; text-align:center; padding:8px 12px;">
+                    <input type="checkbox" class="row-checkbox part-chk-item part-chk-diag-${diagIdForCollapse}" value="${p.id}" ${isChecked ? 'checked' : ''} onchange="toggleSelectPartnershipItem('${p.id}')">
+                </td>
                 <td style="font-weight:500;">${p.issuing_doctor_name} <span style="color:var(--text-tertiary);font-size:11px;">(${p.issuing_doctor_id})</span></td>
                 <td>
                     <button class="btn btn-sm ${isActive ? 'btn-primary' : 'btn-secondary'}" onclick="togglePartnershipProperty(${p.id}, 'is_active', ${!isActive})" style="padding:4px 8px; font-size:12px;">
@@ -925,6 +1274,161 @@ function renderPartnerships() {
         });
     }
     tbody.innerHTML = html;
+    updatePartnershipsFloatingBar();
+}
+
+function toggleSelectPartnershipItem(id) {
+    const idStr = String(id);
+    if (selectedPartnershipItemIds.has(idStr)) {
+        selectedPartnershipItemIds.delete(idStr);
+    } else {
+        selectedPartnershipItemIds.add(idStr);
+    }
+    renderPartnerships();
+}
+
+function toggleSelectDiagPartnerships(event, diagId) {
+    event.stopPropagation();
+    const isChecked = event.target.checked;
+    const childChks = document.querySelectorAll('.part-chk-diag-' + diagId);
+    childChks.forEach(chk => {
+        chk.checked = isChecked;
+        if (isChecked) selectedPartnershipItemIds.add(String(chk.value));
+        else selectedPartnershipItemIds.delete(String(chk.value));
+    });
+    renderPartnerships();
+}
+
+function toggleSelectAllPartnerships(isChecked) {
+    const allItemChks = document.querySelectorAll('.part-chk-item');
+    allItemChks.forEach(chk => {
+        chk.checked = isChecked;
+        if (isChecked) selectedPartnershipItemIds.add(String(chk.value));
+        else selectedPartnershipItemIds.delete(String(chk.value));
+    });
+    renderPartnerships();
+}
+
+function updatePartnershipsFloatingBar() {
+    const fab = document.getElementById('partnerships-floating-bar');
+    const countEl = document.getElementById('part-fab-count');
+    const actionsEl = document.getElementById('part-fab-actions');
+    const topChk = document.getElementById('chk-part-all');
+    if (!fab || !countEl) return;
+
+    const size = selectedPartnershipItemIds.size;
+    if (size === 0) {
+        fab.style.display = 'none';
+        if (topChk) { topChk.checked = false; topChk.indeterminate = false; }
+        return;
+    }
+
+    fab.style.display = 'flex';
+    countEl.textContent = `${size} επιλεγμέν${size === 1 ? 'η συνεργασία' : 'ες συνεργασίες'}`;
+
+    const selectedItems = partnerships.filter(p => selectedPartnershipItemIds.has(String(p.id)));
+    const allActive = selectedItems.length > 0 && selectedItems.every(p => (p.is_active === undefined ? true : Boolean(p.is_active)));
+    const allInactive = selectedItems.length > 0 && selectedItems.every(p => (p.is_active !== undefined && !Boolean(p.is_active)));
+
+    const allExclusive = selectedItems.length > 0 && selectedItems.every(p => Boolean(p.exclusive));
+    const allNonExclusive = selectedItems.length > 0 && selectedItems.every(p => !Boolean(p.exclusive));
+
+    let actionsHtml = '';
+
+    // Active status action button
+    if (allActive) {
+        actionsHtml += `<button class="btn btn-danger btn-sm" onclick="bulkSetPartnershipsActive(false)">⚠️ Απενεργοποίηση</button>`;
+    } else if (allInactive) {
+        actionsHtml += `<button class="btn btn-success btn-sm" onclick="bulkSetPartnershipsActive(true)">✅ Ενεργοποίηση</button>`;
+    } else {
+        actionsHtml += `<button class="btn btn-success btn-sm" onclick="bulkSetPartnershipsActive(true)">✅ Ενεργοποίηση</button>`;
+        actionsHtml += `<button class="btn btn-danger btn-sm" onclick="bulkSetPartnershipsActive(false)">⚠️ Απενεργοποίηση</button>`;
+    }
+
+    // Exclusive status action button
+    if (allExclusive) {
+        actionsHtml += `<button class="btn btn-danger btn-sm" onclick="bulkSetPartnershipsExclusive(false)">🚫 Όχι Αποκλειστική</button>`;
+    } else if (allNonExclusive) {
+        actionsHtml += `<button class="btn btn-primary btn-sm" onclick="bulkSetPartnershipsExclusive(true)">⚡ Αποκλειστική</button>`;
+    } else {
+        actionsHtml += `<button class="btn btn-primary btn-sm" onclick="bulkSetPartnershipsExclusive(true)">⚡ Αποκλειστική</button>`;
+        actionsHtml += `<button class="btn btn-danger btn-sm" onclick="bulkSetPartnershipsExclusive(false)">🚫 Όχι Αποκλειστική</button>`;
+    }
+
+    actionsHtml += `<button class="btn btn-danger btn-sm" onclick="bulkDeletePartnerships()">🗑️ Διαγραφή</button>`;
+    actionsHtml += `<button class="btn btn-ghost btn-sm" onclick="clearPartnershipsSelection()">✕ Ακύρωση</button>`;
+
+    if (actionsEl) actionsEl.innerHTML = actionsHtml;
+
+    const allItemChks = document.querySelectorAll('.part-chk-item');
+    if (topChk && allItemChks.length > 0) {
+        const allChecked = Array.from(allItemChks).every(c => c.checked);
+        const someChecked = Array.from(allItemChks).some(c => c.checked);
+        topChk.checked = allChecked;
+        topChk.indeterminate = !allChecked && someChecked;
+    }
+}
+
+function clearPartnershipsSelection() {
+    selectedPartnershipItemIds.clear();
+    renderPartnerships();
+}
+
+async function bulkSetPartnershipsActive(isActive) {
+    if (selectedPartnershipItemIds.size === 0) return;
+    const ids = Array.from(selectedPartnershipItemIds);
+    let updatedCount = 0;
+    for (const idStr of ids) {
+        const partId = isNaN(Number(idStr)) ? idStr : Number(idStr);
+        try {
+            await apiCall(`/admin/partnerships/${partId}`, 'PATCH', { is_active: isActive });
+            updatedCount++;
+        } catch {
+            const p = partnerships.find(x => String(x.id) === idStr);
+            if (p) p.is_active = isActive;
+            updatedCount++;
+        }
+    }
+    await loadPartnerships();
+    showToast(`✅ Ενημερώθηκαν ${updatedCount} συνεργασίες (${isActive ? 'Ενεργές' : 'Ανενεργές'})`, 'success');
+}
+
+async function bulkSetPartnershipsExclusive(isExclusive) {
+    if (selectedPartnershipItemIds.size === 0) return;
+    const ids = Array.from(selectedPartnershipItemIds);
+    let updatedCount = 0;
+    for (const idStr of ids) {
+        const partId = isNaN(Number(idStr)) ? idStr : Number(idStr);
+        try {
+            await apiCall(`/admin/partnerships/${idStr}`, 'PATCH', { exclusive: isExclusive });
+            updatedCount++;
+        } catch {
+            const p = partnerships.find(x => String(x.id) === idStr);
+            if (p) p.exclusive = isExclusive;
+            updatedCount++;
+        }
+    }
+    await loadPartnerships();
+    showToast(`✅ Ενημερώθηκαν ${updatedCount} συνεργασίες (${isExclusive ? 'Αποκλειστικές' : 'Όχι αποκλειστικές'})`, 'success');
+}
+
+async function bulkDeletePartnerships() {
+    if (selectedPartnershipItemIds.size === 0) return;
+    if (!confirm(`Διαγραφή ${selectedPartnershipItemIds.size} επιλεγμένων συνεργασιών;`)) return;
+    const ids = Array.from(selectedPartnershipItemIds);
+    let deletedCount = 0;
+    for (const idStr of ids) {
+        const partId = isNaN(Number(idStr)) ? idStr : Number(idStr);
+        try {
+            await apiCall(`/admin/partnerships/${partId}`, 'DELETE');
+        } catch {
+            partnerships = partnerships.filter(p => String(p.id) !== idStr);
+        }
+        deletedCount++;
+    }
+    clearPartnershipsSelection();
+    await loadPartnerships();
+    showToast(`🗑️ Διαγράφηκαν ${deletedCount} συνεργασίες`, 'success');
 }
 
 function renderDoctors() {
@@ -999,6 +1503,7 @@ async function toggleDiagActive(id, newActive) {
     } catch { /* mock mode */ }
 
     renderDiagnosticians();
+    populateDiagnosticianSelects();
     renderWeeklyScheduleGrid();
     showToast(`${newActive ? '✅ Ενεργοποίηση' : '⚠️ Απενεργοποίηση'}: ${d.name}`, newActive ? 'success' : 'warning');
 }
@@ -1103,65 +1608,65 @@ async function setSkill() {
     const selEl = document.getElementById('skill-diag');
     const diagId = parseInt(selEl.value);
     const diagName = selEl.options[selEl.selectedIndex]?.dataset?.name || '';
-    const rawInput = document.getElementById('skill-exam-code').value.trim();
     const is_preferred = document.getElementById('skill-preferred').checked;
 
     if (!diagId) { showToast('Επιλέξτε διαγνώστη', 'warning'); return; }
-    if (!rawInput) { showToast('Εισάγετε κωδικό εξέτασης', 'warning'); return; }
+
+    const codes = Array.from(selectedSkillExamCodes);
+    if (codes.length === 0) { showToast('Επιλέξτε τουλάχιστον έναν κωδικό εξέτασης από την αναζήτηση', 'warning'); return; }
 
     const targetDiag = diagnosticians.find(d => d.id === diagId);
 
-    const codes = rawInput.split(/[\s,]+/).map(c => c.trim()).filter(Boolean);
-    if (codes.length === 0) { showToast('Εισάγετε τουλάχιστον έναν έγκυρο κωδικό εξέτασης', 'warning'); return; }
-
     let addedCount = 0;
     for (const code of codes) {
+        const cleanCode = String(code).trim();
         // 1. Check if skill already exists for this diagnostician
-        const exists = skills.some(s => s.diagnostician_id === diagId && String(s.exam_code) === String(code));
+        const exists = skills.some(s => String(s.diagnostician_id) === String(diagId) && String(s.exam_code).trim() === cleanCode);
         if (exists) {
-            showToast(`⚠️ Η δεξιότητα ${code} υπάρχει ήδη για τον/την ${diagName}`, 'warning');
+            showToast(`⚠️ Η δεξιότητα ${cleanCode} υπάρχει ήδη για τον/την ${diagName}`, 'warning');
             continue;
         }
 
         // 2. Determine modality of the exam code
-        const examObj = (RAW_EXAM_CATEGORIES || []).find(ex => String(ex.examnumcode) === String(code));
-        const examName = examObj ? examObj.name : (EXAM_CODE_MAP[code] || '');
+        const examObj = (RAW_EXAM_CATEGORIES || []).find(ex => String(ex.examnumcode || ex.code || '').trim() === cleanCode);
+        const examName = examObj ? examObj.name : (EXAM_CODE_MAP[cleanCode] || '');
         let cat = (examObj?.category || '').toUpperCase().trim();
         if (!cat) {
-            if (/CT|ΑΞΟΝ/i.test(examName) || /^21/.test(code)) cat = 'CT';
-            else if (/MRA|ΑΓΓΕΙΟ/i.test(examName) || /^228/.test(code)) cat = 'MRA';
-            else if (/MRI|ΜΑΓΝΗΤ/i.test(examName) || /^22/.test(code)) cat = 'MRI';
-            else cat = /^21/.test(code) ? 'CT' : 'MRI';
+            if (/CT|ΑΞΟΝ/i.test(examName) || /^21/.test(cleanCode)) cat = 'CT';
+            else if (/MRA|ΑΓΓΕΙΟ/i.test(examName) || /^228/.test(cleanCode)) cat = 'MRA';
+            else if (/MRI|ΜΑΓΝΗΤ/i.test(examName) || /^22/.test(cleanCode)) cat = 'MRI';
+            else cat = /^21/.test(cleanCode) ? 'CT' : 'MRI';
         }
 
         // 3. Prohibit adding skill if diagnostician does not evaluate this modality
         if (targetDiag) {
             if (cat === 'CT' && !targetDiag.can_ct) {
-                showToast(`❌ Ο/Η ${diagName} δεν πραγματοποιεί Αξονικές (CT). Δεν προστέθηκε ο κωδικός ${code}.`, 'error');
+                showToast(`❌ Ο/Η ${diagName} δεν πραγματοποιεί Αξονικές (CT). Δεν προστέθηκε ο κωδικός ${cleanCode}.`, 'error');
                 continue;
             }
             if ((cat === 'MRI' || cat === 'MRA') && !targetDiag.can_mri) {
-                showToast(`❌ Ο/Η ${diagName} δεν πραγματοποιεί Μαγνητικές (MRI/MRA). Δεν προστέθηκε ο κωδικός ${code}.`, 'error');
+                showToast(`❌ Ο/Η ${diagName} δεν πραγματοποιεί Μαγνητικές (MRI/MRA). Δεν προστέθηκε ο κωδικός ${cleanCode}.`, 'error');
                 continue;
             }
         }
 
-        const exam_title = examName || `Εξέταση ${code}`;
-        const record = { diagnostician_id: diagId, diagnostician_name: diagName, exam_code: code, exam_title, is_preferred };
+        const exam_title = examName || `Εξέταση ${cleanCode}`;
+        const record = { diagnostician_id: diagId, diagnostician_name: diagName, exam_code: cleanCode, exam_title, is_preferred };
         try {
             const result = await apiCall('/admin/skills', 'POST', record);
-            skills = skills.filter(s => !(s.diagnostician_id === diagId && String(s.exam_code) === String(code)));
+            skills = skills.filter(s => !(String(s.diagnostician_id) === String(diagId) && String(s.exam_code).trim() === cleanCode));
             if (result) skills.push(result);
             else skills.push({ id: Date.now() + Math.random(), ...record });
             addedCount++;
-        } catch {
-            skills = skills.filter(s => !(s.diagnostician_id === diagId && String(s.exam_code) === String(code)));
-            skills.push({ id: Date.now() + Math.random(), ...record });
-            addedCount++;
+        } catch (err) {
+            showToast(`❌ Σφάλμα προσθήκης δεξιότητας ${cleanCode}: ${err.message || 'Αποτυχία API'}`, 'error');
         }
     }
 
-    document.getElementById('skill-exam-code').value = '';
+    selectedSkillExamCodes.clear();
+    renderExamCodeTags('skill');
+    if (document.getElementById('skill-exam-search')) document.getElementById('skill-exam-search').value = '';
+    if (addedCount > 0) openSkillsGroups.add(String(diagId));
     renderSkills();
     if (addedCount > 0) {
         showToast(`✅ Προστέθηκαν ${addedCount} νέες δεξιότητες για τον/την ${diagName}`, 'success');
@@ -1210,8 +1715,8 @@ async function addBulkSkills(targetModality) {
     let count = 0;
     let skippedCount = 0;
     for (const ex of matchingExams) {
-        const code = String(ex.examnumcode);
-        const exists = skills.some(s => s.diagnostician_id === diagId && String(s.exam_code) === code);
+        const code = String(ex.examnumcode || ex.code || '').trim();
+        const exists = skills.some(s => String(s.diagnostician_id) === String(diagId) && String(s.exam_code).trim() === code);
         if (exists) {
             skippedCount++;
             continue;
@@ -1221,17 +1726,16 @@ async function addBulkSkills(targetModality) {
         const record = { diagnostician_id: diagId, diagnostician_name: diagName, exam_code: code, exam_title: name, is_preferred: false };
         try {
             const result = await apiCall('/admin/skills', 'POST', record);
-            skills = skills.filter(s => !(s.diagnostician_id === diagId && String(s.exam_code) === code));
+            skills = skills.filter(s => !(String(s.diagnostician_id) === String(diagId) && String(s.exam_code).trim() === code));
             if (result) skills.push(result);
             else skills.push({ id: Date.now() + Math.random(), ...record });
             count++;
-        } catch {
-            skills = skills.filter(s => !(s.diagnostician_id === diagId && String(s.exam_code) === code));
-            skills.push({ id: Date.now() + Math.random(), ...record });
-            count++;
+        } catch (err) {
+            console.warn(`Bulk skill add error for code ${code}:`, err);
         }
     }
 
+    if (count > 0) openSkillsGroups.add(String(diagId));
     renderSkills();
     if (count > 0) {
         showToast(`✅ Προστέθηκαν ${count} εξετάσεις ${targetModality} ως δεξιότητες στον/στην ${diagName}`, 'success');
@@ -1380,7 +1884,19 @@ function toggleSelectAllModalityExams(event, modKey) {
     const modCheckbox = document.getElementById('chk-modality-' + modKey);
     const isChecked = modCheckbox ? modCheckbox.checked : false;
 
-    const modExams = (RAW_EXAM_CATEGORIES || []).filter(ex => {
+    let baseCategories = RAW_EXAM_CATEGORIES || [];
+    if (examsSearchQuery) {
+        const rawQuery = examsSearchQuery.toLowerCase().trim();
+        const normQuery = normalizeGreek(examsSearchQuery);
+        baseCategories = baseCategories.filter(ex => {
+            const code = String(ex.code || ex.examnumcode || ex.exam_code || ex.id || '').toLowerCase().trim();
+            const name = (ex.name || '').toLowerCase();
+            const normName = normalizeGreek(ex.name || '');
+            return code.includes(rawQuery) || name.includes(rawQuery) || normName.includes(normQuery);
+        });
+    }
+
+    const modExams = baseCategories.filter(ex => {
         let cat = (ex.category || '').toUpperCase().trim();
         if (!cat) {
             if (/CT|ΑΞΟΝ/i.test(ex.name)) cat = 'CT';
@@ -1392,7 +1908,7 @@ function toggleSelectAllModalityExams(event, modKey) {
     });
 
     modExams.forEach(ex => {
-        const code = String(ex.code || ex.examnumcode || ex.exam_code || '');
+        const code = String(ex.code || ex.examnumcode || ex.exam_code || '').trim();
         if (isChecked) {
             selectedExamCodes.add(code);
         } else {
@@ -1620,15 +2136,16 @@ async function addSelectedExamsAsSkills() {
     let addedCount = 0;
     let skippedCount = 0;
 
-    for (const code of codesToAdd) {
+    for (const rawCode of codesToAdd) {
+        const code = String(rawCode).trim();
         // Prevent duplicate addition
-        const exists = skills.some(s => s.diagnostician_id === diagId && String(s.exam_code) === String(code));
+        const exists = skills.some(s => String(s.diagnostician_id) === String(diagId) && String(s.exam_code).trim() === code);
         if (exists) {
             skippedCount++;
             continue;
         }
 
-        const examObj = (RAW_EXAM_CATEGORIES || []).find(ex => String(ex.examnumcode || ex.code) === String(code));
+        const examObj = (RAW_EXAM_CATEGORIES || []).find(ex => String(ex.examnumcode || ex.code || '').trim() === code);
         const examName = examObj ? examObj.name : (EXAM_CODE_MAP[code] || `Εξέταση ${code}`);
 
         const record = {
@@ -1641,17 +2158,16 @@ async function addSelectedExamsAsSkills() {
 
         try {
             const result = await apiCall('/admin/skills', 'POST', record);
-            skills = skills.filter(s => !(s.diagnostician_id === diagId && String(s.exam_code) === String(code)));
+            skills = skills.filter(s => !(String(s.diagnostician_id) === String(diagId) && String(s.exam_code).trim() === code));
             if (result) skills.push(result);
             else skills.push({ id: Date.now() + Math.random(), ...record });
             addedCount++;
-        } catch {
-            skills = skills.filter(s => !(s.diagnostician_id === diagId && String(s.exam_code) === String(code)));
-            skills.push({ id: Date.now() + Math.random(), ...record });
-            addedCount++;
+        } catch (err) {
+            showToast(`❌ Αποτυχία προσθήκης δεξιότητας ${code}: ${err.message || 'Σφάλμα API'}`, 'error');
         }
     }
 
+    if (addedCount > 0) openSkillsGroups.add(String(diagId));
     renderSkills();
 
     if (addedCount > 0 && skippedCount > 0) {
@@ -1922,13 +2438,13 @@ async function deleteSkill(id) {
     try {
         await apiCall(`/admin/skills/${id}`, 'DELETE');
     } catch { /* mock mode */ }
-    skills = skills.filter(s => s.id !== id);
+    skills = skills.filter(s => String(s.id) !== String(id));
     renderSkills();
     showToast('Η δεξιότητα διαγράφηκε', 'info');
 }
 
 async function toggleSkillPreference(id, newPreference) {
-    const s = skills.find(x => x.id === id);
+    const s = skills.find(x => String(x.id) === String(id));
     if (!s) return;
     s.is_preferred = newPreference;
 
@@ -1968,6 +2484,7 @@ async function addPartnership() {
         partnerships.push({ id: Date.now(), ...record });
     }
 
+    if (diagId) openPartnershipsGroups.add(String(diagId));
     renderPartnerships();
     document.getElementById('part-doctor-search').value = '';
     document.getElementById('part-doctor-id').value = '';
@@ -1980,10 +2497,10 @@ async function deletePartnership(id) {
     try {
         await apiCall(`/admin/partnerships/${id}`, 'DELETE');
         showToast('Η συνεργασία διαγράφηκε', 'success');
-        await loadData();
+        await loadPartnerships();
     } catch (err) {
         // mock fallback
-        partnerships = partnerships.filter(p => p.id !== id);
+        partnerships = partnerships.filter(p => String(p.id) !== String(id));
         renderPartnerships();
         showToast('Η συνεργασία διαγράφηκε (Mock)', 'success');
     }
@@ -1996,10 +2513,10 @@ async function togglePartnershipProperty(id, property, newValue) {
         await apiCall(`/admin/partnerships/${id}`, 'PATCH', payload);
         const propName = property === 'is_active' ? 'Η κατάσταση' : 'Η αποκλειστικότητα';
         showToast(`${propName} της συνεργασίας ενημερώθηκε`, 'success');
-        await loadData();
+        await loadPartnerships();
     } catch (err) {
         // mock fallback
-        const p = partnerships.find(x => x.id === id);
+        const p = partnerships.find(x => String(x.id) === String(id));
         if (p) {
             p[property] = newValue;
         }
@@ -2335,12 +2852,13 @@ function checkRoutingRuleOverlap(payload, editId = null) {
 async function addExamRoutingRule() {
     const labId = document.getElementById('adv-route-lab').value;
     const isPam = document.getElementById('adv-route-pam').checked;
-    const codes = document.getElementById('adv-route-codes').value;
     const diagId = document.getElementById('adv-route-diag').value;
     const docId = document.getElementById('adv-route-doc').value;
     const docSearch = document.getElementById('adv-route-doc-search').value;
     const docName = docSearch ? docSearch.split(' (')[0] : null;
     const desc = document.getElementById('adv-route-desc').value.trim();
+
+    const codes = Array.from(selectedRouteExamCodes).join(',');
     
     if (!codes || !diagId || !desc) {
         showToast('Συμπληρώστε κωδικούς, διαγνώστη και περιγραφή.', 'warning');
@@ -2348,7 +2866,7 @@ async function addExamRoutingRule() {
     }
 
     if (Object.keys(EXAM_CODE_MAP).length > 0) {
-        const invalidCodes = codes.split(',').map(c => c.trim()).filter(c => c && !EXAM_CODE_MAP[c]);
+        const invalidCodes = codes.split(',').map(c => c.trim()).filter(c => c && !EXAM_CODE_MAP[c.trim()]);
         if (invalidCodes.length > 0) {
             showToast(`Οι παρακάτω κωδικοί εξέτασης δεν υπάρχουν: ${invalidCodes.join(', ')}`, 'warning');
             return;
@@ -2375,8 +2893,10 @@ async function addExamRoutingRule() {
     const data = await apiCall('/admin/advanced/exam-routing-rules', 'POST', payload);
     if (data) {
         showToast('Ο κανόνας προστέθηκε.');
+        selectedRouteExamCodes.clear();
+        renderExamCodeTags('route');
         document.getElementById('adv-route-lab').value = '';
-        document.getElementById('adv-route-codes').value = '';
+        if (document.getElementById('adv-route-codes-search')) document.getElementById('adv-route-codes-search').value = '';
         document.getElementById('adv-route-doc').value = '';
         document.getElementById('adv-route-doc-search').value = '';
         document.getElementById('adv-route-desc').value = '';
@@ -2473,7 +2993,14 @@ function editExamRoutingRule(id) {
     document.getElementById('adv-route-doc').value = r.issuing_doctor_id || '';
     document.getElementById('adv-route-doc-search').value = r.issuing_doctor_name ? `${r.issuing_doctor_name} (${r.issuing_doctor_id})` : '';
     document.getElementById('adv-route-pam').checked = r.is_pamakristos;
-    document.getElementById('adv-route-codes').value = r.exam_codes;
+    
+    selectedRouteExamCodes.clear();
+    if (r.exam_codes) {
+        r.exam_codes.split(',').map(c => c.trim()).filter(Boolean).forEach(c => selectedRouteExamCodes.add(c));
+    }
+    renderExamCodeTags('route');
+    if (document.getElementById('adv-route-codes-search')) document.getElementById('adv-route-codes-search').value = '';
+
     document.getElementById('adv-route-diag').value = r.diagnostician_id;
     document.getElementById('adv-route-desc').value = r.description || '';
     
@@ -2488,14 +3015,23 @@ function editExamRoutingRule(id) {
         const docName = docSearch ? docSearch.split(' (')[0] : null;
         const desc = document.getElementById('adv-route-desc').value.trim();
         
-        const codesValue = document.getElementById('adv-route-codes').value.trim();
+        const searchInputVal = document.getElementById('adv-route-codes-search')?.value?.trim() || '';
+        const codeList = Array.from(selectedRouteExamCodes);
+        if (searchInputVal) {
+            const manualCodes = searchInputVal.split(/[\s,]+/).map(c => c.trim()).filter(Boolean);
+            manualCodes.forEach(c => {
+                if (!codeList.includes(c)) codeList.push(c);
+            });
+        }
+        const codesValue = codeList.join(',');
+
         if (!codesValue || !document.getElementById('adv-route-diag').value || !desc) {
              showToast('Συμπληρώστε κωδικούς, διαγνώστη και περιγραφή.', 'warning');
              return;
         }
 
         if (Object.keys(EXAM_CODE_MAP).length > 0) {
-            const invalidCodes = codesValue.split(',').map(c => c.trim()).filter(c => c && !EXAM_CODE_MAP[c]);
+            const invalidCodes = codesValue.split(',').map(c => c.trim()).filter(c => c && !EXAM_CODE_MAP[c.trim()]);
             if (invalidCodes.length > 0) {
                 showToast(`Οι παρακάτω κωδικοί εξέτασης δεν υπάρχουν: ${invalidCodes.join(', ')}`, 'warning');
                 return;

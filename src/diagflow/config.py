@@ -5,8 +5,15 @@ Loads configuration from environment variables / .env file.
 Uses Pydantic Settings for validation and type coercion.
 """
 
-from pydantic_settings import BaseSettings
+import sys
+from pathlib import Path
 from pydantic import Field
+from pydantic_settings import BaseSettings
+
+if getattr(sys, "frozen", False):
+    _env_file = Path(sys.executable).parent / ".env"
+else:
+    _env_file = Path(__file__).resolve().parent.parent.parent / ".env"
 
 
 class Settings(BaseSettings):
@@ -64,7 +71,7 @@ class Settings(BaseSettings):
     log_level: str = Field(default="DEBUG")
 
     model_config = {
-        "env_file": ".env",
+        "env_file": str(_env_file) if _env_file.exists() else ".env",
         "env_file_encoding": "utf-8",
         "case_sensitive": False,
     }

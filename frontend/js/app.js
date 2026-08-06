@@ -406,35 +406,85 @@ function isPammakristos(exam) {
 }
 
 function sortExams(exams) {
-    let sorted = [...exams];
+    if (!exams || exams.length === 0) return [];
 
+    // 1. Group exams into order groups (same order ID & patient)
+    const groupMap = new Map();
+    const groupOrder = [];
+
+    exams.forEach(ex => {
+        const orderKey = ex.extracode && (ex.demogid || ex.patient_id)
+            ? `${ex.extracode}_${ex.demogid || ex.patient_id}`
+            : `single_${ex.exam_id}`;
+
+        if (!groupMap.has(orderKey)) {
+            const grp = {
+                key: orderKey,
+                exams: [],
+                hasPammakristos: false,
+                minDate: '',
+                maxDate: '',
+                primaryExam: ex
+            };
+            groupMap.set(orderKey, grp);
+            groupOrder.push(grp);
+        }
+
+        const grp = groupMap.get(orderKey);
+        grp.exams.push(ex);
+        if (isPammakristos(ex)) grp.hasPammakristos = true;
+    });
+
+    // Sort exams internally by visitdate (descending) & compute minDate / maxDate
+    groupOrder.forEach(grp => {
+        grp.exams.sort((a, b) => {
+            const dA = a.visitdate || a.request_date || '';
+            const dB = b.visitdate || b.request_date || '';
+            if (dA < dB) return 1;
+            if (dA > dB) return -1;
+            return 0;
+        });
+
+        const dates = grp.exams.map(e => String(e.visitdate || e.request_date || '').slice(0, 10)).filter(Boolean);
+        if (dates.length > 0) {
+            dates.sort();
+            grp.minDate = dates[0];
+            grp.maxDate = dates[dates.length - 1];
+        } else {
+            grp.minDate = '';
+            grp.maxDate = '';
+        }
+        grp.primaryExam = grp.exams[0];
+    });
+
+    // 2. Sort the order groups based on sortConfig
     if (sortConfig.key && sortConfig.direction) {
-        sorted.sort((a, b) => {
+        groupOrder.sort((a, b) => {
             let valA, valB;
             switch (sortConfig.key) {
                 case 'extracode':
-                    valA = a.extracode || a.exam_id || '';
-                    valB = b.extracode || b.exam_id || '';
+                    valA = a.primaryExam.extracode || a.primaryExam.exam_id || '';
+                    valB = b.primaryExam.extracode || b.primaryExam.exam_id || '';
                     break;
                 case 'date':
-                    valA = a.visitdate || a.request_date || '';
-                    valB = b.visitdate || b.request_date || '';
+                    valA = a.minDate;
+                    valB = b.minDate;
                     break;
                 case 'lab':
-                    valA = a.lab_name || a.laboratoryname || '';
-                    valB = b.lab_name || b.laboratoryname || '';
+                    valA = a.primaryExam.lab_name || a.primaryExam.laboratoryname || '';
+                    valB = b.primaryExam.lab_name || b.primaryExam.laboratoryname || '';
                     break;
                 case 'patient':
-                    valA = (a.patient_name || `${a.fname || ''} ${a.lname || ''}`).trim();
-                    valB = (b.patient_name || `${b.fname || ''} ${b.lname || ''}`).trim();
+                    valA = (a.primaryExam.patient_name || `${a.primaryExam.fname || ''} ${a.primaryExam.lname || ''}`).trim();
+                    valB = (b.primaryExam.patient_name || `${b.primaryExam.fname || ''} ${b.primaryExam.lname || ''}`).trim();
                     break;
                 case 'examcode':
-                    valA = a.examnumcode || '';
-                    valB = b.examnumcode || '';
+                    valA = a.primaryExam.examnumcode || '';
+                    valB = b.primaryExam.examnumcode || '';
                     break;
                 case 'doctor':
-                    valA = a.wname || a.issuing_doctor_name || '';
-                    valB = b.wname || b.issuing_doctor_name || '';
+                    valA = a.primaryExam.wname || a.primaryExam.issuing_doctor_name || '';
+                    valB = b.primaryExam.wname || b.primaryExam.issuing_doctor_name || '';
                     break;
                 default:
                     valA = ''; valB = '';
@@ -449,14 +499,20 @@ function sortExams(exams) {
         });
     }
 
-    // Always keep Pammakristos at the top, regardless of sort
-    sorted.sort((a, b) => {
-        const aIsPam = isPammakristos(a) ? 1 : 0;
-        const bIsPam = isPammakristos(b) ? 1 : 0;
+    // 3. Always keep Pammakristos order groups at the top
+    groupOrder.sort((a, b) => {
+        const aIsPam = a.hasPammakristos ? 1 : 0;
+        const bIsPam = b.hasPammakristos ? 1 : 0;
         return bIsPam - aIsPam;
     });
 
-    return sorted;
+    // 4. Flatten order groups back into single exams array
+    const result = [];
+    groupOrder.forEach(grp => {
+        result.push(...grp.exams);
+    });
+
+    return result;
 }
 
 function applyFiltersModality() {
@@ -659,39 +715,131 @@ function updateSortIcons() {
 //  Render — Pending Table
 // ══════════════════════════════════════════════
 
+function groupExamsByOrder(exams) {
+    if (!exams || exams.length === 0) return [];
+    const groups = new Map();
+    const unGrouped = [];
+
+    exams.forEach(ex => {
+        const orderKey = ex.extracode && (ex.demogid || ex.patient_id) 
+            ? `${ex.extracode}_${ex.demogid || ex.patient_id}` 
+            : null;
+        if (orderKey) {
+            if (!groups.has(orderKey)) {
+                groups.set(orderKey, []);
+            }
+            groups.get(orderKey).push(ex);
+        } else {
+            unGrouped.push(ex);
+        }
+    });
+
+    const result = [];
+    const seenGroupKeys = new Set();
+    exams.forEach(ex => {
+        const orderKey = ex.extracode && (ex.demogid || ex.patient_id) 
+            ? `${ex.extracode}_${ex.demogid || ex.patient_id}` 
+            : null;
+        if (orderKey) {
+            if (!seenGroupKeys.has(orderKey)) {
+                seenGroupKeys.add(orderKey);
+                result.push(...groups.get(orderKey));
+            }
+        } else {
+            result.push(ex);
+        }
+    });
+
+    return result;
+}
+
 function renderPendingTable() {
     renderPendingRows(pendingExams);
 }
 
-function renderPendingRows(exams) {
+function renderPendingRows(rawExams) {
     const tbody = document.getElementById('tbody-pending');
     const emptyState = document.getElementById('empty-state-pending');
 
-    if (exams.length === 0) {
+    if (!rawExams || rawExams.length === 0) {
         tbody.innerHTML = '';
         emptyState.style.display = 'flex';
         return;
     }
 
     emptyState.style.display = 'none';
+    const exams = groupExamsByOrder(rawExams);
 
-    // Calculate rowspans for grouping exams of the same order
-    const rowSpans = new Array(exams.length).fill(1);
-    for (let i = exams.length - 1; i > 0; i--) {
-        const curr = exams[i];
-        const prev = exams[i - 1];
-        if (
-            (curr.extracode || curr.exam_id) === (prev.extracode || prev.exam_id) &&
-            (curr.visitdate || curr.request_date) === (prev.visitdate || prev.request_date) &&
-            (curr.lab_name || curr.laboratoryname) === (prev.lab_name || prev.laboratoryname) &&
-            (curr.demogid || curr.patient_id) === (prev.demogid || prev.patient_id)
+    // Pre-calculate order group info & sub-spans for Date, Lab, and Doctor
+    const orderGroupInfos = new Array(exams.length);
+    let startIndex = 0;
+    while (startIndex < exams.length) {
+        let endIndex = startIndex + 1;
+        while (
+            endIndex < exams.length &&
+            exams[endIndex].extracode && exams[startIndex].extracode &&
+            String(exams[endIndex].extracode) === String(exams[startIndex].extracode) &&
+            String(exams[endIndex].demogid || exams[endIndex].patient_id) === String(exams[startIndex].demogid || exams[startIndex].patient_id)
         ) {
-            rowSpans[i - 1] += rowSpans[i];
-            rowSpans[i] = 0;
+            endIndex++;
         }
+
+        const groupSlice = exams.slice(startIndex, endIndex);
+        const L = groupSlice.length;
+
+        // Calculate date spans within this order group
+        const dateSpans = new Array(L).fill(0);
+        let r = 0;
+        while (r < L) {
+            let rEnd = r + 1;
+            const rDate = formatDateDMY(groupSlice[r].visitdate || groupSlice[r].request_date);
+            while (rEnd < L && formatDateDMY(groupSlice[rEnd].visitdate || groupSlice[rEnd].request_date) === rDate) {
+                rEnd++;
+            }
+            dateSpans[r] = rEnd - r;
+            r = rEnd;
+        }
+
+        // Calculate lab spans within this order group
+        const labSpans = new Array(L).fill(0);
+        r = 0;
+        while (r < L) {
+            let rEnd = r + 1;
+            const rLab = groupSlice[r].lab_name || groupSlice[r].laboratoryname || groupSlice[r].lab_id || '—';
+            while (rEnd < L && (groupSlice[rEnd].lab_name || groupSlice[rEnd].laboratoryname || groupSlice[rEnd].lab_id || '—') === rLab) {
+                rEnd++;
+            }
+            labSpans[r] = rEnd - r;
+            r = rEnd;
+        }
+
+        // Calculate doctor spans within this order group
+        const docSpans = new Array(L).fill(0);
+        r = 0;
+        while (r < L) {
+            let rEnd = r + 1;
+            const rDoc = groupSlice[r].wname || groupSlice[r].issuing_doctor_name || '—';
+            while (rEnd < L && (groupSlice[rEnd].wname || groupSlice[rEnd].issuing_doctor_name || '—') === rDoc) {
+                rEnd++;
+            }
+            docSpans[r] = rEnd - r;
+            r = rEnd;
+        }
+
+        for (let k = 0; k < L; k++) {
+            orderGroupInfos[startIndex + k] = {
+                isGroupHeader: k === 0,
+                groupSize: L,
+                dateSpan: dateSpans[k],
+                labSpan: labSpans[k],
+                docSpan: docSpans[k]
+            };
+        }
+        startIndex = endIndex;
     }
 
     tbody.innerHTML = exams.map((exam, i) => {
+        const info = orderGroupInfos[i];
         const hasSuggestion = exam.suggestion != null;
         const dateStr = formatDateDMY(exam.visitdate || exam.request_date);
         const cleanName = cleanExamName(exam.examname || exam.exam_title || '');
@@ -704,27 +852,45 @@ function renderPendingRows(exams) {
         const isSelected = selectedExams.has(exam.exam_id) ? 'checked' : '';
         const rowClass = isSelected ? 'selected-row' : '';
         const pamClass = isPammakristos(exam) ? 'pammakristos-row' : '';
-        const span = rowSpans[i];
-        const groupedCols = span > 0 ? `
-                <td class="extracode-cell frozen-col-2" rowspan="${span}"><span class="extracode-badge">${exam.extracode || exam.exam_id}</span></td>
-                <td class="date-cell" rowspan="${span}">${dateStr}</td>
-                <td rowspan="${span}">${exam.lab_name || exam.laboratoryname || '—'}</td>
-                <td class="demogid-cell" style="border-left: 1px solid rgba(255, 255, 255, 0.2);" rowspan="${span}">${exam.demogid || exam.patient_id || '—'}</td>
-                <td style="border-right: 1px solid rgba(255, 255, 255, 0.2);" rowspan="${span}">${patientName}</td>` : '';
+        const span = info.groupSize;
+
+        // Grouped columns: Εντολή & Ασθενής (DEMOGID + Patient Name)
+        const groupedOrderPatientCols = info.isGroupHeader ? `
+            <td class="extracode-cell frozen-col-2" rowspan="${span}"><span class="extracode-badge">${exam.extracode || exam.exam_id}</span></td>
+            <td class="demogid-cell" style="border-left: 1px solid rgba(255, 255, 255, 0.2);" rowspan="${span}">${exam.demogid || exam.patient_id || '—'}</td>
+            <td style="border-right: 1px solid rgba(255, 255, 255, 0.2);" rowspan="${span}">${patientName}</td>` : '';
+
+        // Sub-grouped column: Ημερομηνία
+        const dateCol = info.dateSpan > 0 ? `
+            <td class="date-cell" ${info.dateSpan > 1 ? `rowspan="${info.dateSpan}"` : ''}>${dateStr}</td>` : '';
+
+        // Sub-grouped column: Μονάδα
+        const labCol = info.labSpan > 0 ? `
+            <td ${info.labSpan > 1 ? `rowspan="${info.labSpan}"` : ''}>${exam.lab_name || exam.laboratoryname || '—'}</td>` : '';
+
+        // Sub-grouped column: Παραπέμπων Ιατρός
+        const docCol = info.docSpan > 0 ? `
+            <td ${info.docSpan > 1 ? `rowspan="${info.docSpan}"` : ''}>${exam.wname || exam.issuing_doctor_name || '—'}</td>` : '';
+
+        // Grouped column: Σχόλια
+        const groupedCommentsCol = info.isGroupHeader ? `
+            <td class="comment-cell" rowspan="${span}">${notesHtml}</td>` : '';
 
         return `
             <tr id="row-${exam.exam_id}" class="${rowClass} ${pamClass}">
                 <td class="frozen-col-1" style="width: 48px; min-width: 48px; padding: 0; text-align: center;">
                     <input type="checkbox" class="row-checkbox" value="${exam.exam_id}" onchange="toggleSelectExam('${exam.exam_id}')" ${isSelected}>
                 </td>
-${groupedCols}
+${groupedOrderPatientCols}
+${dateCol}
+${labCol}
                 <td style="border-left: 1px solid rgba(255, 255, 255, 0.2);">
                     <span class="modality-badge ${catClass}">${normCat}</span>
                 </td>
                 <td class="examnumcode-cell">${exam.examnumcode || '—'}</td>
                 <td class="exam-name-cell" style="border-right: 1px solid rgba(255, 255, 255, 0.2);"><span class="body-part-tag" title="${escapeHtmlFull(exam.examname || '')}">${cleanName || '—'}</span></td>
-                <td>${exam.wname || exam.issuing_doctor_name || '—'}</td>
-                <td class="comment-cell">${notesHtml}</td>
+${docCol}
+${groupedCommentsCol}
                 <td class="comment-cell">${oldVisitHtml}</td>
                 <td class="suggestion-cell">
                     ${hasSuggestion
@@ -777,22 +943,26 @@ async function fetchVisibleSuggestions(exams) {
     }
 
     try {
-        await Promise.all(missing.map(async exam => {
-            exam._fetchingSuggestion = true;
-            try {
-                let suggestion = await apiCall('/assignments/suggest', 'POST', { exam_id: exam.exam_id });
-                if (!suggestion) suggestion = getMockSuggestion(exam.exam_id);
-                exam.suggestion = suggestion;
-                exam._wasInvalidated = false;
+        const chunkSize = 4;
+        for (let i = 0; i < missing.length; i += chunkSize) {
+            const chunk = missing.slice(i, i + chunkSize);
+            await Promise.all(chunk.map(async exam => {
+                exam._fetchingSuggestion = true;
+                try {
+                    let suggestion = await apiCall('/assignments/suggest', 'POST', { exam_id: exam.exam_id });
+                    if (!suggestion) suggestion = getMockSuggestion(exam.exam_id);
+                    exam.suggestion = suggestion;
+                    exam._wasInvalidated = false;
 
-                if (currentTab === 'pending') {
-                    updateExamSuggestionRow(exam);
+                    if (currentTab === 'pending') {
+                        updateExamSuggestionRow(exam);
+                    }
+                } catch (e) {
+                    exam._fetchingSuggestion = false;
+                    exam._wasInvalidated = false;
                 }
-            } catch (e) {
-                exam._fetchingSuggestion = false;
-                exam._wasInvalidated = false;
-            }
-        }));
+            }));
+        }
     } finally {
         if (overlay) overlay.style.display = 'none';
     }
@@ -818,35 +988,89 @@ function renderAssignedTable() {
     renderAssignedRows(assignedExams);
 }
 
-function renderAssignedRows(exams) {
+function renderAssignedRows(rawExams) {
     const tbody = document.getElementById('tbody-assigned');
     const emptyState = document.getElementById('empty-state-assigned');
 
-    if (exams.length === 0) {
+    if (!rawExams || rawExams.length === 0) {
         tbody.innerHTML = '';
         emptyState.style.display = 'flex';
         return;
     }
 
     emptyState.style.display = 'none';
+    const exams = groupExamsByOrder(rawExams);
 
-    // Calculate rowspans for grouping exams of the same order
-    const rowSpans = new Array(exams.length).fill(1);
-    for (let i = exams.length - 1; i > 0; i--) {
-        const curr = exams[i];
-        const prev = exams[i - 1];
-        if (
-            (curr.extracode || curr.exam_id) === (prev.extracode || prev.exam_id) &&
-            (curr.visitdate || curr.request_date) === (prev.visitdate || prev.request_date) &&
-            (curr.lab_name || curr.laboratoryname) === (prev.lab_name || prev.laboratoryname) &&
-            (curr.demogid || curr.patient_id) === (prev.demogid || prev.patient_id)
+    // Pre-calculate order group info & sub-spans for Date, Lab, and Doctor
+    const orderGroupInfos = new Array(exams.length);
+    let startIndex = 0;
+    while (startIndex < exams.length) {
+        let endIndex = startIndex + 1;
+        while (
+            endIndex < exams.length &&
+            exams[endIndex].extracode && exams[startIndex].extracode &&
+            String(exams[endIndex].extracode) === String(exams[startIndex].extracode) &&
+            String(exams[endIndex].demogid || exams[endIndex].patient_id) === String(exams[startIndex].demogid || exams[startIndex].patient_id)
         ) {
-            rowSpans[i - 1] += rowSpans[i];
-            rowSpans[i] = 0;
+            endIndex++;
         }
+
+        const groupSlice = exams.slice(startIndex, endIndex);
+        const L = groupSlice.length;
+
+        // Calculate date spans within this order group
+        const dateSpans = new Array(L).fill(0);
+        let r = 0;
+        while (r < L) {
+            let rEnd = r + 1;
+            const rDate = formatDateDMY(groupSlice[r].visitdate || groupSlice[r].request_date);
+            while (rEnd < L && formatDateDMY(groupSlice[rEnd].visitdate || groupSlice[rEnd].request_date) === rDate) {
+                rEnd++;
+            }
+            dateSpans[r] = rEnd - r;
+            r = rEnd;
+        }
+
+        // Calculate lab spans within this order group
+        const labSpans = new Array(L).fill(0);
+        r = 0;
+        while (r < L) {
+            let rEnd = r + 1;
+            const rLab = groupSlice[r].lab_name || groupSlice[r].laboratoryname || groupSlice[r].lab_id || '—';
+            while (rEnd < L && (groupSlice[rEnd].lab_name || groupSlice[rEnd].laboratoryname || groupSlice[rEnd].lab_id || '—') === rLab) {
+                rEnd++;
+            }
+            labSpans[r] = rEnd - r;
+            r = rEnd;
+        }
+
+        // Calculate doctor spans within this order group
+        const docSpans = new Array(L).fill(0);
+        r = 0;
+        while (r < L) {
+            let rEnd = r + 1;
+            const rDoc = groupSlice[r].wname || groupSlice[r].issuing_doctor_name || '—';
+            while (rEnd < L && (groupSlice[rEnd].wname || groupSlice[rEnd].issuing_doctor_name || '—') === rDoc) {
+                rEnd++;
+            }
+            docSpans[r] = rEnd - r;
+            r = rEnd;
+        }
+
+        for (let k = 0; k < L; k++) {
+            orderGroupInfos[startIndex + k] = {
+                isGroupHeader: k === 0,
+                groupSize: L,
+                dateSpan: dateSpans[k],
+                labSpan: labSpans[k],
+                docSpan: docSpans[k]
+            };
+        }
+        startIndex = endIndex;
     }
 
     tbody.innerHTML = exams.map((exam, i) => {
+        const info = orderGroupInfos[i];
         const dateStr = formatDateDMY(exam.visitdate || exam.request_date);
         const cleanName = cleanExamName(exam.examname || exam.exam_title || '');
         const normCat = normalizeModalityCode(exam.category || exam.modality);
@@ -859,14 +1083,29 @@ function renderAssignedRows(exams) {
         const rowClass = isSelected ? 'selected-row' : '';
         const pamClass = isPammakristos(exam) ? 'pammakristos-row' : '';
         const exammoreid = exam.exammoreid || '';
+        const span = info.groupSize;
 
-        const span = rowSpans[i];
-        const groupedCols = span > 0 ? `
-                <td class="extracode-cell frozen-col-2" rowspan="${span}"><span class="extracode-badge">${exam.extracode || exam.exam_id}</span></td>
-                <td class="date-cell" rowspan="${span}">${dateStr}</td>
-                <td rowspan="${span}">${exam.lab_name || exam.laboratoryname || '—'}</td>
-                <td class="demogid-cell" style="border-left: 1px solid rgba(255, 255, 255, 0.2);" rowspan="${span}">${exam.demogid || exam.patient_id || '—'}</td>
-                <td style="border-right: 1px solid rgba(255, 255, 255, 0.2);" rowspan="${span}">${patientName}</td>` : '';
+        // Grouped columns: Εντολή & Ασθενής (DEMOGID + Patient Name)
+        const groupedOrderPatientCols = info.isGroupHeader ? `
+            <td class="extracode-cell frozen-col-2" rowspan="${span}"><span class="extracode-badge">${exam.extracode || exam.exam_id}</span></td>
+            <td class="demogid-cell" style="border-left: 1px solid rgba(255, 255, 255, 0.2);" rowspan="${span}">${exam.demogid || exam.patient_id || '—'}</td>
+            <td style="border-right: 1px solid rgba(255, 255, 255, 0.2);" rowspan="${span}">${patientName}</td>` : '';
+
+        // Sub-grouped column: Ημερομηνία
+        const dateCol = info.dateSpan > 0 ? `
+            <td class="date-cell" ${info.dateSpan > 1 ? `rowspan="${info.dateSpan}"` : ''}>${dateStr}</td>` : '';
+
+        // Sub-grouped column: Μονάδα
+        const labCol = info.labSpan > 0 ? `
+            <td ${info.labSpan > 1 ? `rowspan="${info.labSpan}"` : ''}>${exam.lab_name || exam.laboratoryname || '—'}</td>` : '';
+
+        // Sub-grouped column: Παραπέμπων Ιατρός
+        const docCol = info.docSpan > 0 ? `
+            <td ${info.docSpan > 1 ? `rowspan="${info.docSpan}"` : ''}>${exam.wname || exam.issuing_doctor_name || '—'}</td>` : '';
+
+        // Grouped column: Σχόλια
+        const groupedCommentsCol = info.isGroupHeader ? `
+            <td class="comment-cell" rowspan="${span}">${notesHtml}</td>` : '';
 
         const autoBadgeRuleDesc = exam.rule_desc ? `Κανόνας: ${escapeHtmlFull(exam.rule_desc)}` : 'Αυτόματη Ανάθεση';
         const autoBadge = exam.is_auto_assigned ? `
@@ -882,14 +1121,16 @@ function renderAssignedRows(exams) {
                         data-exammoreid="${exammoreid}"
                         onchange="toggleSelectAssignedExam('${exam.exam_id}')" ${isSelected ? 'checked' : ''}>
                 </td>
-${groupedCols}
+${groupedOrderPatientCols}
+${dateCol}
+${labCol}
                 <td style="border-left: 1px solid rgba(255, 255, 255, 0.2);">
                     <span class="modality-badge ${catClass}">${normCat}</span>
                 </td>
                 <td class="examnumcode-cell">${exam.examnumcode || '—'}</td>
                 <td class="exam-name-cell" style="border-right: 1px solid rgba(255, 255, 255, 0.2);"><span class="body-part-tag" title="${escapeHtmlFull(exam.examname || '')}">${cleanName || '—'}</span></td>
-                <td>${exam.wname || exam.issuing_doctor_name || '—'}</td>
-                <td class="comment-cell">${notesHtml}</td>
+${docCol}
+${groupedCommentsCol}
                 <td class="comment-cell">${oldVisitHtml}</td>
                 <td><span class="assigned-name">${diagName}</span>${autoBadge}</td>
                 <td>
@@ -1209,6 +1450,12 @@ function selectAlternative(diagId, diagName, isEliminated, evt) {
     }
 
     updateProposalModalButtons();
+
+    // Auto-scroll modal to the bottom so user sees action buttons ("Αλλαγή")
+    const modalEl = document.querySelector('#suggestion-modal .modal');
+    if (modalEl) {
+        modalEl.scrollTo({ top: modalEl.scrollHeight, behavior: 'smooth' });
+    }
 }
 
 function closeModal() {
@@ -1244,7 +1491,11 @@ async function confirmAssignment() {
             exam_id: currentExamId,
             diagnostician_id: currentSuggestion.suggested_diagnostician_id,
         });
-    } catch { /* Continue in mock mode */ }
+    } catch (err) {
+        showToast(`❌ Σφάλμα ανάθεσης: ${err.message}`, 'error');
+        updateProposalModalButtons();
+        return;
+    }
 
     // Handle moving or updating exam state
     let exam = pendingExams.find(e => e.exam_id === currentExamId);
@@ -1312,7 +1563,11 @@ async function overrideAssignment() {
             override_diagnostician_id: overrideId,
             reason,
         });
-    } catch { /* Continue in mock mode */ }
+    } catch (err) {
+        showToast(`❌ Σφάλμα αλλαγής ανάθεσης: ${err.message}`, 'error');
+        updateProposalModalButtons();
+        return;
+    }
 
     // Handle moving or updating exam state
     let exam = pendingExams.find(e => e.exam_id === currentExamId);
@@ -1442,8 +1697,33 @@ function showAdminLoggedOut() {
 }
 
 function goToAdmin() {
+    if (document.body.classList.contains('engine-busy')) {
+        showToast('⏳ Επεξεργασία σε εξέλιξη... Παρακαλώ περιμένετε να ολοκληρωθεί ο υπολογισμός.', 'warning');
+        return;
+    }
     window.location.href = 'admin.html';
 }
+
+let activeBackgroundTasksCount = 0;
+
+function showBackgroundWork(message = '⏳ Επεξεργασία σε εξέλιξη...') {
+    activeBackgroundTasksCount++;
+    const banner = document.getElementById('global-background-banner');
+    const textEl = document.getElementById('global-banner-text');
+    if (textEl) textEl.innerText = message;
+    if (banner) banner.style.display = 'flex';
+    document.body.classList.add('engine-busy');
+}
+
+function hideBackgroundWork() {
+    activeBackgroundTasksCount = Math.max(0, activeBackgroundTasksCount - 1);
+    if (activeBackgroundTasksCount === 0) {
+        const banner = document.getElementById('global-background-banner');
+        if (banner) banner.style.display = 'none';
+        document.body.classList.remove('engine-busy');
+    }
+}
+
 
 
 // ══════════════════════════════════════════════
@@ -2049,6 +2329,7 @@ function getTodayQuota(d) {
 
 let currentBulkSelection = "";
 let bulkEligibilityCache = null;
+let isBulkEligibilityLoading = false;
 
 async function fetchBulkEligibility() {
     const selectedList = currentTab === 'pending'
@@ -2067,6 +2348,13 @@ async function fetchBulkEligibility() {
 
     if (examIds.length === 0) return;
 
+    isBulkEligibilityLoading = true;
+    showBackgroundWork('⏳ Υπολογισμός καταλληλότητας διαγνωστών...');
+    const menu = document.getElementById('fab-dropdown-menu');
+    if (menu && menu.style.display === 'block') {
+        populateFabDropdown();
+    }
+
     try {
         const res = await apiCall('/assignments/bulk-eligible-diagnosticians', 'POST', { exam_ids: examIds });
         if (currentBulkSelection === selectionKey) {
@@ -2077,13 +2365,16 @@ async function fetchBulkEligibility() {
                     rejectReason: d.reject_reason
                 });
             });
-            const menu = document.getElementById('fab-dropdown-menu');
-            if (menu && menu.style.display === 'block') {
-                populateFabDropdown();
-            }
         }
     } catch (err) {
         console.error("Failed to fetch bulk eligibility", err);
+    } finally {
+        isBulkEligibilityLoading = false;
+        hideBackgroundWork();
+        const menu = document.getElementById('fab-dropdown-menu');
+        if (menu && menu.style.display === 'block') {
+            populateFabDropdown();
+        }
     }
 }
 
@@ -2100,9 +2391,9 @@ function getEligibleFabDiagnosticians() {
         return diagnosticians.map(d => {
             const cached = bulkEligibilityCache.get(d.id);
             if (cached) {
-                return { ...d, isEligible: cached.isEligible, rejectReason: cached.rejectReason };
+                return { ...d, isEligible: cached.isEligible, rejectReason: cached.rejectReason, isCalculating: false };
             }
-            return { ...d, isEligible: false, rejectReason: 'Άγνωστο' };
+            return { ...d, isEligible: false, rejectReason: 'Άγνωστο', isCalculating: false };
         });
     }
 
@@ -2140,7 +2431,11 @@ function getEligibleFabDiagnosticians() {
             rejectReason = 'Όριο γεμάτο';
         }
 
-        return { ...d, isEligible, rejectReason };
+        if (isBulkEligibilityLoading && isEligible) {
+            rejectReason = '⏳ Υπολογισμός...';
+        }
+
+        return { ...d, isEligible, rejectReason, isCalculating: isBulkEligibilityLoading && isEligible };
     });
 }
 
@@ -2153,10 +2448,10 @@ function populateFabDropdown() {
 
     let eligible = getEligibleFabDiagnosticians();
 
-    // Sort: Eligible first, then alphabetical
+    // Sort: Eligible first, then calculating, then non-eligible, then alphabetical
     eligible.sort((a, b) => {
-        if (a.isEligible && !b.isEligible) return -1;
-        if (!a.isEligible && b.isEligible) return 1;
+        if (a.isEligible && !a.isCalculating && (!b.isEligible || b.isCalculating)) return -1;
+        if ((!a.isEligible || a.isCalculating) && b.isEligible && !b.isCalculating) return 1;
         return a.name.localeCompare(b.name, 'el');
     });
 
@@ -2164,19 +2459,33 @@ function populateFabDropdown() {
         ? eligible.filter(d => normalizeGreek(d.name).includes(search))
         : eligible;
 
+    let headerLoadingHtml = '';
+    if (isBulkEligibilityLoading) {
+        headerLoadingHtml = `
+            <div style="padding: 6px 12px; background: rgba(59, 130, 246, 0.1); font-size: 11px; color: var(--accent-primary, #3B82F6); display: flex; align-items: center; gap: 6px; border-bottom: 1px solid rgba(59, 130, 246, 0.2); font-weight: 500;">
+                <span class="global-spinner-sm"></span> ⚡ Υπολογισμός εξειδικεύσεων & ορίων σε εξέλιξη...
+            </div>
+        `;
+    }
+
     if (filtered.length === 0) {
-        list.innerHTML = `<div style="padding: 12px; text-align: center; color: var(--text-tertiary); font-size: 12px;">Δεν βρέθηκαν ακτινοδιαγνώστες</div>`;
+        list.innerHTML = headerLoadingHtml + `<div style="padding: 12px; text-align: center; color: var(--text-tertiary); font-size: 12px;">Δεν βρέθηκαν ακτινοδιαγνώστες</div>`;
         return;
     }
 
-    list.innerHTML = filtered.map(d => {
+    list.innerHTML = headerLoadingHtml + filtered.map(d => {
         const quota = getTodayQuota(d);
         const quotaStr = quota === 999 ? '∞' : quota;
-        const isError = !d.isEligible;
-        const itemClass = `fab-diag-item ${isError ? 'over-quota' : ''}`;
-        const style = isError
-            ? 'padding: 8px; cursor: pointer; border-radius: 4px; background: rgba(239, 68, 68, 0.15); color: #ef4444; border-bottom: 1px solid rgba(239, 68, 68, 0.3); font-weight: 600;'
-            : 'padding: 8px; cursor: pointer; border-radius: 4px; border-bottom: 1px solid var(--border-color); color: var(--text-primary);';
+        const isError = !d.isEligible && !d.isCalculating;
+        const isCalc = d.isCalculating;
+        const itemClass = `fab-diag-item ${isError ? 'over-quota' : (isCalc ? 'loading-calculating' : '')}`;
+        
+        let style = 'padding: 8px; cursor: pointer; border-radius: 4px; border-bottom: 1px solid var(--border-color); color: var(--text-primary);';
+        if (isError) {
+            style = 'padding: 8px; cursor: pointer; border-radius: 4px; background: rgba(239, 68, 68, 0.15); color: #ef4444; border-bottom: 1px solid rgba(239, 68, 68, 0.3); font-weight: 600;';
+        } else if (isCalc) {
+            style = 'padding: 8px; cursor: pointer; border-radius: 4px; background: rgba(59, 130, 246, 0.08); color: var(--accent-primary, #3B82F6); border-bottom: 1px solid rgba(59, 130, 246, 0.2); font-weight: 500;';
+        }
 
         const reasonHtml = d.rejectReason ? `<span style="display: block; font-size: 10px; opacity: 0.8; margin-top: 2px;">${d.rejectReason}</span>` : '';
 

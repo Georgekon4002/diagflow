@@ -22,6 +22,20 @@ class DiagnosticianService:
     Service for loading and querying diagnostician data.
     Reads directly from diagflow.db — all data persists across server restarts.
     """
+    _cache_timestamp: float = 0.0
+    _cached_all_diags: list = []
+    _cached_absent_ids: set = set()
+    _cached_daily_counts: dict = {}
+    _cached_skills_by_diag: dict = {}
+
+    @classmethod
+    def clear_cache(cls):
+        """Invalidate in-memory cache to force fresh DB read on next query."""
+        cls._cache_timestamp = 0.0
+        cls._cached_all_diags = []
+        cls._cached_absent_ids = set()
+        cls._cached_daily_counts = {}
+        cls._cached_skills_by_diag = {}
 
     async def get_candidates_for_exam(
         self,
@@ -47,23 +61,36 @@ class DiagnosticianService:
         self._current_exam_oldpers = oldpers
         today = str(date.today())
 
-        # Load all diagnosticians from DB
-        all_diags = cfg_db.get_all_diagnosticians()
+        # In-memory short-lived cache (3 seconds) to speed up concurrent suggestion requests
+        import time
+        now = time.time()
+        if not hasattr(DiagnosticianService, "_cache_timestamp") or (now - getattr(DiagnosticianService, "_cache_timestamp", 0)) > 3.0:
+            DiagnosticianService._cached_all_diags = cfg_db.get_all_diagnosticians()
+            DiagnosticianService._cached_absent_ids = cfg_db.get_absent_diagnostician_ids(today)
+            DiagnosticianService._cached_daily_counts = cfg_db.get_daily_assignment_counts()
+            DiagnosticianService._cached_skills_by_diag = cfg_db.get_all_skills_grouped()
+            DiagnosticianService._cache_timestamp = now
 
-        # Load absent IDs for today
-        absent_ids = cfg_db.get_absent_diagnostician_ids(today)
+        all_diags = DiagnosticianService._cached_all_diags
+        absent_ids = DiagnosticianService._cached_absent_ids
+        daily_counts = DiagnosticianService._cached_daily_counts
+        all_skills_by_diag = DiagnosticianService._cached_skills_by_diag
+
+        # Pre-calculate configured exam codes across all diagnosticians
+        all_configured_exam_codes = {
+            str(sk["exam_code"]).strip()
+            for diag_skills in all_skills_by_diag.values()
+            for sk in diag_skills
+            if sk.get("exam_code")
+        }
+        clean_exam_code = str(exam_code).strip()
+        exam_code_has_skills = clean_exam_code in all_configured_exam_codes
 
         # Load partnerships for this issuing doctor
         partnerships = cfg_db.get_partnerships_by_doctor(issuing_doctor_id)
         partnership_map: dict[int, dict] = {
             p["preferred_diagnostician_id"]: p for p in partnerships if p.get("is_active", 1) == 1
         }
-
-        # Load current daily counts from assignment log
-        daily_counts = cfg_db.get_daily_assignment_counts()
-
-        # Batch-load ALL skills in one query (avoids N+1 — one query total instead of one per diagnostician)
-        all_skills_by_diag = cfg_db.get_all_skills_grouped()
 
         candidates = []
 
@@ -83,7 +110,7 @@ class DiagnosticianService:
             # Determine skill match for this exam code
             skill_match = None
             for skill in skills:
-                if str(skill["exam_code"]) == str(exam_code):
+                if str(skill["exam_code"]).strip() == clean_exam_code:
                     skill_match = skill
                     break
 
@@ -121,6 +148,8 @@ class DiagnosticianService:
             if isinstance(counts_dict, int):
                 counts_dict = {"total": counts_dict, "mri": 0, "ct": 0}
 
+            has_skill_data = (len(skills) > 0) or exam_code_has_skills
+
             candidate = CandidateDiagnostician(
                 id=diag_id,
                 name=str(diag["name"]),
@@ -133,7 +162,7 @@ class DiagnosticianService:
                 current_day_ct_count=counts_dict.get("ct", 0),
                 skill_proficiency=skill_proficiency,
                 has_skill_match=skill_match is not None,
-                has_skill_data=len(skills) > 0,
+                has_skill_data=has_skill_data,
                 accepts_lab=True,
                 is_partnership_match=is_partner,
                 is_partnership_exclusive=is_exclusive,

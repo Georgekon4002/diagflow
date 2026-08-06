@@ -51,9 +51,10 @@ def _ensure_schema(con: sqlite3.Connection) -> None:
             "code TEXT PRIMARY KEY, name TEXT NOT NULL, category TEXT)"
         )
         if con.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='diagnostician_skills'").fetchone():
+            con.execute("UPDATE diagnostician_skills SET exam_code = TRIM(exam_code) WHERE exam_code IS NOT NULL")
             con.execute(
                 "DELETE FROM diagnostician_skills WHERE rowid NOT IN ("
-                "SELECT MIN(rowid) FROM diagnostician_skills GROUP BY diagnostician_id, exam_code)"
+                "SELECT MIN(rowid) FROM diagnostician_skills GROUP BY diagnostician_id, TRIM(exam_code))"
             )
             con.execute(
                 "CREATE UNIQUE INDEX IF NOT EXISTS idx_skills_diag_code ON diagnostician_skills(diagnostician_id, exam_code)"
@@ -160,31 +161,32 @@ def get_skills(diagnostician_id: int | None = None) -> list[dict]:
             "code TEXT PRIMARY KEY, name TEXT NOT NULL, category TEXT)"
         )
         dict_rows = con.execute("SELECT code, name FROM exam_dictionary").fetchall()
-        exam_name_map = {str(r["code"]): r["name"] for r in dict_rows}
+        exam_name_map = {str(r["code"]).strip(): r["name"] for r in dict_rows}
 
         if diagnostician_id is not None:
             rows = con.execute(
                 "SELECT ds.id, ds.diagnostician_id, d.name AS diagnostician_name, "
-                "ds.exam_code, ds.is_preferred "
+                "TRIM(ds.exam_code) AS exam_code, ds.is_preferred "
                 "FROM diagnostician_skills ds "
                 "JOIN diagnosticians d ON d.id = ds.diagnostician_id "
                 "WHERE ds.diagnostician_id = ? "
-                "ORDER BY ds.exam_code",
+                "ORDER BY TRIM(ds.exam_code)",
                 (diagnostician_id,),
             ).fetchall()
         else:
             rows = con.execute(
                 "SELECT ds.id, ds.diagnostician_id, d.name AS diagnostician_name, "
-                "ds.exam_code, ds.is_preferred "
+                "TRIM(ds.exam_code) AS exam_code, ds.is_preferred "
                 "FROM diagnostician_skills ds "
                 "JOIN diagnosticians d ON d.id = ds.diagnostician_id "
-                "ORDER BY d.name, ds.exam_code",
+                "ORDER BY d.name, TRIM(ds.exam_code)",
             ).fetchall()
 
     results = []
     for r in rows:
         d = _row_to_dict(r)
-        code_str = str(d.get("exam_code") or "")
+        code_str = str(d.get("exam_code") or "").strip()
+        d["exam_code"] = code_str
         d["exam_name"] = exam_name_map.get(code_str, code_str)
         d["exam_title"] = d["exam_name"]
         results.append(d)
@@ -197,7 +199,7 @@ def upsert_skill(diagnostician_id: int, exam_code: str,
     code_str = str(exam_code).strip()
     with _conn() as con:
         con.execute(
-            "DELETE FROM diagnostician_skills WHERE diagnostician_id = ? AND exam_code = ?",
+            "DELETE FROM diagnostician_skills WHERE diagnostician_id = ? AND TRIM(exam_code) = ?",
             (diagnostician_id, code_str),
         )
         con.execute(
@@ -207,10 +209,10 @@ def upsert_skill(diagnostician_id: int, exam_code: str,
         )
         row = con.execute(
             "SELECT ds.id, ds.diagnostician_id, d.name AS diagnostician_name, "
-            "ds.exam_code, ds.is_preferred "
+            "TRIM(ds.exam_code) AS exam_code, ds.is_preferred "
             "FROM diagnostician_skills ds "
             "JOIN diagnosticians d ON d.id = ds.diagnostician_id "
-            "WHERE ds.diagnostician_id = ? AND ds.exam_code = ?",
+            "WHERE ds.diagnostician_id = ? AND TRIM(ds.exam_code) = ?",
             (diagnostician_id, code_str),
         ).fetchone()
     return _row_to_dict(row)
@@ -220,6 +222,16 @@ def delete_skill(skill_id: int) -> bool:
     with _conn() as con:
         cur = con.execute("DELETE FROM diagnostician_skills WHERE id = ?", (skill_id,))
     return cur.rowcount > 0
+
+
+def update_skill_preference(skill_id: int, is_preferred: bool) -> bool:
+    with _conn() as con:
+        cur = con.execute(
+            "UPDATE diagnostician_skills SET is_preferred = ? WHERE id = ?",
+            (1 if is_preferred else 0, skill_id),
+        )
+    return cur.rowcount > 0
+
 
 
 def get_skills_for_diagnostician(diag_id: int) -> list[dict]:
@@ -287,23 +299,26 @@ def get_exam_dictionary() -> list[dict]:
                             con.executemany(
                                 "INSERT INTO exam_dictionary (code, name, category) VALUES (?, ?, ?) "
                                 "ON CONFLICT(code) DO UPDATE SET name=excluded.name, category=excluded.category",
-                                [(str(r[0]), str(r[1]), str(r[2] or "")) for r in slis_rows],
+                                [(str(r[0]).strip(), str(r[1]).strip(), str(r[2] or "").strip()) for r in slis_rows if r[0] is not None],
                             )
                             con.commit()
                             rows = con.execute("SELECT code AS examnumcode, code, name, category FROM exam_dictionary ORDER BY CAST(code AS INTEGER), code").fetchall()
                 except Exception:
                     pass
-    return [_row_to_dict(r) for r in rows]
+    return [{"examnumcode": str(r["code"]).strip(), "code": str(r["code"]).strip(), "name": r["name"], "category": r["category"]} for r in rows]
 
 
 def upsert_exam_dictionary_entry(code: str, name: str, category: str = "") -> None:
     if not code:
         return
+    code_clean = str(code).strip()
+    if not code_clean:
+        return
     with _conn() as con:
         con.execute(
             "INSERT INTO exam_dictionary (code, name, category) VALUES (?, ?, ?) "
             "ON CONFLICT(code) DO UPDATE SET name=excluded.name, category=excluded.category",
-            (code.strip(), name.strip(), category.strip()),
+            (code_clean, name.strip(), category.strip()),
         )
 
 

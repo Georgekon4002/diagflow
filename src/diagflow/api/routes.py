@@ -385,12 +385,97 @@ async def suggest_assignment(
         oldpers=exam.oldpers,
     )
 
-    # Apply session-level virtual workload so back-to-back suggestions spread across
-    # near-tied candidates instead of always picking the same person.
+    # Apply session-level virtual workload
     for c in candidates:
         c.current_day_count += _session_suggestion_counts.get(c.id, 0)
 
-    suggestion = await assign_svc.suggest_assignment(exam, candidates)
+    # Multi-exam order alignment check
+    extracode_val = exam_data.get("extracode")
+    patient_id_val = exam_data.get("patient_id")
+    order_exams = []
+    if extracode_val and patient_id_val:
+        all_exams = pending + assign_svc.get_assigned_exams()
+        order_exams = [
+            e for e in all_exams
+            if str(e.get("patient_id")) == str(patient_id_val)
+            and str(e.get("extracode")) == str(extracode_val)
+        ]
+
+    if len(order_exams) > 1:
+        from diagflow.engine.filters import apply_hard_filters
+        from diagflow.engine.scoring import score_all_candidates
+
+        order_contexts = []
+        for e_dict in order_exams:
+            e_ctx = ExamContext(
+                exam_id=e_dict["exam_id"],
+                patient_id=e_dict["patient_id"],
+                patient_name=e_dict.get("patient_name", ""),
+                modality=e_dict["modality"],
+                body_part=e_dict["body_part"],
+                exam_code=str(e_dict.get("examnumcode", "")),
+                exam_name=e_dict.get("examname", ""),
+                lab_id=e_dict["lab_id"],
+                lab_name=e_dict["lab_name"],
+                issuing_doctor_id=e_dict["issuing_doctor_id"],
+                issuing_doctor_name=e_dict["issuing_doctor_name"],
+                comments=e_dict.get("comments", ""),
+                is_pamakristos="ΠΑΜΜΑΚΑΡΙΣΤΟΣ" in e_dict.get("issuing_doctor_name", "").upper(),
+                oldpers=e_dict.get("oldpers"),
+            )
+            e_cands = await diag_svc.get_candidates_for_exam(
+                exam_id=e_ctx.exam_id,
+                modality=e_ctx.modality,
+                body_part=e_ctx.body_part,
+                lab_id=e_ctx.lab_id,
+                lab_name=e_ctx.lab_name,
+                issuing_doctor_id=e_ctx.issuing_doctor_id,
+                patient_id=e_ctx.patient_id,
+                exam_code=e_ctx.exam_code,
+                oldpers=e_ctx.oldpers,
+            )
+            order_contexts.append((e_ctx, e_cands))
+
+        cand_totals = {}
+        cand_eligible_all = {}
+        cand_info = {}
+
+        for ex_ctx, cands in order_contexts:
+            for c in cands:
+                c.current_day_count += _session_suggestion_counts.get(c.id, 0)
+                cand_info[c.id] = c
+
+            passed, _ = apply_hard_filters(cands, ex_ctx)
+            passed_ids = {p.id for p in passed}
+
+            for c in cands:
+                if c.id not in cand_eligible_all:
+                    cand_eligible_all[c.id] = True
+                if c.id not in passed_ids:
+                    cand_eligible_all[c.id] = False
+
+            if passed:
+                scored = score_all_candidates(passed, ex_ctx)
+                for sc in scored:
+                    cand_totals[sc.diagnostician_id] = cand_totals.get(sc.diagnostician_id, 0.0) + sc.total_score
+
+        best_cand_id = None
+        best_total = -1.0
+        for c_id, is_elig in cand_eligible_all.items():
+            if is_elig and cand_totals.get(c_id, 0.0) > best_total:
+                best_total = cand_totals[c_id]
+                best_cand_id = c_id
+
+        suggestion = await assign_svc.suggest_assignment(exam, candidates)
+        if suggestion and best_cand_id and best_cand_id in cand_info:
+            best_cand = cand_info[best_cand_id]
+            if suggestion.suggested_diagnostician_id != best_cand_id:
+                suggestion.suggested_diagnostician_id = best_cand_id
+                suggestion.suggested_diagnostician_name = best_cand.name
+                if "Multi-exam Order Alignment" not in suggestion.rules_fired:
+                    suggestion.rules_fired.insert(0, "Multi-exam Order Alignment")
+    else:
+        suggestion = await assign_svc.suggest_assignment(exam, candidates)
 
     if not suggestion:
         raise HTTPException(
@@ -404,6 +489,7 @@ async def suggest_assignment(
         _session_suggestion_counts[diag_id] = _session_suggestion_counts.get(diag_id, 0) + 1
 
     _suggestion_cache[exam.exam_id] = suggestion
+    _suggestion_cache[str(exam.exam_id)] = suggestion
 
     return SuggestionResponse(
         exam_id=suggestion.exam_id,
@@ -426,11 +512,22 @@ async def confirm_assignment(
     svc: AssignmentService = Depends(get_assignment_service),
 ):
     """Confirm the suggested assignment (no override)."""
-    suggestion = _suggestion_cache.get(request.exam_id)
+    suggestion = _suggestion_cache.get(request.exam_id) or _suggestion_cache.get(str(request.exam_id))
     if not suggestion:
-        raise HTTPException(
-            status_code=404,
-            detail=f"No pending suggestion for exam {request.exam_id}. Generate a suggestion first.",
+        from diagflow.engine.pipeline import AssignmentSuggestion
+        suggestion = AssignmentSuggestion(
+            exam_id=str(request.exam_id),
+            patient_id="",
+            exam_summary="",
+            suggested_diagnostician_id=request.diagnostician_id,
+            suggested_diagnostician_name="",
+            confidence_score=1.0,
+            score_breakdown=[],
+            alternatives=[],
+            rules_fired=[],
+            filter_results={},
+            solver_status="fallback",
+            pipeline_timestamp=datetime.now().isoformat(),
         )
 
     result = await svc.confirm_assignment(
@@ -439,6 +536,7 @@ async def confirm_assignment(
         suggestion=suggestion,
     )
     _suggestion_cache.pop(request.exam_id, None)
+    _suggestion_cache.pop(str(request.exam_id), None)
 
     return AssignmentConfirmation(
         exam_id=request.exam_id,
@@ -455,11 +553,22 @@ async def override_assignment(
     svc: AssignmentService = Depends(get_assignment_service),
 ):
     """Override the suggested assignment with a different diagnostician."""
-    suggestion = _suggestion_cache.get(request.exam_id)
+    suggestion = _suggestion_cache.get(request.exam_id) or _suggestion_cache.get(str(request.exam_id))
     if not suggestion:
-        raise HTTPException(
-            status_code=404,
-            detail=f"No pending suggestion for exam {request.exam_id}. Generate a suggestion first.",
+        from diagflow.engine.pipeline import AssignmentSuggestion
+        suggestion = AssignmentSuggestion(
+            exam_id=str(request.exam_id),
+            patient_id="",
+            exam_summary="",
+            suggested_diagnostician_id=request.original_diagnostician_id or 0,
+            suggested_diagnostician_name="",
+            confidence_score=1.0,
+            score_breakdown=[],
+            alternatives=[],
+            rules_fired=[],
+            filter_results={},
+            solver_status="fallback",
+            pipeline_timestamp=datetime.now().isoformat(),
         )
 
     result = await svc.override_assignment(
@@ -470,6 +579,7 @@ async def override_assignment(
         suggestion=suggestion,
     )
     _suggestion_cache.pop(request.exam_id, None)
+    _suggestion_cache.pop(str(request.exam_id), None)
 
     return AssignmentConfirmation(
         exam_id=request.exam_id,
@@ -509,6 +619,7 @@ async def bulk_eligible_diagnosticians(
     is_eligible = {d_id: True for d_id in eligible_diags}
 
     for exam_data in selected_exams:
+        await asyncio.sleep(0)
         exam = ExamContext(
             exam_id=exam_data["exam_id"],
             patient_id=exam_data["patient_id"],
@@ -993,6 +1104,10 @@ class SkillSetRequest(BaseModel):
     is_preferred: bool = False
 
 
+class SkillUpdateRequest(BaseModel):
+    is_preferred: bool = False
+
+
 class SkillDeleteRequest(BaseModel):
     skill_id: int
 
@@ -1019,7 +1134,7 @@ async def admin_set_skill(req: SkillSetRequest, _=Depends(_require_admin)):
     can_mri = bool(diag.get("can_mri", False))
 
     existing = cfg_db.get_skills(diag_id)
-    if any(str(s.get("exam_code")) == str(code) for s in existing):
+    if any(str(s.get("exam_code")).strip() == str(code).strip() for s in existing):
         raise HTTPException(
             status_code=400,
             detail=f"Η δεξιότητα {code} υπάρχει ήδη για τον/την {diag_name}"
@@ -1027,7 +1142,7 @@ async def admin_set_skill(req: SkillSetRequest, _=Depends(_require_admin)):
 
     category = ""
     dict_entries = cfg_db.get_exam_dictionary()
-    matched = next((e for e in dict_entries if str(e.get("examnumcode")) == str(code)), None)
+    matched = next((e for e in dict_entries if str(e.get("examnumcode") or e.get("code") or "").strip() == str(code).strip()), None)
     if matched:
         category = (matched.get("category") or "").upper().strip()
         name = matched.get("name") or ""
@@ -1056,18 +1171,30 @@ async def admin_set_skill(req: SkillSetRequest, _=Depends(_require_admin)):
             detail=f"Ο/Η {diag_name} δεν πραγματοποιεί Μαγνητικές (MRI/MRA). Δεν μπορείτε να προσθέσετε τον κωδικό {code}."
         )
 
-    return cfg_db.upsert_skill(
+    res = cfg_db.upsert_skill(
         diagnostician_id=diag_id,
         exam_code=code,
         is_preferred=req.is_preferred,
     )
+    DiagnosticianService.clear_cache()
+    return res
+
+
+@router.put("/admin/skills/{skill_id}")
+async def admin_update_skill(skill_id: int, req: SkillUpdateRequest, _=Depends(_require_admin)):
+    if not cfg_db.update_skill_preference(skill_id, req.is_preferred):
+        raise HTTPException(status_code=404, detail="Η δεξιότητα δεν βρέθηκε")
+    DiagnosticianService.clear_cache()
+    return {"id": skill_id, "is_preferred": req.is_preferred}
 
 
 @router.delete("/admin/skills/{skill_id}")
 async def admin_delete_skill(skill_id: int, _=Depends(_require_admin)):
     if not cfg_db.delete_skill(skill_id):
         raise HTTPException(status_code=404, detail="Η δεξιότητα δεν βρέθηκε")
+    DiagnosticianService.clear_cache()
     return {"deleted": skill_id}
+
 
 
 # ─────────────────────────────────────────────────────
