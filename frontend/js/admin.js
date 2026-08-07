@@ -2985,6 +2985,48 @@ async function toggleAdvancedRule(type, id, newStatus) {
     }
 }
 
+// Clear / Reset Form Helpers for Advanced Options
+function clearExamRoutingForm() {
+    document.getElementById('adv-route-lab').value = '';
+    document.getElementById('adv-route-doc').value = '';
+    document.getElementById('adv-route-doc-search').value = '';
+    document.getElementById('adv-route-pam').checked = false;
+    if (document.getElementById('adv-route-codes-search')) document.getElementById('adv-route-codes-search').value = '';
+    selectedRouteExamCodes.clear();
+    renderExamCodeTags('route');
+    document.getElementById('adv-route-desc').value = '';
+    updateAdvRouteMutualExclusion();
+
+    const btn = document.getElementById('adv-route-lab').closest('.admin-form').querySelector('button.btn-primary');
+    btn.textContent = 'Προσθήκη';
+    btn.onclick = addExamRoutingRule;
+
+    const clearBtn = document.getElementById('adv-route-clear-btn');
+    if (clearBtn) clearBtn.style.display = 'none';
+}
+
+function clearExclusiveLabForm() {
+    document.getElementById('adv-excl-lab').value = '';
+
+    const btn = document.getElementById('adv-excl-lab').closest('.admin-form').querySelector('button.btn-primary');
+    btn.textContent = 'Προσθήκη';
+    btn.onclick = addExclusiveLabRule;
+
+    const clearBtn = document.getElementById('adv-excl-clear-btn');
+    if (clearBtn) clearBtn.style.display = 'none';
+}
+
+function clearModalityQuotaForm() {
+    document.getElementById('adv-quota-count').value = '';
+
+    const btn = document.getElementById('adv-quota-count').closest('.admin-form').querySelector('button.btn-primary');
+    btn.textContent = 'Προσθήκη';
+    btn.onclick = addModalityQuota;
+
+    const clearBtn = document.getElementById('adv-quota-clear-btn');
+    if (clearBtn) clearBtn.style.display = 'none';
+}
+
 // Inline Editing Logic (Populate form)
 function editExamRoutingRule(id) {
     const r = advRoutingRules.find(x => x.id === id);
@@ -3006,6 +3048,9 @@ function editExamRoutingRule(id) {
     
     updateAdvRouteMutualExclusion();
     
+    const clearBtn = document.getElementById('adv-route-clear-btn');
+    if (clearBtn) clearBtn.style.display = 'inline-block';
+
     const btn = document.getElementById('adv-route-lab').closest('.admin-form').querySelector('button.btn-primary');
     btn.textContent = 'Αποθήκευση';
     btn.onclick = async () => {
@@ -3058,16 +3103,7 @@ function editExamRoutingRule(id) {
         const data = await apiCall(`/admin/advanced/exam-routing-rules/${id}`, 'PUT', payload);
         if(data) {
              showToast('Αποθηκεύτηκε');
-             btn.textContent = 'Προσθήκη';
-             btn.onclick = addExamRoutingRule;
-             
-             document.getElementById('adv-route-lab').value = '';
-             document.getElementById('adv-route-doc').value = '';
-             document.getElementById('adv-route-doc-search').value = '';
-             document.getElementById('adv-route-pam').checked = false;
-             document.getElementById('adv-route-codes').value = '';
-             document.getElementById('adv-route-desc').value = '';
-             updateAdvRouteMutualExclusion();
+             clearExamRoutingForm();
              await loadAdvancedOptions();
         }
     };
@@ -3079,6 +3115,9 @@ function editExclusiveLabRule(id) {
     document.getElementById('adv-excl-diag').value = r.diagnostician_id;
     document.getElementById('adv-excl-lab').value = r.lab_id;
     
+    const clearBtn = document.getElementById('adv-excl-clear-btn');
+    if (clearBtn) clearBtn.style.display = 'inline-block';
+
     const btn = document.getElementById('adv-excl-lab').closest('.admin-form').querySelector('button.btn-primary');
     btn.textContent = 'Αποθήκευση';
     btn.onclick = async () => {
@@ -3090,10 +3129,7 @@ function editExclusiveLabRule(id) {
         });
         if(data) {
              showToast('Αποθηκεύτηκε');
-             btn.textContent = 'Προσθήκη';
-             btn.onclick = addExclusiveLabRule;
-             
-             labSelect.value = '';
+             clearExclusiveLabForm();
              await loadAdvancedOptions();
         }
     };
@@ -3106,6 +3142,9 @@ function editModalityQuota(id) {
     document.getElementById('adv-quota-modality').value = r.modality;
     document.getElementById('adv-quota-count').value = r.max_count;
     
+    const clearBtn = document.getElementById('adv-quota-clear-btn');
+    if (clearBtn) clearBtn.style.display = 'inline-block';
+
     const btn = document.getElementById('adv-quota-count').closest('.admin-form').querySelector('button.btn-primary');
     btn.textContent = 'Αποθήκευση';
     btn.onclick = async () => {
@@ -3116,10 +3155,7 @@ function editModalityQuota(id) {
         });
         if(data) {
              showToast('Αποθηκεύτηκε');
-             btn.textContent = 'Προσθήκη';
-             btn.onclick = addModalityQuota;
-             
-             document.getElementById('adv-quota-count').value = '';
+             clearModalityQuotaForm();
              await loadAdvancedOptions();
         }
     };

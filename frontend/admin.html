@@ -665,6 +665,7 @@
                                     placeholder="Σύντομη περιγραφή">
                             </div>
                             <button class="btn btn-primary" onclick="addExamRoutingRule()">Προσθήκη</button>
+                            <button class="btn btn-secondary" id="adv-route-clear-btn" onclick="clearExamRoutingForm()" style="display:none;">Καθαρισμός</button>
                         </div>
                         <div id="adv-route-codes-tags" style="display:flex; flex-wrap:wrap; gap:6px; margin-top:10px; min-height:0;"></div>
                         <div style="overflow-x: auto; width: 100%;">
@@ -692,12 +693,12 @@
                             style="color:var(--text-secondary);font-size:var(--font-size-sm);margin-bottom:var(--space-lg);">
                             Περιορισμός ώστε ο διαγνώστης να λαμβάνει εξετάσεις ΜΟΝΟ από το συγκεκριμένο εργαστήριο.
                         </p>
-                        <div class="admin-form" style="grid-template-columns:1fr 1fr auto;align-items:end;">
-                            <div class="form-group" style="margin:0;">
+                        <div class="admin-form" style="display:flex; flex-wrap:wrap; gap:16px; align-items:end;">
+                            <div class="form-group" style="margin:0; flex:1; min-width:150px;">
                                 <label class="form-label">Διαγνώστης</label>
                                 <select id="adv-excl-diag" class="form-input filter-select"></select>
                             </div>
-                            <div class="form-group" style="margin:0;">
+                            <div class="form-group" style="margin:0; flex:1; min-width:150px;">
                                 <label class="form-label">Εργαστήριο</label>
                                 <select id="adv-excl-lab" class="form-input filter-select">
                                     <option value="">— Επιλογή —</option>
@@ -1031,20 +1032,6 @@
                         <button type="submit" class="btn btn-primary">Αποθήκευση</button>
                     </div>
                 </form>
-            </div>
-        </div>
-    <!-- ─── Background Work / Initial Loading Modal ─── -->
-    <div id="admin-loading-modal" class="modal-overlay" style="display:flex; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(15, 23, 42, 0.75); backdrop-filter:blur(4px); z-index:10005; justify-content:center; align-items:center; transition: opacity 0.3s ease;">
-        <div class="modal-card" style="background:#ffffff; border-radius:16px; max-width:440px; width:90%; padding:32px 24px; box-shadow:0 20px 40px rgba(0,0,0,0.3); text-align:center; position:relative;">
-            <div style="width:60px; height:60px; margin:0 auto 16px; background:#eff6ff; border-radius:50%; display:flex; align-items:center; justify-content:center;">
-                <span class="global-spinner" style="width:28px; height:28px; border-width:3px; border-top-color:#3b82f6;"></span>
-            </div>
-            <h3 id="admin-loading-title" style="margin:0 0 10px; font-size:18px; font-weight:700; color:#1e293b;">⏳ Φόρτωση Πίνακα Διαχείρισης</h3>
-            <p id="admin-loading-msg" style="margin:0 0 18px; font-size:13px; line-height:1.6; color:#64748b;">
-                Εκτελούνται εργασίες παρασκηνίου ή φόρτωση δεδομένων. Παρακαλώ περιμένετε λίγο για την πλήρη φόρτωση των στοιχείων.
-            </p>
-            <div style="width:100%; height:4px; background:#e2e8f0; border-radius:2px; overflow:hidden; position:relative;">
-                <div style="position:absolute; top:0; left:0; height:100%; width:100%; background:linear-gradient(90deg, #3b82f6, #60a5fa, #93c5fd); background-size:200% 100%; animation:shimBar 1.5s infinite linear;"></div>
             </div>
         </div>
     </div>

@@ -753,7 +753,7 @@ async def get_dashboard():
     # Resolve exam descriptions from exam_dictionary in diagflow.db and slis_exams
     try:
         dict_entries = cfg_db.get_exam_dictionary()
-        exam_dict_map = {str(e["code"]): e["name"] for e in dict_entries}
+        exam_dict_map = {str(e["code"]).strip(): e["name"] for e in dict_entries if e.get("code") and e.get("name")}
         
         all_exam_ids = []
         for d in dashboard_data:
@@ -765,24 +765,62 @@ async def get_dashboard():
                 from diagflow.services.assignment import _get_mock_db
                 con = _get_mock_db()
                 placeholders = ",".join("?" * len(all_exam_ids))
-                rows = con.execute(f"SELECT exammoreid, examname, examnumcode FROM slis_exams WHERE exammoreid IN ({placeholders})", tuple(all_exam_ids)).fetchall()
+                rows = con.execute(f"SELECT exammoreid, examname, examnumcode, extracode FROM slis_exams WHERE exammoreid IN ({placeholders})", tuple(all_exam_ids)).fetchall()
                 for r in rows:
-                    eid_str = str(r["exammoreid"])
-                    name = r["examname"] or exam_dict_map.get(str(r.get("examnumcode", "")), "")
+                    r_dict = dict(r)
+                    eid_str = str(r_dict["exammoreid"])
+                    raw_name = (r_dict.get("examname") or "").strip()
+                    numcode = str(r_dict.get("examnumcode") or "").strip()
+                    name = raw_name or (exam_dict_map.get(numcode) if numcode else "")
                     if name:
                         exam_names_from_slis[eid_str] = name
+
+                # For any exammoreid still unmapped, try matching by order (extracode) in slis_exams
+                missing_eids = [eid for eid in all_exam_ids if str(eid) not in exam_names_from_slis]
+                if missing_eids:
+                    extra_rows = con.execute("SELECT exammoreid, examname, examnumcode, extracode FROM slis_exams WHERE examname IS NOT NULL AND examname != ''").fetchall()
+                    extra_map = {}
+                    for er in extra_rows:
+                        er_dict = dict(er)
+                        raw_n = (er_dict.get("examname") or "").strip()
+                        ncode = str(er_dict.get("examnumcode") or "").strip()
+                        n = raw_n or (exam_dict_map.get(ncode) if ncode else "")
+                        if er_dict.get("extracode") and n:
+                            extra_map[str(er_dict["extracode"]).strip()] = n
+                    
+                    local_extracodes = {}
+                    with cfg_db._conn() as local_con:
+                        lrows = local_con.execute("SELECT exammoreid, extracode FROM local_assignments WHERE exammoreid IS NOT NULL").fetchall()
+                        for lr in lrows:
+                            lr_dict = dict(lr)
+                            if lr_dict.get("exammoreid") and lr_dict.get("extracode"):
+                                local_extracodes[str(lr_dict["exammoreid"])] = str(lr_dict["extracode"]).strip()
+                        logrows = local_con.execute("SELECT exammoreid, extracode FROM assignment_log WHERE exammoreid IS NOT NULL").fetchall()
+                        for lr in logrows:
+                            lr_dict = dict(lr)
+                            if lr_dict.get("exammoreid") and lr_dict.get("extracode"):
+                                local_extracodes[str(lr_dict["exammoreid"])] = str(lr_dict["extracode"]).strip()
+
+                    for m_eid in missing_eids:
+                        m_str = str(m_eid)
+                        ext = local_extracodes.get(m_str)
+                        if ext and ext in extra_map:
+                            exam_names_from_slis[m_str] = extra_map[ext]
+
                 con.close()
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"Failed to fetch dashboard exam names: {e}")
 
         for d in dashboard_data:
             d["exam_names"] = {}
             for eid in d.get("assigned_exam_ids", []):
                 eid_str = str(eid)
-                name = exam_names_from_slis.get(eid_str) or exam_dict_map.get(eid_str) or f"Εξέταση {eid_str}"
+                name = exam_names_from_slis.get(eid_str)
+                if not name or name.startswith("Εξέταση ") or "Εξέταση 20" in name:
+                    name = "Γενική Εξέταση"
                 d["exam_names"][name] = d["exam_names"].get(name, 0) + 1
     except Exception as e:
-        print(f"Failed to fetch dashboard exam names: {e}")
+        print(f"Failed to process dashboard exam names: {e}")
         
     return dashboard_data
 

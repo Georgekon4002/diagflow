@@ -142,7 +142,7 @@ def pull_from_slis() -> dict:
             ]
 
             pulled_count = len(unassigned_rows)
-            pulled_exammoreids = [r.get("exammoreid") for r in unassigned_rows if r.get("exammoreid") is not None]
+            pulled_exammoreids = [r.get("exammoreid") for r in rows if r.get("exammoreid") is not None]
 
             con = _get_db()
             cols = [row[1] for row in con.execute("PRAGMA table_info(slis_exams)").fetchall()]
@@ -160,7 +160,7 @@ def pull_from_slis() -> dict:
 
             expired = delete_expired(con)
 
-            for r in unassigned_rows:
+            for r in rows:
                 row_dict = {k.lower(): v for k, v in r.items()}
                 exammoreid = row_dict.get("exammoreid")
                 if not exammoreid:
