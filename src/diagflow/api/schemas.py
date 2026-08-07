@@ -263,3 +263,19 @@ class ModalityQuotaUpdate(BaseModel):
 class ModalityQuotaResponse(ModalityQuotaBase):
     id: int
     diagnostician_name: str
+
+
+class SlisSearchRequest(BaseModel):
+    start_date: str | None = None
+    end_date: str | None = None
+    extracode: str | None = None
+    patient_query: str | None = None
+    doctor_query: str | None = None
+    diagnostician_query: str | None = None
+
+
+class SlisReassignRequest(BaseModel):
+    exammoreid: int
+    diagnostician_id: int
+    diagnostician_name: str = ""
+

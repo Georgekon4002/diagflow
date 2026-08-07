@@ -186,7 +186,7 @@
                                     </svg>
                                     Συγχρονισμός
                                 </button>
-                                <input type="text" id="diag-search" class="form-input" placeholder="Αναζήτηση..."
+                                <input type="text" id="diag-search" class="form-input" placeholder="🔍 Αναζήτηση..."
                                     style="width: 250px; font-weight: normal; font-size: var(--font-size-sm);"
                                     onkeyup="filterDiags(this.value)">
                             </div>
@@ -296,7 +296,7 @@
                     <div class="admin-card">
                         <div class="admin-card-title" style="display: flex; justify-content: space-between; align-items: center; flex-wrap:wrap; gap:12px;">
                             📋 Κατάλογος Εξετάσεων (Exam Dictionary)
-                            <input type="text" id="exams-search-input" class="form-input" placeholder="Αναζήτηση με κωδικό ή όνομα..."
+                            <input type="text" id="exams-search-input" class="form-input" placeholder="🔍 Αναζήτηση με κωδικό ή όνομα..."
                                 style="width: 280px; font-weight: normal; font-size: var(--font-size-sm);"
                                 onkeyup="filterExamsDictionary(this.value)"
                                 oninput="filterExamsDictionary(this.value)">
@@ -322,7 +322,7 @@
                             <div class="form-group" style="margin:0; position:relative;">
                                 <label class="form-label">Κωδικοί Εξετάσεων</label>
                                 <input type="text" id="skill-exam-search" class="form-input"
-                                    placeholder="Αναζήτηση με κωδικό ή όνομα..." oninput="onSkillExamSearchInput()"
+                                    placeholder="🔍 Αναζήτηση με κωδικό ή όνομα..." oninput="onSkillExamSearchInput()"
                                     onfocus="onSkillExamSearchFocus()" style="width:100%;" autocomplete="off">
                                 <div id="skill-exam-results" class="exam-select-dropdown"
                                     style="position:absolute; top:100%; left:0; min-width: 420px; max-width: 90vw; background:var(--bg-secondary); border:1px solid var(--border-color); border-radius:6px; max-height:280px; overflow-y:auto; z-index:99999; display:none; box-shadow:var(--shadow-lg); padding:4px 0;">
@@ -421,7 +421,7 @@
                                 <label class="form-label">Παραπέμπων Ιατρός</label>
                                 <div style="position:relative;">
                                     <input type="text" id="part-doctor-search" class="form-input"
-                                        placeholder="Αναζήτηση με όνομα ή ID..." oninput="debounceDoctorSearch()"
+                                        placeholder="🔍 Αναζήτηση με όνομα ή ID..." oninput="debounceDoctorSearch()"
                                         style="width:100%;" autocomplete="off">
                                     <input type="hidden" id="part-doctor-id">
                                     <div id="part-doctor-results"
@@ -504,7 +504,7 @@
                                     </svg>
                                     Συγχρονισμός
                                 </button>
-                                <input type="text" id="doc-search" class="form-input" placeholder="Αναζήτηση..."
+                                <input type="text" id="doc-search" class="form-input" placeholder="🔍 Αναζήτηση..."
                                     style="width: 250px; font-weight: normal; font-size: var(--font-size-sm);"
                                     onkeyup="filterDoctors(this.value)">
                             </div>
@@ -632,7 +632,7 @@
                                 <label class="form-label">Ιατρός (Παραπέμπων)</label>
                                 <div style="position:relative;">
                                     <input type="text" id="adv-route-doc-search" class="form-input"
-                                        placeholder="Αναζήτηση..." oninput="debounceAdvDoctorSearch()"
+                                        placeholder="🔍 Αναζήτηση..." oninput="debounceAdvDoctorSearch()"
                                         style="width:100%;" autocomplete="off">
                                     <input type="hidden" id="adv-route-doc">
                                     <div id="adv-route-doc-results"
@@ -649,7 +649,7 @@
                             <div class="form-group" style="margin:0; flex: 1; min-width: 200px; position:relative;">
                                 <label class="form-label">Κωδικοί Εξετάσεων</label>
                                 <input type="text" id="adv-route-codes-search" class="form-input"
-                                    placeholder="Αναζήτηση με κωδικό ή όνομα..." oninput="onAdvRouteExamSearchInput()"
+                                    placeholder="🔍 Αναζήτηση με κωδικό ή όνομα..." oninput="onAdvRouteExamSearchInput()"
                                     onfocus="onAdvRouteExamSearchFocus()" style="width:100%;" autocomplete="off">
                                 <div id="adv-route-codes-results" class="exam-select-dropdown"
                                     style="position:absolute; top:100%; left:0; min-width: 420px; max-width: 90vw; background:var(--bg-secondary); border:1px solid var(--border-color); border-radius:6px; max-height:280px; overflow-y:auto; z-index:99999; display:none; box-shadow:var(--shadow-lg); padding:4px 0;">

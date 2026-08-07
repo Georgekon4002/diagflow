@@ -53,6 +53,8 @@ from diagflow.api.schemas import (
     ExamResponse,
     OverrideAssignmentRequest,
     SetOncallRequest,
+    SlisReassignRequest,
+    SlisSearchRequest,
     SuggestAssignmentRequest,
     SuggestionResponse,
 )
@@ -405,7 +407,35 @@ async def suggest_assignment(
         from diagflow.engine.filters import apply_hard_filters
         from diagflow.engine.scoring import score_all_candidates
 
+        # 1. Check if another exam in this exact same order (extracode) already has a cached suggestion or assignment
+        existing_order_diag_id = None
+        existing_order_diag_name = None
+
+        for e_item in order_exams:
+            e_item_id = str(e_item["exam_id"])
+            if e_item_id == str(request.exam_id):
+                continue
+            cached = _suggestion_cache.get(e_item_id)
+            if cached and cached.suggested_diagnostician_id:
+                existing_order_diag_id = cached.suggested_diagnostician_id
+                existing_order_diag_name = cached.suggested_diagnostician_name
+                break
+            elif e_item.get("diagnostis") and str(e_item.get("diagnostis")) not in ('0', '', 'None'):
+                existing_order_diag_id = e_item.get("diagnostis")
+                existing_order_diag_name = e_item.get("diagnostician_name") or e_item.get("diagnostis")
+                break
+
+        best_cand_id = None
+
+        if existing_order_diag_id:
+            target_cand = next((c for c in candidates if str(c.id) == str(existing_order_diag_id)), None)
+            if target_cand:
+                passed_target, _ = apply_hard_filters([target_cand], exam)
+                if passed_target:
+                    best_cand_id = target_cand.id
+
         order_contexts = []
+        cand_info = {}
         for e_dict in order_exams:
             e_ctx = ExamContext(
                 exam_id=e_dict["exam_id"],
@@ -434,37 +464,41 @@ async def suggest_assignment(
                 exam_code=e_ctx.exam_code,
                 oldpers=e_ctx.oldpers,
             )
+            for c in e_cands:
+                cand_info[c.id] = c
             order_contexts.append((e_ctx, e_cands))
 
-        cand_totals = {}
-        cand_eligible_all = {}
-        cand_info = {}
+        if not best_cand_id:
+            cand_totals = {}
+            cand_eligible_all = {}
 
-        for ex_ctx, cands in order_contexts:
-            for c in cands:
-                c.current_day_count += _session_suggestion_counts.get(c.id, 0)
-                cand_info[c.id] = c
+            for ex_ctx, cands in order_contexts:
+                passed, _ = apply_hard_filters(cands, ex_ctx)
+                passed_ids = {p.id for p in passed}
 
-            passed, _ = apply_hard_filters(cands, ex_ctx)
-            passed_ids = {p.id for p in passed}
+                for c in cands:
+                    if c.id not in cand_eligible_all:
+                        cand_eligible_all[c.id] = True
+                    if c.id not in passed_ids:
+                        cand_eligible_all[c.id] = False
 
-            for c in cands:
-                if c.id not in cand_eligible_all:
-                    cand_eligible_all[c.id] = True
-                if c.id not in passed_ids:
-                    cand_eligible_all[c.id] = False
+                if passed:
+                    scored = score_all_candidates(passed, ex_ctx)
+                    for sc in scored:
+                        cand_totals[sc.diagnostician_id] = cand_totals.get(sc.diagnostician_id, 0.0) + sc.total_score
 
-            if passed:
-                scored = score_all_candidates(passed, ex_ctx)
-                for sc in scored:
-                    cand_totals[sc.diagnostician_id] = cand_totals.get(sc.diagnostician_id, 0.0) + sc.total_score
-
-        best_cand_id = None
-        best_total = -1.0
-        for c_id, is_elig in cand_eligible_all.items():
-            if is_elig and cand_totals.get(c_id, 0.0) > best_total:
-                best_total = cand_totals[c_id]
-                best_cand_id = c_id
+            best_total = -1.0
+            for c_id, is_elig in cand_eligible_all.items():
+                if is_elig:
+                    score_val = cand_totals.get(c_id, 0.0)
+                    if score_val > best_total:
+                        best_total = score_val
+                        best_cand_id = c_id
+                    elif abs(score_val - best_total) < 1e-6 and best_cand_id:
+                        c1 = cand_info.get(c_id)
+                        c2 = cand_info.get(best_cand_id)
+                        if c1 and c2 and c1.current_day_count < c2.current_day_count:
+                            best_cand_id = c_id
 
         suggestion = await assign_svc.suggest_assignment(exam, candidates)
         if suggestion and best_cand_id and best_cand_id in cand_info:
@@ -607,7 +641,36 @@ async def bulk_eligible_diagnosticians(
 
     all_exams = assign_svc.get_pending_exams() + assign_svc.get_assigned_exams()
     req_ids = {str(x) for x in request.exam_ids}
-    selected_exams = [e for e in all_exams if str(e["exam_id"]) in req_ids]
+    selected_exams = [e for e in all_exams if str(e.get("exam_id")) in req_ids or (e.get("exammoreid") and str(e.get("exammoreid")) in req_ids)]
+
+    found_eids = {str(e.get("exam_id")) for e in selected_exams} | {str(e.get("exammoreid")) for e in selected_exams if e.get("exammoreid")}
+    missing_ids = list(req_ids - found_eids)
+
+    if missing_ids:
+        try:
+            from diagflow.services.assignment import _get_mock_db
+            con = _get_mock_db()
+            placeholders = ",".join("?" * len(missing_ids))
+            rows = con.execute(f"SELECT * FROM slis_exams WHERE exammoreid IN ({placeholders})", tuple(missing_ids)).fetchall()
+            for r in rows:
+                r_dict = dict(r)
+                selected_exams.append({
+                    "exam_id": str(r_dict.get("exammoreid")),
+                    "patient_id": str(r_dict.get("demogid") or r_dict.get("patientid") or ""),
+                    "patient_name": f"{r_dict.get('fname', '')} {r_dict.get('lname', '')}".strip() if (r_dict.get('fname') or r_dict.get('lname')) else str(r_dict.get("patient_name") or ""),
+                    "modality": str(r_dict.get("category") or r_dict.get("modality") or ""),
+                    "body_part": str(r_dict.get("bodypart") or ""),
+                    "examnumcode": str(r_dict.get("examnumcode") or ""),
+                    "examname": str(r_dict.get("examname") or ""),
+                    "lab_id": str(r_dict.get("labid") or ""),
+                    "lab_name": str(r_dict.get("labname") or r_dict.get("laboratoryname") or ""),
+                    "issuing_doctor_id": str(r_dict.get("doctorid") or ""),
+                    "issuing_doctor_name": str(r_dict.get("wname") or r_dict.get("issuing_doctor_name") or ""),
+                    "comments": str(r_dict.get("comments") or ""),
+                    "oldpers": r_dict.get("oldpers")
+                })
+        except Exception as ex:
+            pass
 
     if not selected_exams:
         return BulkEligibleResponse(diagnosticians=[])
@@ -1338,6 +1401,38 @@ async def slis_push_selected(req: PushSelectedRequest):
     from diagflow.services.slis_sync import push_selected_to_slis
     result = push_selected_to_slis(req.exammoreid_list)
     return result
+
+
+@router.post("/slis/search")
+async def slis_search_exams(req: SlisSearchRequest):
+    """
+    Search exams directly in Slis (production MSSQL or mock DB) by filters.
+    Defaults to last 7 days if date range is empty.
+    """
+    from diagflow.services.slis_sync import search_slis_exams
+    return search_slis_exams(
+        start_date=req.start_date,
+        end_date=req.end_date,
+        extracode=req.extracode,
+        patient_query=req.patient_query,
+        doctor_query=req.doctor_query,
+        diagnostician_query=req.diagnostician_query,
+    )
+
+
+@router.post("/slis/reassign")
+async def slis_reassign_exam(req: SlisReassignRequest):
+    """
+    Re-assign an exam to a new diagnostician and immediately update Slis.
+    """
+    from diagflow.services.slis_sync import push_exam_to_slis
+    result = push_exam_to_slis(
+        exammoreid=req.exammoreid,
+        diagnostician_id=req.diagnostician_id,
+        diagnostician_name=req.diagnostician_name,
+    )
+    return result
+
 
 
 @router.post("/admin/sync-diagnosticians")

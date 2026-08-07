@@ -362,14 +362,18 @@ def push_exam_to_slis(exammoreid: int, diagnostician_id: int, diagnostician_name
                     {"diag_id": diagnostician_id, "id": exammoreid}
                 )
                 conn.commit()
-        else:
+
+        # Update local SQLite slis_exams cache in both production and mock mode so pending queries immediately see non-null diagnostis
+        try:
             con = _get_db()
             con.execute(
-                "UPDATE exammore SET diagnostisid = ? WHERE exammoreid = ?",
-                (diagnostician_id, exammoreid)
+                "UPDATE slis_exams SET diagnostis = ?, code = ?, slis_synced_at = ? WHERE exammoreid = ?",
+                (diagnostician_id, diagnostician_name, now_iso, exammoreid)
             )
             con.commit()
             con.close()
+        except Exception as cache_exc:
+            logger.warning("failed_to_update_local_slis_cache", exammoreid=exammoreid, error=str(cache_exc))
 
         cfg_db.mark_local_assignment_synced(exammoreid, now_iso)
 
@@ -398,6 +402,155 @@ def push_exam_to_slis(exammoreid: int, diagnostician_id: int, diagnostician_name
             "exammoreid": exammoreid,
             "error": str(exc),
         }
+
+
+def search_slis_exams(
+    start_date: str | None = None,
+    end_date: str | None = None,
+    extracode: str | None = None,
+    patient_query: str | None = None,
+    doctor_query: str | None = None,
+    diagnostician_query: str | None = None,
+) -> list[dict]:
+    """
+    Search exams directly in Slis (production MSSQL or mock_slis.db).
+    Defaults to last 7 days if date range is omitted.
+    Filters by extracode (Order ID), patient name/ID, doctor name/ID, diagnostician name/ID.
+    Returns list of exam dicts with current Slis assignment details.
+    """
+    if not end_date:
+        end_date = date.today().isoformat()
+    if not start_date:
+        start_dt = date.today() - timedelta(days=7)
+        start_date = start_dt.isoformat()
+
+    logger.info("searching_slis_exams", start=start_date, end=end_date, extracode=extracode)
+
+    rows = []
+    if not settings.use_mock_slis_db:
+        try:
+            from sqlalchemy import create_engine, text
+            engine = create_engine(settings.slis_db_connection_string)
+            with engine.connect() as conn:
+                query = text(f"EXEC getExamsListForPeriod '{start_date}', '{end_date}'")
+                res = conn.execute(query)
+                keys = list(res.keys())
+                raw_rows = [dict(zip(keys, r)) for r in res.fetchall()]
+                for r in raw_rows:
+                    row_dict = {k.lower(): v for k, v in r.items()}
+                    rows.append(row_dict)
+        except Exception as exc:
+            logger.error("search_slis_production_error", error=str(exc))
+            return []
+    else:
+        try:
+            con = _get_db()
+            cur = con.execute(
+                "SELECT * FROM slis_exams WHERE visitdate BETWEEN ? AND ?",
+                (start_date, end_date)
+            )
+            rows = [dict(r) for r in cur.fetchall()]
+            con.close()
+        except Exception as exc:
+            logger.error("search_slis_mock_error", error=str(exc))
+            return []
+
+    # Fetch local diagnostician names and local pending assignments
+    import diagflow.db.diagflow_db as cfg_db
+    local_diags = {d["id"]: d["name"] for d in cfg_db.get_all_diagnosticians()}
+    local_assignments = cfg_db.get_all_local_assignments()
+
+    # Apply filters in Python
+    filtered = []
+    extracode_clean = str(extracode).strip().lower() if extracode else ""
+    patient_clean = str(patient_query).strip().lower() if patient_query else ""
+    doctor_clean = str(doctor_query).strip().lower() if doctor_query else ""
+    diag_clean = str(diagnostician_query).strip().lower() if diagnostician_query else ""
+
+    for r in rows:
+        if extracode_clean:
+            row_ext = str(r.get("extracode") or "").strip().lower()
+            if extracode_clean not in row_ext:
+                continue
+
+        if patient_clean:
+            pat_haystack = f"{r.get('demogid') or ''} {r.get('fname') or ''} {r.get('lname') or ''}".lower()
+            if patient_clean not in pat_haystack:
+                continue
+
+        if doctor_clean:
+            doc_haystack = f"{r.get('wcode') or ''} {r.get('wname') or ''}".lower()
+            if doctor_clean not in doc_haystack:
+                continue
+
+        exam_more_id = r.get("exammoreid")
+        local_assign = local_assignments.get(exam_more_id) if exam_more_id else None
+
+        # Check Slis diagnostis field
+        raw_diag = r.get("diagnostis")
+        slis_diag_id = None
+        if raw_diag is not None:
+            try:
+                diag_str = str(raw_diag).strip().lower()
+                if diag_str and diag_str not in ("none", "null", "0", ""):
+                    slis_diag_id = int(float(diag_str))
+            except (ValueError, TypeError):
+                pass
+
+        if local_assign:
+            diag_id = local_assign["diagnostician_id"]
+            diag_name = local_assign.get("diagnostician_name") or (local_diags.get(diag_id) or f"ID: {diag_id}")
+            status = "pending_slis_update"
+            pending_slis_update = True
+        elif slis_diag_id is not None:
+            diag_id = slis_diag_id
+            raw_name = r.get("code") or r.get("name")
+            diag_name = str(raw_name).strip() if raw_name else (local_diags.get(diag_id) or f"ID: {diag_id}")
+            status = "synced"
+            pending_slis_update = False
+        else:
+            diag_id = None
+            diag_name = ""
+            status = "pending"
+            pending_slis_update = False
+
+        if diag_clean:
+            diag_haystack = f"{diag_id or ''} {diag_name}".lower()
+            if diag_clean not in diag_haystack:
+                continue
+
+        raw_cat = r.get("category")
+        norm_cat = normalize_modality(raw_cat)
+
+        filtered.append({
+            "exam_id": str(r.get("exammoreid")),
+            "exammoreid": r.get("exammoreid"),
+            "extracode": r.get("extracode"),
+            "visitid": r.get("visitid"),
+            "patient_id": str(r.get("demogid")) if r.get("demogid") else None,
+            "demogid": r.get("demogid"),
+            "fname": r.get("fname") or "",
+            "lname": r.get("lname") or "",
+            "patient_name": f"{r.get('fname') or ''} {r.get('lname') or ''}".strip(),
+            "examnumcode": r.get("examnumcode"),
+            "examname": r.get("examname") or "",
+            "modality": norm_cat,
+            "category": norm_cat,
+            "visitdate": str(r.get("visitdate"))[:10] if r.get("visitdate") else "",
+            "labcodeid": r.get("labcodeid"),
+            "lab_name": (r.get("laboratoryname") or "").strip(),
+            "wcode": r.get("wcode"),
+            "issuing_doctor_name": r.get("wname") or "",
+            "diagnostis": diag_id,
+            "diagnostician_name": diag_name,
+            "status": status,
+            "pending_slis_update": pending_slis_update,
+            "notes": r.get("notes") or "",
+        })
+
+    logger.info("search_slis_complete", total_found=len(rows), filtered=len(filtered))
+    return filtered
+
 
 
 def push_all_to_slis() -> dict:

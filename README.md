@@ -219,8 +219,12 @@ DiagFlow isolates operational Slis exam data from application configuration usin
 ## 💻 User Interfaces
 
 ### Secretariat Review Dashboard (`index.html`)
-- **Pending Tab:** Real-time exam table, single-click suggestion generation, visual score breakdown tooltips, alternatives modal with color-coded elimination reasons, and bulk confirm/override actions.
-- **Assigned Tab:** Overview of pending Slis pushes, rule tags, auto-assignment badges, and one-click "Send to Slis" synchronization.
+- **1. Pending Tab:** Unassigned exams table, order grouping, automated suggestions, score breakdown tooltips, alternatives modal, and bulk assignments.
+- **2. Assigned Tab:** Assigned exams, Slis sync status badges ("✅ Synced", "⚠️ Pending Slis Update"), manual/bulk push to Slis, and auto-routing rule badges.
+- **3. Dashboard Tab:** Real-time diagnostician daily quotas, completed diagnoses, remaining capacity, and CT/MRI breakdown.
+- **4. Slis Search Tab:** Live Slis DB search form with field-specific domain icons (`📋 Order ID`, `👤 Patient`, `🩺 Doctor`, `👨‍⚕️ Diagnostician`, `📆 Date Range`), clean exam titles, colored modality pills (`MRI`, `CT`, `MRA`), Slis status tracking ("⚠️ Pending Slis Update"), and interactive re-assignment popover with real-time hard skill/quota/availability checks and available-first sorting.
+
+> 🔒 **Multi-exam Order Alignment Lock:** All sub-exams belonging to the same Order ID (`extracode`) are automatically locked to the highest-scoring eligible diagnostician, guaranteeing 100% diagnostic consistency across order sub-exams.
 
 ### Admin Control Panel (`admin.html`)
 - **Security:** Token-based admin authentication (`X-Admin-Token`) with bcrypt password hashing (cost factor 12), IP-based rate limiting (5 attempts/60s with 1.0s throttling delay), and interactive credential management modal.

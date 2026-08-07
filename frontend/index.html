@@ -28,7 +28,8 @@
                 </div>
             </div>
             <div class="header-right">
-                <div class="db-status-badge mock" id="db-status-badge" onclick="showDbStatusDetails()" title="Κατάσταση σύνδεσης βάσης δεδομένων">
+                <div class="db-status-badge mock" id="db-status-badge" onclick="showDbStatusDetails()"
+                    title="Κατάσταση σύνδεσης βάσης δεδομένων">
                     <span class="db-status-dot"></span>
                     <span class="db-status-text" id="db-status-text">Mock Slis DB</span>
                 </div>
@@ -122,15 +123,18 @@
         <!-- ─── Scripts ─── -->
         <div class="tabs-container">
             <button class="tab-btn active" id="tab-pending" onclick="switchTab('pending')">
-                Εκκρεμείς
+                📋 Εκκρεμείς
                 <span class="tab-count" id="tab-count-pending">—</span>
             </button>
             <button class="tab-btn" id="tab-assigned" onclick="switchTab('assigned')">
-                Ανατεθειμένες
+                ✅ Ανατεθειμένες
                 <span class="tab-count" id="tab-count-assigned">—</span>
             </button>
             <button class="tab-btn" id="tab-dashboard" onclick="switchTab('dashboard')">
-                Dashboard
+                📊 Dashboard
+            </button>
+            <button class="tab-btn" id="tab-search" onclick="switchTab('search')">
+                🔍 Αναζήτηση Slis
             </button>
         </div>
 
@@ -248,7 +252,8 @@
 
             <!-- ─── Pending Exams Table ─── -->
             <div id="tab-content-pending" class="tab-content active">
-                <div style="font-size: 13px; color: var(--text-secondary); text-align: center; margin-bottom: 12px; font-style: italic;">
+                <div
+                    style="font-size: 13px; color: var(--text-secondary); text-align: center; margin-bottom: 12px; font-style: italic;">
                     Εμφανίζονται οι εξετάσεις CT/MRI των τελευταίων 3 ημερών χωρίς διαγνώστη
                 </div>
                 <div class="exams-table-container">
@@ -359,7 +364,8 @@
                 <!-- Pagination Controls (Outside table container with permanent bottom margin for FAB) -->
                 <div class="bottom-pagination-wrapper">
                     <div style="font-size: 13px; color: #ef4444; font-weight: 600; text-align: center;">
-                        ΠΡΟΣΟΧΗ: Στο τέλος της ημέρας να μην μείνουν εκκρεμείς ανατεθειμένες εξετάσεις προς ενημέρωση στο Slis
+                        ΠΡΟΣΟΧΗ: Στο τέλος της ημέρας να μην μείνουν εκκρεμείς ανατεθειμένες εξετάσεις προς ενημέρωση
+                        στο Slis
                     </div>
                     <span id="assigned-pagination-info"
                         style="font-size:var(--font-size-sm); color:var(--text-tertiary); text-align:center;"></span>
@@ -382,6 +388,96 @@
                 <!-- Populated by JS -->
             </div>
         </div>
+
+        <!-- ─── Slis Search & Reassign Section ─── -->
+        <div class="slis-search-section" id="slis-search-section" style="display: none; padding: 20px;">
+            <div style="margin-bottom: 20px;">
+                <h2 style="margin: 0 0 4px 0; color: var(--text-primary);">🔍 Αναζήτηση & Επανάθεση Εξετάσεων</h2>
+                <p style="margin: 0; font-size: 13px; color: var(--text-secondary);">
+                    Αναζήτηση εξετάσεων απευθείας από τη βάση Slis με βάση τα παρακάτω φίλτρα. Υπάρχει δυνατότητα
+                    αλλαγής διαγνώστη.
+                </p>
+            </div>
+
+            <!-- Search Form Card -->
+            <div class="card"
+                style="padding: 20px; margin-bottom: 24px; border: 1px solid var(--border-color); border-radius: 8px; background: var(--bg-secondary);">
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px;">
+                    <div>
+                        <label class="form-label"
+                            style="font-size: 12px; font-weight: 600; display: block; margin-bottom: 4px;">📋 Εντολή</label>
+                        <input type="text" id="slis-search-extracode" class="form-input" placeholder="📋 π.χ. 2783623"
+                            style="width: 100%;" onkeydown="if(event.key==='Enter') performSlisSearch()">
+                    </div>
+                    <div>
+                        <label class="form-label"
+                            style="font-size: 12px; font-weight: 600; display: block; margin-bottom: 4px;">👤 Ασθενής</label>
+                        <input type="text" id="slis-search-patient" class="form-input"
+                            placeholder="👤 π.χ. 857640 ή ΓΕΩΡΓΙΟΥ" style="width: 100%;"
+                            onkeydown="if(event.key==='Enter') performSlisSearch()">
+                    </div>
+                    <div>
+                        <label class="form-label"
+                            style="font-size: 12px; font-weight: 600; display: block; margin-bottom: 4px;">🩺 Παραπέμπων Ιατρός</label>
+                        <input type="text" id="slis-search-doctor" class="form-input"
+                            placeholder="🩺 π.χ. 99512413 ή ΔΗΜΗΤΡΙΟΥ" style="width: 100%;"
+                            onkeydown="if(event.key==='Enter') performSlisSearch()">
+                    </div>
+                    <div>
+                        <label class="form-label"
+                            style="font-size: 12px; font-weight: 600; display: block; margin-bottom: 4px;">👨‍⚕️ Διαγνώστης</label>
+                        <input type="text" id="slis-search-diagnostis" class="form-input" placeholder="👨‍⚕️ π.χ. ΤΡΙΑΝΤΑΦΥΛΛΟΥ"
+                            style="width: 100%;" onkeydown="if(event.key==='Enter') performSlisSearch()">
+                    </div>
+                    <div>
+                        <label class="form-label"
+                            style="font-size: 12px; font-weight: 600; display: block; margin-bottom: 4px;">📆 Εύρος Ημερομηνιών</label>
+                        <input type="text" id="slis-search-date-range" class="form-input"
+                            placeholder="📆 Τελευταίες 7 μέρες" style="width: 100%;"
+                            onkeydown="if(event.key==='Enter') performSlisSearch()">
+                    </div>
+                </div>
+                <div
+                    style="display: flex; gap: 12px; justify-content: flex-end; margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--border-color);">
+                    <button class="btn btn-secondary" onclick="clearSlisSearchForm()">Καθαρισμός</button>
+                    <button class="btn btn-primary" id="btn-do-slis-search" onclick="performSlisSearch()">🔍
+                        Αναζήτηση</button>
+                </div>
+            </div>
+
+            <!-- Results Section -->
+            <div id="slis-search-results-container">
+                <div class="section-title" style="margin-bottom: 12px;">
+                    <h3>Αποτελέσματα Αναζήτησης <span id="slis-search-count" class="section-count">(0)</span></h3>
+                </div>
+
+                <div class="exams-table-container">
+                    <table class="exams-table">
+                        <thead>
+                            <tr>
+                                <th>Εντολή</th>
+                                <th>Ασθενής</th>
+                                <th>Ημερομηνία</th>
+                                <th>Μονάδα</th>
+                                <th>Εξέταση</th>
+                                <th>Παραπέμπων Ιατρός</th>
+                                <th>Διαγνώστης Slis</th>
+                                <th>Ενέργειες</th>
+                            </tr>
+                        </thead>
+                        <tbody id="tbody-slis-search">
+                            <tr>
+                                <td colspan="8"
+                                    style="text-align: center; color: #ffffff; font-weight: 500; padding: 24px;">
+                                    Συμπληρώστε τα πεδία αναζήτησης και πατήστε "Αναζήτηση".
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
 
     </main>
 
@@ -483,7 +579,8 @@
             </div>
             <div class="modal-body" style="gap: 12px;">
                 <p style="font-size: var(--font-size-sm); color: var(--text-secondary); margin:0;">
-                    Ακολουθεί το T-SQL script που θα εκτελούταν στη βάση Slis. Το script <strong>δεν εκτελέστηκε</strong> στη βάση.
+                    Ακολουθεί το T-SQL script που θα εκτελούταν στη βάση Slis. Το script <strong>δεν
+                        εκτελέστηκε</strong> στη βάση.
                 </p>
                 <div class="sql-preview-box" id="sql-script-content">-- SQL Script will appear here</div>
             </div>
@@ -502,10 +599,13 @@
     <div class="toast-container" id="toast-container"></div>
 
     <!-- ─── Refreshing Suggestions Overlay ─── -->
-    <div class="modal-overlay" id="refreshing-suggestions-modal" style="display: none; z-index: 20000; background: rgba(15, 23, 42, 0.75); backdrop-filter: blur(5px);">
-        <div class="modal-card" style="max-width: 440px; text-align: center; padding: 32px 24px; border-radius: 20px; background: var(--bg-secondary); border: 1px solid var(--border-color); box-shadow: 0 20px 50px rgba(0, 0, 0, 0.6);">
+    <div class="modal-overlay" id="refreshing-suggestions-modal"
+        style="display: none; z-index: 20000; background: rgba(15, 23, 42, 0.75); backdrop-filter: blur(5px);">
+        <div class="modal-card"
+            style="max-width: 440px; text-align: center; padding: 32px 24px; border-radius: 20px; background: var(--bg-secondary); border: 1px solid var(--border-color); box-shadow: 0 20px 50px rgba(0, 0, 0, 0.6);">
             <div style="font-size: 52px; margin-bottom: 12px; animation: bounce 1.5s infinite;">🔄✨</div>
-            <h3 style="margin-bottom: 12px; font-size: 19px; color: var(--text-primary); font-weight: 700;">Ενημέρωση Προτάσεων Engine</h3>
+            <h3 style="margin-bottom: 12px; font-size: 19px; color: var(--text-primary); font-weight: 700;">Ενημέρωση
+                Προτάσεων Engine</h3>
             <p style="font-size: 14px; color: var(--text-secondary); line-height: 1.6; margin: 0;">
                 Ανανεώνονται όλες οι προτάσεις βάσει της αλλαγής που μόλις κάνατε! 🩺⏳<br>
                 <strong style="color: var(--accent-primary); font-size: 15px;">Παρακαλώ περιμένετε...</strong>

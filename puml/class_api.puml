@@ -47,10 +47,13 @@ package "diagflow.api" as api_pkg #BBDEFB {
         + POST /assignments/override
         + POST /assignments/bulk-confirm
         + POST /assignments/bulk-override
-        __ Slis Sync __
+        + POST /assignments/bulk-eligible-diagnosticians
+        __ Slis Sync & Search __
         + POST /slis/pull
         + POST /slis/push-all
         + POST /slis/push-selected
+        + POST /slis/search
+        + GET  /slis/status
         __ Diagnosticians & Schedule __
         + GET  /diagnosticians
         + GET  /pamakristos/oncall
