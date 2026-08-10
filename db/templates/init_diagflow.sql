@@ -24,12 +24,12 @@ CREATE TABLE availability (
     notes                   TEXT,
     UNIQUE(diagnostician_id, date)
 );
-INSERT INTO "availability" VALUES(1,1,'2026-08-05','available',0,NULL);
-INSERT INTO "availability" VALUES(2,2,'2026-08-05','available',1,'Εφημερία Παμμακάριστος');
-INSERT INTO "availability" VALUES(3,3,'2026-08-05','available',0,NULL);
-INSERT INTO "availability" VALUES(4,4,'2026-08-05','absent',0,'Άδεια');
-INSERT INTO "availability" VALUES(5,5,'2026-08-05','available',0,NULL);
-INSERT INTO "availability" VALUES(6,6,'2026-08-05','available',0,NULL);
+INSERT INTO "availability" VALUES(1,1,'2026-08-10','available',0,NULL);
+INSERT INTO "availability" VALUES(2,2,'2026-08-10','available',1,'Εφημερία Παμμακάριστος');
+INSERT INTO "availability" VALUES(3,3,'2026-08-10','available',0,NULL);
+INSERT INTO "availability" VALUES(4,4,'2026-08-10','absent',0,'Άδεια');
+INSERT INTO "availability" VALUES(5,5,'2026-08-10','available',0,NULL);
+INSERT INTO "availability" VALUES(6,6,'2026-08-10','available',0,NULL);
 CREATE TABLE diagnostician_skills (
     id                INTEGER PRIMARY KEY AUTOINCREMENT,
     diagnostician_id  INTEGER NOT NULL REFERENCES diagnosticians(id) ON DELETE CASCADE,
@@ -68,20 +68,20 @@ CREATE TABLE diagnosticians (
     preferred_lab_id INTEGER DEFAULT NULL,
     created_at       TEXT    DEFAULT (datetime('now'))
 );
-INSERT INTO "diagnosticians" VALUES(1,'ΑΛΕΞΙΟΥ ΑΛΕΞΑΝΔΡΟΣ',1,1,1,15,15,15,15,15,0,0,1,'2026-08-05 09:50:58');
-INSERT INTO "diagnosticians" VALUES(2,'ΒΑΡΔΑΣ ΒΑΣΙΛΕΙΟΣ',1,1,1,15,15,15,15,15,0,0,1,'2026-08-05 09:50:58');
-INSERT INTO "diagnosticians" VALUES(3,'ΓΕΩΡΓΙΑΔΟΥ ΓΕΩΡΓΙΑ',1,1,1,15,15,15,15,15,0,0,2,'2026-08-05 09:50:58');
-INSERT INTO "diagnosticians" VALUES(4,'ΔΗΜΟΥ ΔΗΜΗΤΡΙΟΣ',1,1,0,12,12,12,12,12,0,0,1,'2026-08-05 09:50:58');
-INSERT INTO "diagnosticians" VALUES(5,'ΕΥΑΓΓΕΛΑΤΟΣ ΕΥΑΓΓΕΛΟΣ',1,0,1,12,12,12,12,12,0,0,2,'2026-08-05 09:50:58');
-INSERT INTO "diagnosticians" VALUES(6,'ΖΑΧΑΡΗ ΖΩΗ',1,1,1,15,15,15,15,15,0,0,1,'2026-08-05 09:50:58');
+INSERT INTO "diagnosticians" VALUES(1,'ΔΙΑΓΝΩΣΤΗΣ Α',1,1,1,15,15,15,15,15,0,0,1,'2026-08-10 11:51:57');
+INSERT INTO "diagnosticians" VALUES(2,'ΔΙΑΓΝΩΣΤΗΣ Β',1,1,1,15,15,15,15,15,0,0,1,'2026-08-10 11:51:57');
+INSERT INTO "diagnosticians" VALUES(3,'ΔΙΑΓΝΩΣΤΗΣ Γ',1,1,1,15,15,15,15,15,0,0,2,'2026-08-10 11:51:57');
+INSERT INTO "diagnosticians" VALUES(4,'ΔΙΑΓΝΩΣΤΗΣ Δ',1,1,0,12,12,12,12,12,0,0,1,'2026-08-10 11:51:57');
+INSERT INTO "diagnosticians" VALUES(5,'ΔΙΑΓΝΩΣΤΗΣ Ε',1,0,1,12,12,12,12,12,0,0,2,'2026-08-10 11:51:57');
+INSERT INTO "diagnosticians" VALUES(6,'ΔΙΑΓΝΩΣΤΗΣ Ζ',1,1,1,15,15,15,15,15,0,0,1,'2026-08-10 11:51:57');
 CREATE TABLE doctors (
     id          TEXT PRIMARY KEY,
     name        TEXT NOT NULL
 );
-INSERT INTO "doctors" VALUES('DOC101','ΔΡ. ΚΩΝΣΤΑΝΤΙΝΟΥ ΜΙΧΑΗΛ');
-INSERT INTO "doctors" VALUES('DOC102','ΔΡ. ΘΕΟΔΩΡΟΥ ΣΟΦΙΑ');
-INSERT INTO "doctors" VALUES('DOC103','ΔΡ. ΑΝΤΩΝΙΟΥ ΑΝΔΡΕΑΣ');
-INSERT INTO "doctors" VALUES('DOC104','ΔΡ. ΝΙΚΟΛΑΟΥ ΕΛΕΝΗ');
+INSERT INTO "doctors" VALUES('DOC101','ΔΡ. ΠΑΡΑΠΕΜΠΩΝ Α');
+INSERT INTO "doctors" VALUES('DOC102','ΔΡ. ΠΑΡΑΠΕΜΠΩΝ Β');
+INSERT INTO "doctors" VALUES('DOC103','ΔΡ. ΠΑΡΑΠΕΜΠΩΝ Γ');
+INSERT INTO "doctors" VALUES('DOC104','ΔΡ. ΠΑΡΑΠΕΜΠΩΝ Δ');
 CREATE TABLE exam_dictionary (
     code     TEXT PRIMARY KEY,
     name     TEXT NOT NULL,
@@ -103,8 +103,8 @@ CREATE TABLE exam_routing_rules (
     issuing_doctor_name TEXT,
     is_active           INTEGER NOT NULL DEFAULT 1
 );
-INSERT INTO "exam_routing_rules" VALUES(1,NULL,1,'22705',3,'Παμμακάριστος - Μαγνητική Φασματοσκοπία σε Γεωργιάδου',NULL,NULL,1);
-INSERT INTO "exam_routing_rules" VALUES(2,2,0,'22151',5,'MRI Σπονδυλικής Αμπελοκήπων σε Ευαγγελάτο',NULL,NULL,1);
+INSERT INTO "exam_routing_rules" VALUES(1,NULL,1,'22705',3,'Παμμακάριστος - Μαγνητική Φασματοσκοπία σε ΔΙΑΓΝΩΣΤΗ Γ',NULL,NULL,1);
+INSERT INTO "exam_routing_rules" VALUES(2,2,0,'22151',5,'MRI Σπονδυλικής Αμπελοκήπων σε ΔΙΑΓΝΩΣΤΗ Ε',NULL,NULL,1);
 CREATE TABLE exclusive_lab_rules (
     id                INTEGER PRIMARY KEY AUTOINCREMENT,
     diagnostician_id  INTEGER NOT NULL,
@@ -148,8 +148,8 @@ CREATE TABLE partnerships (
     exclusive                   INTEGER NOT NULL DEFAULT 0,
     is_active                   INTEGER NOT NULL DEFAULT 1
 );
-INSERT INTO "partnerships" VALUES(1,'DOC101','ΔΡ. ΚΩΝΣΤΑΝΤΙΝΟΥ ΜΙΧΑΗΛ',1,1,1,1);
-INSERT INTO "partnerships" VALUES(2,'DOC102','ΔΡ. ΘΕΟΔΩΡΟΥ ΣΟΦΙΑ',3,1,0,1);
+INSERT INTO "partnerships" VALUES(1,'DOC101','ΔΡ. ΠΑΡΑΠΕΜΠΩΝ Α',1,1,1,1);
+INSERT INTO "partnerships" VALUES(2,'DOC102','ΔΡ. ΠΑΡΑΠΕΜΠΩΝ Β',3,1,0,1);
 CREATE TABLE system_settings (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
