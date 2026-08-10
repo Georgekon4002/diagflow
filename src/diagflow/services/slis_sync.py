@@ -78,25 +78,8 @@ def normalize_modality(cat: str | None) -> str:
 
 def ensure_mock_slis_dates_last_3_days():
     """Ensure mock_slis.db exams always have visitdate values within the last 3 days relative to today."""
-    if not settings.use_mock_slis_db:
-        return
-    try:
-        con = _get_db()
-        today = date.today()
-        dates = [
-            (today - timedelta(days=2)).isoformat(),
-            (today - timedelta(days=1)).isoformat(),
-            today.isoformat()
-        ]
-        rows = con.execute("SELECT exammoreid FROM slis_exams").fetchall()
-        for r in rows:
-            eid = r[0]
-            target_date = dates[eid % 3]
-            con.execute("UPDATE slis_exams SET visitdate = ? WHERE exammoreid = ?", (target_date, eid))
-        con.commit()
-        con.close()
-    except Exception as exc:
-        logger.warning("ensure_mock_slis_dates_failed", error=str(exc))
+    # User requested to NOT automatically update mock DB dates anymore, as it messes with fixed test scenarios.
+    pass
 
 
 def pull_from_slis() -> dict:
@@ -121,7 +104,7 @@ def pull_from_slis() -> dict:
     if not settings.use_mock_slis_db:
         try:
             from sqlalchemy import create_engine, text
-            engine = create_engine(settings.slis_db_connection_string)
+            engine = create_engine(settings.slis_db_connection_string, connect_args={"timeout": 10})
 
             end_date = date.today()
             start_date = end_date - timedelta(days=3)
@@ -150,12 +133,13 @@ def pull_from_slis() -> dict:
                 con.execute("ALTER TABLE slis_exams ADD COLUMN slis_synced_at TEXT DEFAULT NULL")
                 con.commit()
 
-            # Clean out pre-existing mock/stale exams that are NOT in the pulled real SLIS exams list
+            # Clean out stale exams that are NOT in the pulled real SLIS exams list (only if rows were fetched)
             if pulled_exammoreids:
                 placeholders = ",".join(["?"] * len(pulled_exammoreids))
-                con.execute(f"DELETE FROM slis_exams WHERE exammoreid NOT IN ({placeholders})", pulled_exammoreids)
-            else:
-                con.execute("DELETE FROM slis_exams")
+                con.execute(
+                    f"DELETE FROM slis_exams WHERE exammoreid NOT IN ({placeholders}) AND slis_synced_at IS NULL",
+                    pulled_exammoreids
+                )
             con.commit()
 
             expired = delete_expired(con)
@@ -252,10 +236,10 @@ def pull_from_slis() -> dict:
             total_pending = count_row[0] if count_row else 0
             con.close()
 
-            # Clean orphaned local assignments in diagflow.db that no longer match any pulled SLIS exam
-            import diagflow.db.diagflow_db as cfg_db
-            with cfg_db._conn() as local_con:
-                if pulled_exammoreids:
+            # Clean orphaned local assignments in diagflow.db only if real SLIS returns exams
+            if pulled_exammoreids:
+                import diagflow.db.diagflow_db as cfg_db
+                with cfg_db._conn() as local_con:
                     placeholders = ",".join(["?"] * len(pulled_exammoreids))
                     local_con.execute(f"DELETE FROM local_assignments WHERE exammoreid NOT IN ({placeholders})", pulled_exammoreids)
 
@@ -355,7 +339,7 @@ def push_exam_to_slis(exammoreid: int, diagnostician_id: int, diagnostician_name
     try:
         if not settings.use_mock_slis_db:
             from sqlalchemy import create_engine, text
-            engine = create_engine(settings.slis_db_connection_string)
+            engine = create_engine(settings.slis_db_connection_string, connect_args={"timeout": 10})
             with engine.connect() as conn:
                 conn.execute(
                     text("UPDATE exammore SET diagnostisid = :diag_id WHERE exammoreid = :id"),
@@ -430,7 +414,7 @@ def search_slis_exams(
     if not settings.use_mock_slis_db:
         try:
             from sqlalchemy import create_engine, text
-            engine = create_engine(settings.slis_db_connection_string)
+            engine = create_engine(settings.slis_db_connection_string, connect_args={"timeout": 10})
             with engine.connect() as conn:
                 query = text(f"EXEC getExamsListForPeriod '{start_date}', '{end_date}'")
                 res = conn.execute(query)
@@ -691,7 +675,7 @@ def sync_diagnosticians() -> dict:
     try:
         if not settings.use_mock_slis_db:
             from sqlalchemy import create_engine, text
-            engine = create_engine(settings.slis_db_connection_string)
+            engine = create_engine(settings.slis_db_connection_string, connect_args={"timeout": 10})
             with engine.connect() as conn:
                 res = conn.execute(text("EXEC getdiagnosticsList"))
                 keys = list(res.keys())
@@ -752,7 +736,7 @@ def sync_doctors() -> dict:
     try:
         if not settings.use_mock_slis_db:
             from sqlalchemy import create_engine, text
-            engine = create_engine(settings.slis_db_connection_string)
+            engine = create_engine(settings.slis_db_connection_string, connect_args={"timeout": 10})
             with engine.connect() as conn:
                 res = conn.execute(text("EXEC getWardDoctors"))
                 keys = list(res.keys())

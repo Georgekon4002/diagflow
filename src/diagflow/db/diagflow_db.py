@@ -722,13 +722,16 @@ def get_dashboard_data() -> list[dict]:
                 "modality_limits": modality_limits.get(did, {})
             }
 
+        today_str = date.today().isoformat()
+
         # 1. Fetch from local_assignments (ONLY FOR TODAY)
         local_rows = con.execute(
             """
             SELECT diagnostician_id, exammoreid, extracode
             FROM local_assignments
-            WHERE substr(assigned_at, 1, 10) = date('now', 'localtime')
-            """
+            WHERE substr(assigned_at, 1, 10) = ?
+            """,
+            (today_str,)
         ).fetchall()
 
         # 2. Fetch from assignment_log (ONLY FOR TODAY)
@@ -736,8 +739,9 @@ def get_dashboard_data() -> list[dict]:
             """
             SELECT diagnostician_id, exammoreid, extracode, modality as category
             FROM assignment_log
-            WHERE substr(assigned_at, 1, 10) = date('now', 'localtime')
-            """
+            WHERE substr(assigned_at, 1, 10) = ?
+            """,
+            (today_str,)
         ).fetchall()
 
     # 3. Fetch from mock_slis.db (assigned exams for TODAY only)
@@ -746,14 +750,19 @@ def get_dashboard_data() -> list[dict]:
     try:
         from diagflow.services.assignment import _get_mock_db
         con_slis = _get_mock_db()
-        cur_slis = con_slis.execute("SELECT exammoreid, extracode, category, diagnostis, visitdate FROM slis_exams")
-        today_str = date.today().isoformat()
+        cols = [row[1] for row in con_slis.execute("PRAGMA table_info(slis_exams)").fetchall()]
+        has_synced_col = "slis_synced_at" in cols
+        query_cols = "exammoreid, extracode, category, diagnostis, visitdate" + (", slis_synced_at" if has_synced_col else "")
+        cur_slis = con_slis.execute(f"SELECT {query_cols} FROM slis_exams")
         for r in cur_slis.fetchall():
             eid = r["exammoreid"]
             exam_details[eid] = (r["extracode"], r["category"])
-            vdate = r["visitdate"] if "visitdate" in r.keys() else None
-            # Count towards today's dashboard ONLY if assigned AND the exam visit date is today
-            if r["diagnostis"] is not None and (not vdate or str(vdate)[:10] == today_str):
+            vdate = str(r["visitdate"])[:10] if (r.keys() and "visitdate" in r.keys() and r["visitdate"]) else None
+            synced_at = str(r["slis_synced_at"])[:10] if (has_synced_col and "slis_synced_at" in r.keys() and r["slis_synced_at"]) else None
+            
+            # Count towards today's dashboard ONLY if assigned AND (synced today OR visit date is today)
+            is_today = (synced_at == today_str) if synced_at else (vdate == today_str)
+            if r["diagnostis"] is not None and is_today:
                 slis_rows.append({"diagnostician_id": r["diagnostis"], "exammoreid": eid, "extracode": r["extracode"], "category": r["category"]})
         con_slis.close()
     except Exception:

@@ -281,7 +281,7 @@ def _get_pending_exams_from_db() -> list[dict]:
         from datetime import date, timedelta
         import diagflow.db.diagflow_db as cfg_db
         local_assignments = cfg_db.get_all_local_assignments()
-        cutoff_date = (date.today() - timedelta(days=3)).isoformat()
+        cutoff_date = (date.today() - timedelta(days=150)).isoformat()
         today = date.today().isoformat()
 
         # Fetch today's Παμμακάριστος on-call diagnostician once

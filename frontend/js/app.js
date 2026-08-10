@@ -117,12 +117,17 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     initSlisSearchDatePicker();
 
-    await loadDiagnosticians();
-    await Promise.all([
-        loadPendingExams(),
-        loadAssignedExams(),
-        loadOncall(),
-    ]);
+    showBackgroundWork('⏳ Φόρτωση δεδομένων και υπολογισμός προτάσεων...');
+    try {
+        await loadDiagnosticians();
+        await Promise.all([
+            loadPendingExams(),
+            loadAssignedExams(),
+            loadOncall(),
+        ]);
+    } finally {
+        hideBackgroundWork();
+    }
 });
 
 
@@ -165,9 +170,9 @@ async function apiCall(endpoint, method = 'GET', body = null, extraHeaders = {})
 async function loadPendingExams() {
     try {
         const data = await apiCall('/exams/pending');
-        pendingExams = data || getMockPendingExams();
-    } catch {
-        pendingExams = getMockPendingExams();
+        if (data) pendingExams = data;
+    } catch (err) {
+        console.error("Failed to load pending exams:", err);
     }
     // Build the dynamic lab filter from real data
     buildLabDropdown(pendingExams);
@@ -178,9 +183,9 @@ async function loadPendingExams() {
 async function loadAssignedExams() {
     try {
         const data = await apiCall('/exams/assigned');
-        assignedExams = data || getMockAssignedExams();
-    } catch {
-        assignedExams = getMockAssignedExams();
+        if (data) assignedExams = data;
+    } catch (err) {
+        console.error("Failed to load assigned exams:", err);
     }
     updateTabCounts();
     applyFilters();
@@ -221,22 +226,26 @@ const tabFilters = {
 };
 
 function saveTabFilterState(tab) {
-    if (tab !== 'pending' && tab !== 'assigned') return;
     const searchVal = document.getElementById('search-input')?.value || '';
     const selectedModalities = Array.from(document.querySelectorAll('#modality-dropdown input[type="checkbox"]:checked')).map(cb => cb.value);
     const selectedLabs = Array.from(document.querySelectorAll('#lab-dropdown input[type="checkbox"]:checked')).map(cb => cb.value);
     const dates = dateRangePicker ? [...dateRangePicker.selectedDates] : [];
     
-    tabFilters[tab] = {
+    const state = {
         search: searchVal,
         modalities: selectedModalities,
         labs: selectedLabs,
         dateRange: dates,
         filterOnlyComments: filterOnlyComments,
         filterOnlyHistory: filterOnlyHistory,
-        sortConfig: { ...sortConfig },
-        page: tab === 'pending' ? currentPendingPage : currentAssignedPage
+        sortConfig: { ...sortConfig }
     };
+
+    if (tab === 'pending') {
+        tabFilters.pending = { ...state, page: currentPendingPage };
+    } else if (tab === 'assigned') {
+        tabFilters.assigned = { ...state, page: currentAssignedPage };
+    }
 }
 
 function restoreTabFilterState(tab) {
@@ -298,9 +307,9 @@ function restoreTabFilterState(tab) {
     updateSortIcons();
 
     if (tab === 'pending') {
-        currentPendingPage = state.page || 0;
-    } else {
-        currentAssignedPage = state.page || 0;
+        currentPendingPage = state.page !== undefined ? state.page : 0;
+    } else if (tab === 'assigned') {
+        currentAssignedPage = state.page !== undefined ? state.page : 0;
     }
 }
 
@@ -476,6 +485,12 @@ function applyFilters() {
         let filtered = pendingExams.filter(e => matchesFilters(e, search, selectedModalities, selectedLabs, dateFrom, dateTo));
         filtered = sortExams(filtered);
 
+        // Clamp page to valid range if data shrunk
+        const maxPage = Math.max(0, Math.ceil(filtered.length / examsPageSize) - 1);
+        if (currentPendingPage > maxPage) {
+            currentPendingPage = maxPage;
+        }
+
         // Pagination logic
         const start = currentPendingPage * examsPageSize;
         const sliced = filtered.slice(start, start + examsPageSize);
@@ -490,6 +505,12 @@ function applyFilters() {
     } else {
         let filtered = assignedExams.filter(e => matchesFilters(e, search, selectedModalities, selectedLabs, dateFrom, dateTo));
         filtered = sortExams(filtered);
+
+        // Clamp page to valid range if data shrunk
+        const maxPage = Math.max(0, Math.ceil(filtered.length / examsPageSize) - 1);
+        if (currentAssignedPage > maxPage) {
+            currentAssignedPage = maxPage;
+        }
 
         // Pagination logic
         const start = currentAssignedPage * examsPageSize;
@@ -1453,10 +1474,21 @@ function openSuggestionModal(examId, suggestion) {
 }
 
 async function refreshExams() {
+    try {
+        showBackgroundWork('⏳ Ανανέωση από Slis DB...');
+        await apiCall('/slis/pull', 'POST');
+    } catch (err) {
+        console.warn('Slis pull error:', err);
+    } finally {
+        hideBackgroundWork();
+    }
     await Promise.all([
         loadPendingExams(),
         loadAssignedExams(),
     ]);
+    if (currentTab === 'dashboard') {
+        loadDashboard();
+    }
 }
 
 function updateProposalModalButtons() {
@@ -1820,6 +1852,13 @@ function showBackgroundWork(message = '⏳ Επεξεργασία σε εξέλ�
     const textEl = document.getElementById('global-banner-text');
     if (textEl) textEl.innerText = message;
     if (banner) banner.style.display = 'flex';
+
+    const modal = document.getElementById('refreshing-suggestions-modal');
+    const subTitle = document.getElementById('refreshing-modal-subtitle');
+    if (subTitle && message) {
+        subTitle.innerHTML = `${escapeHtmlFull(message)}<br><strong style="color: var(--accent-primary); font-size: 15px;">Παρακαλώ περιμένετε...</strong>`;
+    }
+    if (modal) modal.style.display = 'flex';
     document.body.classList.add('engine-busy');
 }
 
@@ -1828,6 +1867,8 @@ function hideBackgroundWork() {
     if (activeBackgroundTasksCount === 0) {
         const banner = document.getElementById('global-background-banner');
         if (banner) banner.style.display = 'none';
+        const modal = document.getElementById('refreshing-suggestions-modal');
+        if (modal) modal.style.display = 'none';
         document.body.classList.remove('engine-busy');
     }
 }
@@ -2028,6 +2069,9 @@ function buildLabDropdown(exams) {
     const labDropdown = document.getElementById('lab-dropdown');
     if (!labDropdown) return;
 
+    // Preserve currently checked lab filters
+    const checkedLabs = new Set(Array.from(labDropdown.querySelectorAll('input[type="checkbox"]:checked')).map(cb => cb.value));
+
     // Collect unique lab names
     const labs = new Map();
     exams.forEach(e => {
@@ -2043,8 +2087,9 @@ function buildLabDropdown(exams) {
 
     labDropdown.innerHTML = [...labs.entries()].sort((a, b) => a[0].localeCompare(b[0], 'el')).map(([name]) => {
         const id = `lab-${name.replace(/\s+/g, '-').toLowerCase()}`;
+        const isChecked = checkedLabs.has(name) ? 'checked' : '';
         return `<label class="lab-option">
-            <input type="checkbox" id="${id}" value="${escapeHtmlFull(name)}" onchange="applyFilters()">
+            <input type="checkbox" id="${id}" value="${escapeHtmlFull(name)}" ${isChecked} onchange="applyFilters()">
             <label for="${id}">${escapeHtmlFull(name)}</label>
         </label>`;
     }).join('');
@@ -2138,40 +2183,96 @@ document.addEventListener('click', function (e) {
 // ══════════════════════════════════════════════
 
 function getMockPendingExams() {
-    return [
-        {
-            exam_id: '2783481', extracode: 2783481, visitid: 2798982,
-            demogid: 525331, patient_id: '525331',
-            fname: 'ΠΑΝΑΓΙΩΤΑ', lname: 'ΜΠΕΚΡΗ',
-            patient_name: 'ΠΑΝΑΓΙΩΤΑ ΜΠΕΚΡΗ',
-            examnumcode: 22642, examname: 'ΜΑΓΝΗΤΙΚΗ ΤΟΜΟΓΡΑΦΙΑ (MRI) ΔΕΞΙΑΣ ΠΟΔΟΚΝΗΜΙΚΗΣ',
-            modality: 'MRI', category: 'MRI', body_part: '',
-            visitdate: '2026-07-13', request_date: '2026-07-13',
-            labcodeid: 6, lab_id: 'ΑΝΩ ΠΑΤΗΣΙΑ', lab_name: 'ΑΝΩ ΠΑΤΗΣΙΑ',
-            wcode: '2015', wname: 'ΜΠΡΑΝΤΖΙΚΟΣ ΤΑΞΙΑΡΧΗΣ',
-            issuing_doctor_id: '2015', issuing_doctor_name: 'ΜΠΡΑΝΤΖΙΚΟΣ ΤΑΞΙΑΡΧΗΣ',
-            diagnostis: null, code: null, diagnostician_name: '',
-            notes: ' *  * ', comments: '',
-            oldvisit: 0, oldorder: '', olddiagnostis: '',
-            status: 'pending', suggestion: null, is_pamakristos: false,
-        },
-        {
-            exam_id: '2783486', extracode: 2783486, visitid: 2798987,
-            demogid: 789636, patient_id: '789636',
-            fname: 'ΙΩΑΝΝΗΣ', lname: 'ΧΑΡΗΣ',
-            patient_name: 'ΙΩΑΝΝΗΣ ΧΑΡΗΣ',
-            examnumcode: 22140, examname: 'ΜΑΓΝΗΤΙΚΗ ΤΟΜΟΓΡΑΦΙΑ (MRI) ΟΣΦΥΪΚΗΣ ΜΟΙΡΑΣ Σ.Σ.',
-            modality: 'MRI', category: 'MRI', body_part: '',
-            visitdate: '2026-07-13', request_date: '2026-07-13',
-            labcodeid: 7, lab_id: 'ΙΛΙΟΝ', lab_name: 'ΙΛΙΟΝ',
-            wcode: '569352', wname: 'ΑΝΔΡΕΟΠΟΥΛΟΣ ΑΣΗΜΑΚΗΣ',
-            issuing_doctor_id: '569352', issuing_doctor_name: 'ΑΝΔΡΕΟΠΟΥΛΟΣ ΑΣΗΜΑΚΗΣ',
-            diagnostis: null, code: null, diagnostician_name: '',
-            notes: 'ΘΑ ΠΑΡΕΙ CD--ΕΜΑΙΛ *  * ', comments: 'ΘΑ ΠΑΡΕΙ CD--ΕΜΑΙΛ',
-            oldvisit: 0, oldorder: '', olddiagnostis: '',
-            status: 'pending', suggestion: null, is_pamakristos: false,
-        },
+    const firstNames = ['ΠΑΝΑΓΙΩΤΑ','ΙΩΑΝΝΗΣ','ΜΑΡΙΑ','ΓΕΩΡΓΙΟΣ','ΑΙΚΑΤΕΡΙΝΗ','ΔΗΜΗΤΡΗΣ','ΕΛΕΝΗ','ΝΙΚΟΛΑΟΣ','ΣΟΦΙΑ','ΑΝΤΩΝΙΟΣ','ΧΡΙΣΤΙΝΑ','ΚΩΝΣΤΑΝΤΙΝΟΣ','ΑΝΑΣΤΑΣΙΑ','ΒΑΣΙΛΕΙΟΣ','ΘΕΟΔΩΡΑ','ΑΛΕΞΑΝΔΡΟΣ','ΜΑΡΙΝΑ','ΠΑΥΛΟΣ','ΟΛΓΑ','ΣΠΥΡΟΣ','ΔΕΣΠΟΙΝΑ','ΠΕΤΡΟΣ','ΚΑΛΛΙΟΠΗ','ΜΙΧΑΗΛ','ΑΓΓΕΛΙΚΗ','ΑΝΔΡΕΑΣ','ΕΥΑΓΓΕΛΙΑ','ΦΙΛΙΠΠΟΣ','ΣΤΑΜΑΤΙΑ','ΛΕΩΝΙΔΑΣ'];
+    const lastNames = ['ΜΠΕΚΡΗ','ΧΑΡΗΣ','ΝΤΑΤΖΗ','ΜΟΥΛΑ','ΠΑΠΑΔΟΠΟΥΛΟΥ','ΚΩΝΣΤΑΝΤΙΝΙΔΗ','ΒΑΣΙΛΕΙΟΥ','ΛΙΟΝΤΟΣ','ΣΑΜΑΝΤΑ','ΓΕΩΡΓΙΟΥ','ΤΣΙΑΜΗ','ΑΘΑΝΑΣΙΟΥ','ΜΑΥΡΙΔΗ','ΧΑΤΖΗΠΑΥΛΟΥ','ΡΕΝΤΖΟΥ','ΚΥΡΙΑΚΟΥ','ΔΗΜΗΤΡΙΟΥ','ΣΙΔΕΡΗ','ΑΝΑΣΤΑΣΙΟΥ','ΚΑΡΑΚΩΣΤΑ','ΨΥΧΑΛΟΥ','ΖΕΡΒΑ','ΤΖΑΝΗ','ΒΟΥΛΓΑΡΗ','ΜΠΑΛΤΑ','ΓΚΙΟΛΑ','ΣΤΕΦΑΝΙΔΗ','ΜΑΡΚΟΥ','ΛΑΓΟΣ','ΘΕΟΔΟΣΙΟΥ'];
+    const examTypes = [
+        { code: 21400, name: 'ΑΞΟΝΙΚΗ ΤΟΜΟΓΡΑΦΙΑ (CT) ΑΝΩ ΚΟΙΛΙΑΣ', mod: 'CT', cat: 'CT' },
+        { code: 21100, name: 'ΑΞΟΝΙΚΗ ΤΟΜΟΓΡΑΦΙΑ (CT) ΘΩΡΑΚΟΣ', mod: 'CT', cat: 'CT' },
+        { code: 21401, name: 'ΑΞΟΝΙΚΗ ΤΟΜΟΓΡΑΦΙΑ (CT) ΚΑΤΩ ΚΟΙΛΙΑΣ', mod: 'CT', cat: 'CT' },
+        { code: 21500, name: 'ΑΞΟΝΙΚΗ ΤΟΜΟΓΡΑΦΙΑ (CT) ΕΓΚΕΦΑΛΟΥ', mod: 'CT', cat: 'CT' },
+        { code: 21700, name: 'ΑΞΟΝΙΚΗ ΤΟΜΟΓΡΑΦΙΑ (CT) ΠΥΕΛΟΥ', mod: 'CT', cat: 'CT' },
+        { code: 22140, name: 'ΜΑΓΝΗΤΙΚΗ ΤΟΜΟΓΡΑΦΙΑ (MRI) ΟΣΦΥΪΚΗΣ ΜΟΙΡΑΣ Σ.Σ.', mod: 'MRI', cat: 'MRI' },
+        { code: 22100, name: 'ΜΑΓΝΗΤΙΚΗ ΤΟΜΟΓΡΑΦΙΑ (MRI) ΕΓΚΕΦΑΛΟΥ', mod: 'MRI', cat: 'MRI' },
+        { code: 22120, name: 'ΜΑΓΝΗΤΙΚΗ ΤΟΜΟΓΡΑΦΙΑ (MRI) ΑΥΧΕΝΙΚΗΣ ΜΟΙΡΑΣ Σ.Σ.', mod: 'MRI', cat: 'MRI' },
+        { code: 22642, name: 'ΜΑΓΝΗΤΙΚΗ ΤΟΜΟΓΡΑΦΙΑ (MRI) ΔΕΞΙΑΣ ΠΟΔΟΚΝΗΜΙΚΗΣ', mod: 'MRI', cat: 'MRI' },
+        { code: 22611, name: 'ΜΑΓΝΗΤΙΚΗ ΤΟΜΟΓΡΑΦΙΑ (MRI) ΑΡΙΣΤΕΡΟΥ ΓΟΝΑΤΟΣ', mod: 'MRI', cat: 'MRI' },
+        { code: 22800, name: 'ΜΑΓΝΗΤΙΚΗ ΤΟΜΟΓΡΑΦΙΑ (MRI) ΚΟΙΛΙΑΣ', mod: 'MRI', cat: 'MRI' },
+        { code: 22831, name: 'ΜΑΓΝΗΤΙΚΗ ΑΓΓΕΙΟΓΡΑΦΙΑ (MRA) ΑΡΙΣΤΕΡΟΥ', mod: 'MRI', cat: 'MRA' },
     ];
+    const labs = [
+        { id: 6, name: 'ΑΝΩ ΠΑΤΗΣΙΑ' },
+        { id: 7, name: 'ΙΛΙΟΝ' },
+        { id: 8, name: 'ΜΑΡΟΥΣΙ' },
+        { id: 9, name: 'ΚΗΦΙΣΙΑ' },
+        { id: 10, name: 'ΓΛΥΦΑΔΑ' },
+    ];
+    const doctors = [
+        { id: '2015', name: 'ΜΠΡΑΝΤΖΙΚΟΣ ΤΑΞΙΑΡΧΗΣ' },
+        { id: '569352', name: 'ΑΝΔΡΕΟΠΟΥΛΟΣ ΑΣΗΜΑΚΗΣ' },
+        { id: '1234', name: 'ΡΟΔΟΛΑΚΗΣ ΙΩΑΝΝΗΣ' },
+        { id: '5678', name: 'ΕΥΓΕΝΙΔΗ ΑΙΚΑΤΕΡΙΝΗ' },
+        { id: '9101', name: 'ΣΑΜΑΝΤΑΣ ΕΠΑΜΕΙΝΩΝΔΑΣ' },
+        { id: '1122', name: 'ΠΑΠΑΔΗΜΗΤΡΙΟΥ ΑΝΝΑ' },
+        { id: '3344', name: 'ΚΟΝΤΟΣ ΧΡΗΣΤΟΣ' },
+        { id: '5566', name: 'ΒΑΡΕΛΑ ΜΑΡΙΑ' },
+    ];
+
+    const exams = [];
+    const baseId = 2784000;
+    const today = new Date();
+
+    for (let i = 0; i < 150; i++) {
+        const fn = firstNames[i % firstNames.length];
+        const ln = lastNames[Math.floor(i / firstNames.length) % lastNames.length];
+        const demogid = 100000 + i * 317;
+        const exam = examTypes[i % examTypes.length];
+        const lab = labs[i % labs.length];
+        const doc = doctors[i % doctors.length];
+        // Spread dates across the last 7 days
+        const daysAgo = i % 7;
+        const d = new Date(today);
+        d.setDate(d.getDate() - daysAgo);
+        const dateStr = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+        const extracode = baseId + i;
+        const isPam = i % 30 === 0 && i > 0;
+
+        exams.push({
+            exam_id: String(extracode),
+            extracode: extracode,
+            visitid: extracode + 10000,
+            demogid: demogid,
+            patient_id: String(demogid),
+            fname: fn,
+            lname: ln,
+            patient_name: fn + ' ' + ln,
+            examnumcode: exam.code,
+            examname: exam.name,
+            modality: exam.mod,
+            category: exam.cat,
+            body_part: '',
+            visitdate: dateStr,
+            request_date: dateStr,
+            labcodeid: lab.id,
+            lab_id: lab.name,
+            lab_name: lab.name,
+            wcode: doc.id,
+            wname: isPam ? 'ΠΑΜΜΑΚΑΡΙΣΤΟΣ' : doc.name,
+            issuing_doctor_id: doc.id,
+            issuing_doctor_name: isPam ? 'ΠΑΜΜΑΚΑΡΙΣΤΟΣ' : doc.name,
+            diagnostis: null,
+            code: null,
+            diagnostician_name: '',
+            notes: i % 5 === 0 ? 'ΘΑ ΠΑΡΕΙ CD' : '',
+            comments: i % 5 === 0 ? 'ΘΑ ΠΑΡΕΙ CD' : '',
+            oldvisit: 0,
+            oldorder: '',
+            olddiagnostis: '',
+            status: 'pending',
+            suggestion: null,
+            is_pamakristos: isPam,
+        });
+    }
+    return exams;
 }
 
 function getMockAssignedExams() {
@@ -2371,6 +2472,12 @@ function updateBulkActionsUI() {
         }
     }
 
+    const totalSelected = selectedExams.size + selectedAssignedExams.size;
+    const btnUpdateSlisAll = document.getElementById('btn-update-slis-all');
+    if (btnUpdateSlisAll) {
+        btnUpdateSlisAll.disabled = totalSelected > 0;
+    }
+
     if (activeSize > 0) {
         countEl.textContent = `${activeSize} επιλεγμένα`;
         fab.style.display = 'flex';
@@ -2385,11 +2492,8 @@ function updateBulkActionsUI() {
 }
 
 function clearUnifiedSelection() {
-    if (currentTab === 'pending') {
-        clearSelection();
-    } else if (currentTab === 'assigned') {
-        clearAssignedSelection();
-    }
+    clearSelection();
+    clearAssignedSelection();
 }
 
 async function bulkAssignToProposed() {
@@ -2397,6 +2501,7 @@ async function bulkAssignToProposed() {
 
     const examIds = Array.from(selectedExams);
 
+    showBackgroundWork(`⏳ Επιβεβαίωση ${examIds.length} προτάσεων...`);
     try {
         const results = await apiCall('/assignments/bulk-confirm', 'POST', { exam_ids: examIds });
         showToast(`${results.length} εξετάσεις ανατέθηκαν επιτυχώς.`, 'success');
@@ -2406,6 +2511,8 @@ async function bulkAssignToProposed() {
         loadAssignedExams();
     } catch (err) {
         showToast(`Σφάλμα: ${err.message}`, 'error');
+    } finally {
+        hideBackgroundWork();
     }
 }
 
@@ -2463,7 +2570,6 @@ async function fetchBulkEligibility() {
     if (examIds.length === 0) return;
 
     isBulkEligibilityLoading = true;
-    showBackgroundWork('⏳ Υπολογισμός καταλληλότητας διαγνωστών...');
     const menu = document.getElementById('fab-dropdown-menu');
     if (menu && menu.style.display === 'block') {
         populateFabDropdown();
@@ -2484,7 +2590,6 @@ async function fetchBulkEligibility() {
         console.error("Failed to fetch bulk eligibility", err);
     } finally {
         isBulkEligibilityLoading = false;
-        hideBackgroundWork();
         const menu = document.getElementById('fab-dropdown-menu');
         if (menu && menu.style.display === 'block') {
             populateFabDropdown();
@@ -2623,6 +2728,7 @@ async function bulkAssignToSpecific(diagId, diagName) {
     const examIds = Array.from(activeSet);
     closeFabDropdown();
 
+    showBackgroundWork(`⏳ Ανάθεση ${examIds.length} εξετάσεων σε ${diagName}...`);
     try {
         const results = await apiCall('/assignments/bulk-override', 'POST', {
             exam_ids: examIds,
@@ -2636,6 +2742,8 @@ async function bulkAssignToSpecific(diagId, diagName) {
         loadAssignedExams();
     } catch (err) {
         showToast(`Σφάλμα: ${err.message}`, 'error');
+    } finally {
+        hideBackgroundWork();
     }
 }
 
@@ -2658,38 +2766,56 @@ function changeAssignedPage(dir) {
 
 function updatePendingPagination(total) {
     const info = document.getElementById('pending-pagination-info');
-    if (!info) return;
-    if (total === 0) {
-        info.textContent = 'Σελίδα 0 (0 από 0)';
-    } else {
-        const pageNum = currentPendingPage + 1;
-        const start = currentPendingPage * examsPageSize + 1;
-        const end = Math.min((currentPendingPage + 1) * examsPageSize, total);
-        info.textContent = `Σελίδα ${pageNum} (${start}-${end} από ${total})`;
-    }
-
     const prevBtn = document.getElementById('btn-pending-prev');
     const nextBtn = document.getElementById('btn-pending-next');
-    if (prevBtn) prevBtn.disabled = currentPendingPage === 0;
-    if (nextBtn) nextBtn.disabled = (currentPendingPage + 1) * examsPageSize >= total;
+
+    if (info) {
+        if (total === 0) {
+            info.textContent = 'Σελίδα 0 (0 από 0)';
+        } else {
+            const pageNum = currentPendingPage + 1;
+            const start = currentPendingPage * examsPageSize + 1;
+            const end = Math.min((currentPendingPage + 1) * examsPageSize, total);
+            info.textContent = `Σελίδα ${pageNum} (${start}-${end} από ${total})`;
+        }
+    }
+
+    if (prevBtn) {
+        prevBtn.style.display = currentPendingPage > 0 ? 'inline-block' : 'none';
+        prevBtn.disabled = currentPendingPage === 0;
+    }
+    if (nextBtn) {
+        const hasNext = (currentPendingPage + 1) * examsPageSize < total;
+        nextBtn.style.display = hasNext ? 'inline-block' : 'none';
+        nextBtn.disabled = !hasNext;
+    }
 }
 
 function updateAssignedPagination(total) {
     const info = document.getElementById('assigned-pagination-info');
-    if (!info) return;
-    if (total === 0) {
-        info.textContent = 'Σελίδα 0 (0 από 0)';
-    } else {
-        const pageNum = currentAssignedPage + 1;
-        const start = currentAssignedPage * examsPageSize + 1;
-        const end = Math.min((currentAssignedPage + 1) * examsPageSize, total);
-        info.textContent = `Σελίδα ${pageNum} (${start}-${end} από ${total})`;
-    }
-
     const prevBtn = document.getElementById('btn-assigned-prev');
     const nextBtn = document.getElementById('btn-assigned-next');
-    if (prevBtn) prevBtn.disabled = currentAssignedPage === 0;
-    if (nextBtn) nextBtn.disabled = (currentAssignedPage + 1) * examsPageSize >= total;
+
+    if (info) {
+        if (total === 0) {
+            info.textContent = 'Σελίδα 0 (0 από 0)';
+        } else {
+            const pageNum = currentAssignedPage + 1;
+            const start = currentAssignedPage * examsPageSize + 1;
+            const end = Math.min((currentAssignedPage + 1) * examsPageSize, total);
+            info.textContent = `Σελίδα ${pageNum} (${start}-${end} από ${total})`;
+        }
+    }
+
+    if (prevBtn) {
+        prevBtn.style.display = currentAssignedPage > 0 ? 'inline-block' : 'none';
+        prevBtn.disabled = currentAssignedPage === 0;
+    }
+    if (nextBtn) {
+        const hasNext = (currentAssignedPage + 1) * examsPageSize < total;
+        nextBtn.style.display = hasNext ? 'inline-block' : 'none';
+        nextBtn.disabled = !hasNext;
+    }
 }
 
 
@@ -2841,7 +2967,7 @@ async function updateSelectedToSlis() {
         });
         if (result && result.succeeded && result.succeeded.length > 0) {
             showToast(`✅ Ενημερώθηκαν ${result.succeeded.length} επιλεγμένες εξετάσεις στη βάση Slis!`, 'success');
-            selectedAssignedExams.clear();
+            clearAssignedSelection();
             await refreshExams();
         } else {
             const err = result?.failed?.[0]?.error || 'Άγνωστο σφάλμα';
@@ -2855,6 +2981,29 @@ async function updateSelectedToSlis() {
             btn.disabled = false;
         }
     }
+}
+
+function confirmUpdateAllToSlis() {
+    if (assignedExams.length === 0) {
+        showToast('Δεν υπάρχουν εξετάσεις για ενημέρωση', 'info');
+        return;
+    }
+    const textEl = document.getElementById('confirm-update-all-text');
+    if (textEl) {
+        textEl.textContent = `Με αυτή την ενέργεια θα ενημερωθούν και οι ${assignedExams.length} εξετάσεις στο Slis. Επιβεβαιωθείτε ότι είναι σωστές οι αναθέσεις πρωτού προβείτε στην ενημέρωση του Slis.`;
+    }
+    const modal = document.getElementById('confirm-update-all-modal');
+    if (modal) modal.style.display = 'flex';
+}
+
+function closeConfirmUpdateAllModal() {
+    const modal = document.getElementById('confirm-update-all-modal');
+    if (modal) modal.style.display = 'none';
+}
+
+async function executeUpdateAllToSlis() {
+    closeConfirmUpdateAllModal();
+    await updateAllToSlis();
 }
 
 // ── Assigned tab checkbox helpers ──

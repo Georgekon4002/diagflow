@@ -536,18 +536,29 @@ function changeDoctorPage(dir) {
 
 function updateDoctorPagination() {
     const info = document.getElementById('doc-pagination-info');
-    if (!info) return;
-    if (totalDoctors === 0) {
-        info.textContent = 'Σελίδα 0 (0 από 0)';
-    } else {
-        const pageNum = doctorsPage + 1;
-        const start = doctorsPage * doctorsPageSize + 1;
-        const end = Math.min((doctorsPage + 1) * doctorsPageSize, totalDoctors);
-        info.textContent = `Σελίδα ${pageNum} (${start}-${end} από ${totalDoctors})`;
+    const prevBtn = document.getElementById('btn-doc-prev');
+    const nextBtn = document.getElementById('btn-doc-next');
+
+    if (info) {
+        if (totalDoctors === 0) {
+            info.textContent = 'Σελίδα 0 (0 από 0)';
+        } else {
+            const pageNum = doctorsPage + 1;
+            const start = doctorsPage * doctorsPageSize + 1;
+            const end = Math.min((doctorsPage + 1) * doctorsPageSize, totalDoctors);
+            info.textContent = `Σελίδα ${pageNum} (${start}-${end} από ${totalDoctors})`;
+        }
     }
     
-    document.getElementById('btn-doc-prev').disabled = doctorsPage === 0;
-    document.getElementById('btn-doc-next').disabled = (doctorsPage + 1) * doctorsPageSize >= totalDoctors;
+    if (prevBtn) {
+        prevBtn.style.display = doctorsPage > 0 ? 'inline-block' : 'none';
+        prevBtn.disabled = doctorsPage === 0;
+    }
+    if (nextBtn) {
+        const hasNext = (doctorsPage + 1) * doctorsPageSize < totalDoctors;
+        nextBtn.style.display = hasNext ? 'inline-block' : 'none';
+        nextBtn.disabled = !hasNext;
+    }
 }
 
 async function loadSkills() {
@@ -756,20 +767,29 @@ function changeDiagPage(dir) {
 
 function updateDiagPagination() {
     const info = document.getElementById('diag-pagination-info');
-    if (!info) return;
-    if (totalDiags === 0) {
-        info.textContent = 'Σελίδα 0 (0 από 0)';
-    } else {
-        const pageNum = diagsPage + 1;
-        const start = diagsPage * diagsPageSize + 1;
-        const end = Math.min((diagsPage + 1) * diagsPageSize, totalDiags);
-        info.textContent = `Σελίδα ${pageNum} (${start}-${end} από ${totalDiags})`;
-    }
-    
     const prevBtn = document.getElementById('btn-diag-prev');
     const nextBtn = document.getElementById('btn-diag-next');
-    if (prevBtn) prevBtn.disabled = diagsPage === 0;
-    if (nextBtn) nextBtn.disabled = (diagsPage + 1) * diagsPageSize >= totalDiags;
+
+    if (info) {
+        if (totalDiags === 0) {
+            info.textContent = 'Σελίδα 0 (0 από 0)';
+        } else {
+            const pageNum = diagsPage + 1;
+            const start = diagsPage * diagsPageSize + 1;
+            const end = Math.min((diagsPage + 1) * diagsPageSize, totalDiags);
+            info.textContent = `Σελίδα ${pageNum} (${start}-${end} από ${totalDiags})`;
+        }
+    }
+    
+    if (prevBtn) {
+        prevBtn.style.display = diagsPage > 0 ? 'inline-block' : 'none';
+        prevBtn.disabled = diagsPage === 0;
+    }
+    if (nextBtn) {
+        const hasNext = (diagsPage + 1) * diagsPageSize < totalDiags;
+        nextBtn.style.display = hasNext ? 'inline-block' : 'none';
+        nextBtn.disabled = !hasNext;
+    }
 }
 
 async function toggleDiagCT(id, newCanCT) {
@@ -1121,18 +1141,23 @@ async function bulkSetSkillsPreference(isPreferred) {
     if (selectedSkillItemIds.size === 0) return;
     const ids = Array.from(selectedSkillItemIds);
     let updatedCount = 0;
-    for (const idStr of ids) {
-        const skillId = isNaN(Number(idStr)) ? idStr : Number(idStr);
-        const s = skills.find(x => String(x.id) === idStr);
-        if (!s) continue;
-        s.is_preferred = isPreferred;
-        try {
-            await apiCall(`/admin/skills/${skillId}`, 'PUT', s);
-            updatedCount++;
-        } catch { /* mock mode */ updatedCount++; }
+    showAdminLoading(`⏳ Ενημέρωση προτίμησης ${ids.length} δεξιοτήτων...`);
+    try {
+        for (const idStr of ids) {
+            const skillId = isNaN(Number(idStr)) ? idStr : Number(idStr);
+            const s = skills.find(x => String(x.id) === idStr);
+            if (!s) continue;
+            s.is_preferred = isPreferred;
+            try {
+                await apiCall(`/admin/skills/${skillId}`, 'PUT', s);
+                updatedCount++;
+            } catch { /* mock mode */ updatedCount++; }
+        }
+        renderSkills();
+        showToast(`✅ Ενημερώθηκαν ${updatedCount} δεξιότητες (${isPreferred ? 'Προτιμάται' : 'Όχι προτίμηση'})`, 'success');
+    } finally {
+        hideAdminLoading();
     }
-    renderSkills();
-    showToast(`✅ Ενημερώθηκαν ${updatedCount} δεξιότητες (${isPreferred ? 'Προτιμάται' : 'Όχι προτίμηση'})`, 'success');
 }
 
 async function bulkDeleteSkills() {
@@ -1140,17 +1165,22 @@ async function bulkDeleteSkills() {
     if (!confirm(`Διαγραφή ${selectedSkillItemIds.size} επιλεγμένων δεξιοτήτων;`)) return;
     const ids = Array.from(selectedSkillItemIds);
     let deletedCount = 0;
-    for (const idStr of ids) {
-        const skillId = isNaN(Number(idStr)) ? idStr : Number(idStr);
-        try {
-            await apiCall(`/admin/skills/${skillId}`, 'DELETE');
-        } catch { /* mock mode */ }
-        skills = skills.filter(s => String(s.id) !== idStr);
-        deletedCount++;
+    showAdminLoading(`⏳ Διαγραφή ${ids.length} δεξιοτήτων...`);
+    try {
+        for (const idStr of ids) {
+            const skillId = isNaN(Number(idStr)) ? idStr : Number(idStr);
+            try {
+                await apiCall(`/admin/skills/${skillId}`, 'DELETE');
+            } catch { /* mock mode */ }
+            skills = skills.filter(s => String(s.id) !== idStr);
+            deletedCount++;
+        }
+        clearSkillsSelection();
+        renderSkills();
+        showToast(`🗑️ Διαγράφηκαν ${deletedCount} δεξιότητες`, 'success');
+    } finally {
+        hideAdminLoading();
     }
-    clearSkillsSelection();
-    renderSkills();
-    showToast(`🗑️ Διαγράφηκαν ${deletedCount} δεξιότητες`, 'success');
 }
 
 // Helper to toggle skills display
@@ -1508,7 +1538,182 @@ async function toggleDiagActive(id, newActive) {
     showToast(`${newActive ? '✅ Ενεργοποίηση' : '⚠️ Απενεργοποίηση'}: ${d.name}`, newActive ? 'success' : 'warning');
 }
 
+let selectedBulkSkillModalities = new Set();
 
+function toggleBulkSkillModality(modality) {
+    if (selectedBulkSkillModalities.has(modality)) {
+        selectedBulkSkillModalities.delete(modality);
+    } else {
+        selectedBulkSkillModalities.add(modality);
+    }
+    updateBulkSkillButtonsUI();
+}
+
+function updateBulkSkillButtonsUI() {
+    const btnCt = document.getElementById('btn-bulk-ct');
+    const btnMri = document.getElementById('btn-bulk-mri');
+    if (btnCt) {
+        if (selectedBulkSkillModalities.has('CT')) {
+            btnCt.className = 'btn btn-primary btn-sm';
+            btnCt.innerHTML = '✓ Όλες οι CT εξετάσεις';
+            btnCt.style.background = 'var(--accent-primary)';
+            btnCt.style.color = '#ffffff';
+            btnCt.style.borderColor = 'var(--accent-primary)';
+        } else {
+            btnCt.className = 'btn btn-secondary btn-sm';
+            btnCt.innerHTML = '⚡ + Όλες οι CT εξετάσεις';
+            btnCt.style.background = '';
+            btnCt.style.color = '';
+            btnCt.style.borderColor = '';
+        }
+    }
+    if (btnMri) {
+        if (selectedBulkSkillModalities.has('MRI')) {
+            btnMri.className = 'btn btn-primary btn-sm';
+            btnMri.innerHTML = '✓ Όλες οι MRI/MRA εξετάσεις';
+            btnMri.style.background = 'var(--accent-primary)';
+            btnMri.style.color = '#ffffff';
+            btnMri.style.borderColor = 'var(--accent-primary)';
+        } else {
+            btnMri.className = 'btn btn-secondary btn-sm';
+            btnMri.innerHTML = '⚡ + Όλες οι MRI/MRA εξετάσεις';
+            btnMri.style.background = '';
+            btnMri.style.color = '';
+            btnMri.style.borderColor = '';
+        }
+    }
+}
+
+let activeAdminLoadingCount = 0;
+
+function showAdminLoading(message = '⏳ Επεξεργασία σε εξέλιξη...') {
+    activeAdminLoadingCount++;
+    const modal = document.getElementById('admin-loading-modal');
+    const titleEl = document.getElementById('admin-loading-title');
+    const msgEl = document.getElementById('admin-loading-msg');
+    const subEl = document.getElementById('admin-loading-subtitle');
+    if (titleEl) titleEl.innerText = '⏳ Επεξεργασία Δεδομένων';
+    if (msgEl) msgEl.innerText = message;
+    if (subEl) { subEl.innerText = 'Παρακαλώ περιμένετε...'; subEl.style.display = 'block'; }
+    if (modal) { modal.style.display = 'flex'; modal.style.opacity = '1'; }
+    document.body.classList.add('engine-busy');
+}
+
+function hideAdminLoading() {
+    activeAdminLoadingCount = Math.max(0, activeAdminLoadingCount - 1);
+    if (activeAdminLoadingCount === 0) {
+        const modal = document.getElementById('admin-loading-modal');
+        if (modal) {
+            modal.style.opacity = '0';
+            setTimeout(() => { modal.style.display = 'none'; }, 200);
+        }
+        document.body.classList.remove('engine-busy');
+    }
+}
+
+async function setSkill() {
+    const selEl = document.getElementById('skill-diag');
+    const diagId = parseInt(selEl.value);
+    const diagName = selEl.options[selEl.selectedIndex]?.dataset?.name || '';
+    const is_preferred = document.getElementById('skill-preferred').checked;
+
+    if (!diagId) { showToast('Επιλέξτε διαγνώστη', 'warning'); return; }
+
+    const codes = new Set(selectedSkillExamCodes);
+
+    // Include CT exams if bulk CT is selected
+    if (selectedBulkSkillModalities.has('CT')) {
+        let ctExams = [];
+        if (RAW_EXAM_CATEGORIES && RAW_EXAM_CATEGORIES.length > 0) {
+            ctExams = RAW_EXAM_CATEGORIES.filter(ex => (ex.category || '').toUpperCase() === 'CT');
+        } else {
+            for (const [c, n] of Object.entries(EXAM_CODE_MAP)) {
+                if (/CT|ΑΞΟΝ/i.test(n)) ctExams.push({ examnumcode: c });
+            }
+        }
+        ctExams.forEach(ex => codes.add(String(ex.examnumcode || ex.code || '').trim()));
+    }
+
+    // Include MRI/MRA exams if bulk MRI is selected
+    if (selectedBulkSkillModalities.has('MRI')) {
+        let mriExams = [];
+        if (RAW_EXAM_CATEGORIES && RAW_EXAM_CATEGORIES.length > 0) {
+            mriExams = RAW_EXAM_CATEGORIES.filter(ex => {
+                const cat = (ex.category || '').toUpperCase();
+                return cat === 'MRI' || cat === 'MRA';
+            });
+        } else {
+            for (const [c, n] of Object.entries(EXAM_CODE_MAP)) {
+                if (/MRI|MRA|ΜΑΓΝΗΤ|ΑΓΓΕΙΟ/i.test(n)) mriExams.push({ examnumcode: c });
+            }
+        }
+        mriExams.forEach(ex => codes.add(String(ex.examnumcode || ex.code || '').trim()));
+    }
+
+    if (codes.size === 0) {
+        showToast('Επιλέξτε τουλάχιστον έναν κωδικό εξέτασης ή μία από τις επιλογές μαζικής προσθήκης', 'warning');
+        return;
+    }
+
+    const targetDiag = diagnosticians.find(d => d.id === diagId);
+
+    showAdminLoading(`⏳ Ενημέρωση δεξιοτήτων για ${diagName}...`);
+    let addedCount = 0;
+    try {
+        for (const code of codes) {
+            const cleanCode = String(code).trim();
+            if (!cleanCode) continue;
+
+            // 1. Check if skill already exists for this diagnostician
+            const exists = skills.some(s => String(s.diagnostician_id) === String(diagId) && String(s.exam_code).trim() === cleanCode);
+            if (exists) continue;
+
+            // 2. Determine modality of the exam code
+            const examObj = (RAW_EXAM_CATEGORIES || []).find(ex => String(ex.examnumcode || ex.code || '').trim() === cleanCode);
+            const examName = examObj ? examObj.name : (EXAM_CODE_MAP[cleanCode] || '');
+            let cat = (examObj?.category || '').toUpperCase().trim();
+            if (!cat) {
+                if (/CT|ΑΞΟΝ/i.test(examName) || /^21/.test(cleanCode)) cat = 'CT';
+                else if (/MRA|ΑΓΓΕΙΟ/i.test(examName) || /^228/.test(cleanCode)) cat = 'MRA';
+                else if (/MRI|ΜΑΓΝΗΤ/i.test(examName) || /^22/.test(cleanCode)) cat = 'MRI';
+                else cat = /^21/.test(cleanCode) ? 'CT' : 'MRI';
+            }
+
+            // 3. Prohibit adding skill if diagnostician does not evaluate this modality
+            if (targetDiag) {
+                if (cat === 'CT' && !targetDiag.can_ct) continue;
+                if ((cat === 'MRI' || cat === 'MRA') && !targetDiag.can_mri) continue;
+            }
+
+            const exam_title = examName || `Εξέταση ${cleanCode}`;
+            const record = { diagnostician_id: diagId, diagnostician_name: diagName, exam_code: cleanCode, exam_title, is_preferred };
+            try {
+                const result = await apiCall('/admin/skills', 'POST', record);
+                skills = skills.filter(s => !(String(s.diagnostician_id) === String(diagId) && String(s.exam_code).trim() === cleanCode));
+                if (result) skills.push(result);
+                else skills.push({ id: Date.now() + Math.random(), ...record });
+                addedCount++;
+            } catch (err) {
+                console.warn(`Error adding skill ${cleanCode}:`, err);
+            }
+        }
+    } finally {
+        hideAdminLoading();
+    }
+
+    selectedSkillExamCodes.clear();
+    selectedBulkSkillModalities.clear();
+    updateBulkSkillButtonsUI();
+    renderExamCodeTags('skill');
+    if (document.getElementById('skill-exam-search')) document.getElementById('skill-exam-search').value = '';
+    if (addedCount > 0) openSkillsGroups.add(String(diagId));
+    renderSkills();
+    if (addedCount > 0) {
+        showToast(`✅ Προστέθηκαν ${addedCount} νέες δεξιότητες για τον/την ${diagName}`, 'success');
+    } else {
+        showToast(`⚠️ Δεν προστέθηκαν νέες δεξιότητες (υπάρχουν ήδη ή δεν υποστηρίζονται από τον διαγνώστη)`, 'warning');
+    }
+}
 
 async function setAvailability() {
     const selEl = document.getElementById('avail-diag');
@@ -1553,18 +1758,23 @@ async function setAvailability() {
 
     if (!diagId || datesToSave.length === 0) { showToast('Επιλέξτε διαγνώστη και ημερομηνία', 'warning'); return; }
 
-    for (const dateVal of datesToSave) {
-        const record = { diagnostician_id: diagId, diagnostician_name: diagName, date: dateVal, status, notes };
-        try {
-            const result = await apiCall('/admin/availability', 'POST', record);
-            if (result) {
+    showAdminLoading(`⏳ Αποθήκευση άδειας για ${diagName}...`);
+    try {
+        for (const dateVal of datesToSave) {
+            const record = { diagnostician_id: diagId, diagnostician_name: diagName, date: dateVal, status, notes };
+            try {
+                const result = await apiCall('/admin/availability', 'POST', record);
+                if (result) {
+                    availability = availability.filter(a => !(a.diagnostician_id === diagId && a.date === dateVal));
+                    availability.push(result);
+                }
+            } catch {
                 availability = availability.filter(a => !(a.diagnostician_id === diagId && a.date === dateVal));
-                availability.push(result);
+                availability.push({ id: Date.now(), ...record });
             }
-        } catch {
-            availability = availability.filter(a => !(a.diagnostician_id === diagId && a.date === dateVal));
-            availability.push({ id: Date.now(), ...record });
         }
+    } finally {
+        hideAdminLoading();
     }
 
     renderAvailability();
@@ -1601,146 +1811,6 @@ async function updateWeeklyQuota(diagId, quotaField, value) {
         showToast('✅ Το όριο αποθηκεύτηκε', 'success');
     } catch {
         showToast('Σφάλμα κατά την αποθήκευση του ορίου', 'error');
-    }
-}
-
-async function setSkill() {
-    const selEl = document.getElementById('skill-diag');
-    const diagId = parseInt(selEl.value);
-    const diagName = selEl.options[selEl.selectedIndex]?.dataset?.name || '';
-    const is_preferred = document.getElementById('skill-preferred').checked;
-
-    if (!diagId) { showToast('Επιλέξτε διαγνώστη', 'warning'); return; }
-
-    const codes = Array.from(selectedSkillExamCodes);
-    if (codes.length === 0) { showToast('Επιλέξτε τουλάχιστον έναν κωδικό εξέτασης από την αναζήτηση', 'warning'); return; }
-
-    const targetDiag = diagnosticians.find(d => d.id === diagId);
-
-    let addedCount = 0;
-    for (const code of codes) {
-        const cleanCode = String(code).trim();
-        // 1. Check if skill already exists for this diagnostician
-        const exists = skills.some(s => String(s.diagnostician_id) === String(diagId) && String(s.exam_code).trim() === cleanCode);
-        if (exists) {
-            showToast(`⚠️ Η δεξιότητα ${cleanCode} υπάρχει ήδη για τον/την ${diagName}`, 'warning');
-            continue;
-        }
-
-        // 2. Determine modality of the exam code
-        const examObj = (RAW_EXAM_CATEGORIES || []).find(ex => String(ex.examnumcode || ex.code || '').trim() === cleanCode);
-        const examName = examObj ? examObj.name : (EXAM_CODE_MAP[cleanCode] || '');
-        let cat = (examObj?.category || '').toUpperCase().trim();
-        if (!cat) {
-            if (/CT|ΑΞΟΝ/i.test(examName) || /^21/.test(cleanCode)) cat = 'CT';
-            else if (/MRA|ΑΓΓΕΙΟ/i.test(examName) || /^228/.test(cleanCode)) cat = 'MRA';
-            else if (/MRI|ΜΑΓΝΗΤ/i.test(examName) || /^22/.test(cleanCode)) cat = 'MRI';
-            else cat = /^21/.test(cleanCode) ? 'CT' : 'MRI';
-        }
-
-        // 3. Prohibit adding skill if diagnostician does not evaluate this modality
-        if (targetDiag) {
-            if (cat === 'CT' && !targetDiag.can_ct) {
-                showToast(`❌ Ο/Η ${diagName} δεν πραγματοποιεί Αξονικές (CT). Δεν προστέθηκε ο κωδικός ${cleanCode}.`, 'error');
-                continue;
-            }
-            if ((cat === 'MRI' || cat === 'MRA') && !targetDiag.can_mri) {
-                showToast(`❌ Ο/Η ${diagName} δεν πραγματοποιεί Μαγνητικές (MRI/MRA). Δεν προστέθηκε ο κωδικός ${cleanCode}.`, 'error');
-                continue;
-            }
-        }
-
-        const exam_title = examName || `Εξέταση ${cleanCode}`;
-        const record = { diagnostician_id: diagId, diagnostician_name: diagName, exam_code: cleanCode, exam_title, is_preferred };
-        try {
-            const result = await apiCall('/admin/skills', 'POST', record);
-            skills = skills.filter(s => !(String(s.diagnostician_id) === String(diagId) && String(s.exam_code).trim() === cleanCode));
-            if (result) skills.push(result);
-            else skills.push({ id: Date.now() + Math.random(), ...record });
-            addedCount++;
-        } catch (err) {
-            showToast(`❌ Σφάλμα προσθήκης δεξιότητας ${cleanCode}: ${err.message || 'Αποτυχία API'}`, 'error');
-        }
-    }
-
-    selectedSkillExamCodes.clear();
-    renderExamCodeTags('skill');
-    if (document.getElementById('skill-exam-search')) document.getElementById('skill-exam-search').value = '';
-    if (addedCount > 0) openSkillsGroups.add(String(diagId));
-    renderSkills();
-    if (addedCount > 0) {
-        showToast(`✅ Προστέθηκαν ${addedCount} νέες δεξιότητες για τον/την ${diagName}`, 'success');
-    }
-}
-
-async function addBulkSkills(targetModality) {
-    const selEl = document.getElementById('skill-diag');
-    const diagId = parseInt(selEl.value);
-    const diagName = selEl.options[selEl.selectedIndex]?.dataset?.name || '';
-
-    if (!diagId) { showToast('Επιλέξτε διαγνώστη πρώτα', 'warning'); return; }
-
-    const targetDiag = diagnosticians.find(d => d.id === diagId);
-    if (targetDiag) {
-        if (targetModality === 'CT' && !targetDiag.can_ct) {
-            showToast(`❌ Ο/Η ${diagName} δεν πραγματοποιεί Αξονικές (CT).`, 'error');
-            return;
-        }
-        if (targetModality === 'MRI' && !targetDiag.can_mri) {
-            showToast(`❌ Ο/Η ${diagName} δεν πραγματοποιεί Μαγνητικές (MRI/MRA).`, 'error');
-            return;
-        }
-    }
-
-    let matchingExams = [];
-    if (RAW_EXAM_CATEGORIES && RAW_EXAM_CATEGORIES.length > 0) {
-        matchingExams = RAW_EXAM_CATEGORIES.filter(ex => {
-            const cat = (ex.category || '').toUpperCase();
-            if (targetModality === 'CT') return cat === 'CT';
-            if (targetModality === 'MRI') return cat === 'MRI' || cat === 'MRA';
-            return false;
-        });
-    } else {
-        for (const [code, name] of Object.entries(EXAM_CODE_MAP)) {
-            if (targetModality === 'CT' && /CT|ΑΞΟΝ/i.test(name)) matchingExams.push({ examnumcode: code, name, category: 'CT' });
-            else if (targetModality === 'MRI' && /MRI|MRA|ΜΑΓΝΗΤ|ΑΓΓΕΙΟ/i.test(name)) matchingExams.push({ examnumcode: code, name, category: 'MRI' });
-        }
-    }
-
-    if (matchingExams.length === 0) {
-        showToast(`Δεν βρέθηκαν εξετάσεις κατηγορίας ${targetModality}`, 'warning');
-        return;
-    }
-
-    let count = 0;
-    let skippedCount = 0;
-    for (const ex of matchingExams) {
-        const code = String(ex.examnumcode || ex.code || '').trim();
-        const exists = skills.some(s => String(s.diagnostician_id) === String(diagId) && String(s.exam_code).trim() === code);
-        if (exists) {
-            skippedCount++;
-            continue;
-        }
-
-        const name = ex.name || EXAM_CODE_MAP[code] || `Εξέταση ${code}`;
-        const record = { diagnostician_id: diagId, diagnostician_name: diagName, exam_code: code, exam_title: name, is_preferred: false };
-        try {
-            const result = await apiCall('/admin/skills', 'POST', record);
-            skills = skills.filter(s => !(String(s.diagnostician_id) === String(diagId) && String(s.exam_code).trim() === code));
-            if (result) skills.push(result);
-            else skills.push({ id: Date.now() + Math.random(), ...record });
-            count++;
-        } catch (err) {
-            console.warn(`Bulk skill add error for code ${code}:`, err);
-        }
-    }
-
-    if (count > 0) openSkillsGroups.add(String(diagId));
-    renderSkills();
-    if (count > 0) {
-        showToast(`✅ Προστέθηκαν ${count} εξετάσεις ${targetModality} ως δεξιότητες στον/στην ${diagName}`, 'success');
-    } else if (skippedCount > 0) {
-        showToast(`ℹ️ Όλες οι εξετάσεις ${targetModality} υπάρχουν ήδη ως δεξιότητες για τον/την ${diagName}`, 'info');
     }
 }
 
@@ -2136,35 +2206,40 @@ async function addSelectedExamsAsSkills() {
     let addedCount = 0;
     let skippedCount = 0;
 
-    for (const rawCode of codesToAdd) {
-        const code = String(rawCode).trim();
-        // Prevent duplicate addition
-        const exists = skills.some(s => String(s.diagnostician_id) === String(diagId) && String(s.exam_code).trim() === code);
-        if (exists) {
-            skippedCount++;
-            continue;
+    showAdminLoading(`⏳ Προσθήκη ${codesToAdd.length} δεξιοτήτων για ${diagName}...`);
+    try {
+        for (const rawCode of codesToAdd) {
+            const code = String(rawCode).trim();
+            // Prevent duplicate addition
+            const exists = skills.some(s => String(s.diagnostician_id) === String(diagId) && String(s.exam_code).trim() === code);
+            if (exists) {
+                skippedCount++;
+                continue;
+            }
+
+            const examObj = (RAW_EXAM_CATEGORIES || []).find(ex => String(ex.examnumcode || ex.code || '').trim() === code);
+            const examName = examObj ? examObj.name : (EXAM_CODE_MAP[code] || `Εξέταση ${code}`);
+
+            const record = {
+                diagnostician_id: diagId,
+                diagnostician_name: diagName,
+                exam_code: code,
+                exam_title: examName,
+                is_preferred: is_preferred
+            };
+
+            try {
+                const result = await apiCall('/admin/skills', 'POST', record);
+                skills = skills.filter(s => !(String(s.diagnostician_id) === String(diagId) && String(s.exam_code).trim() === code));
+                if (result) skills.push(result);
+                else skills.push({ id: Date.now() + Math.random(), ...record });
+                addedCount++;
+            } catch (err) {
+                showToast(`❌ Αποτυχία προσθήκης δεξιότητας ${code}: ${err.message || 'Σφάλμα API'}`, 'error');
+            }
         }
-
-        const examObj = (RAW_EXAM_CATEGORIES || []).find(ex => String(ex.examnumcode || ex.code || '').trim() === code);
-        const examName = examObj ? examObj.name : (EXAM_CODE_MAP[code] || `Εξέταση ${code}`);
-
-        const record = {
-            diagnostician_id: diagId,
-            diagnostician_name: diagName,
-            exam_code: code,
-            exam_title: examName,
-            is_preferred: is_preferred
-        };
-
-        try {
-            const result = await apiCall('/admin/skills', 'POST', record);
-            skills = skills.filter(s => !(String(s.diagnostician_id) === String(diagId) && String(s.exam_code).trim() === code));
-            if (result) skills.push(result);
-            else skills.push({ id: Date.now() + Math.random(), ...record });
-            addedCount++;
-        } catch (err) {
-            showToast(`❌ Αποτυχία προσθήκης δεξιότητας ${code}: ${err.message || 'Σφάλμα API'}`, 'error');
-        }
+    } finally {
+        hideAdminLoading();
     }
 
     if (addedCount > 0) openSkillsGroups.add(String(diagId));
@@ -2477,11 +2552,14 @@ async function addPartnership() {
         exclusive,
     };
 
+    showAdminLoading(`⏳ Αποθήκευση συνεργασίας...`);
     try {
         const result = await apiCall('/admin/partnerships', 'POST', record);
         partnerships.push(result || { id: Date.now(), ...record });
     } catch {
         partnerships.push({ id: Date.now(), ...record });
+    } finally {
+        hideAdminLoading();
     }
 
     if (diagId) openPartnershipsGroups.add(String(diagId));
