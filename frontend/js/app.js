@@ -217,109 +217,11 @@ function refreshCurrentTab() {
 
 
 // ══════════════════════════════════════════════
-//  Tab Switching & Per-Tab Filter State
+//  Tab Switching & Shared Filter State
 // ══════════════════════════════════════════════
-
-const tabFilters = {
-    pending: null,
-    assigned: null
-};
-
-function saveTabFilterState(tab) {
-    const searchVal = document.getElementById('search-input')?.value || '';
-    const selectedModalities = Array.from(document.querySelectorAll('#modality-dropdown input[type="checkbox"]:checked')).map(cb => cb.value);
-    const selectedLabs = Array.from(document.querySelectorAll('#lab-dropdown input[type="checkbox"]:checked')).map(cb => cb.value);
-    const dates = dateRangePicker ? [...dateRangePicker.selectedDates] : [];
-    
-    const state = {
-        search: searchVal,
-        modalities: selectedModalities,
-        labs: selectedLabs,
-        dateRange: dates,
-        filterOnlyComments: filterOnlyComments,
-        filterOnlyHistory: filterOnlyHistory,
-        sortConfig: { ...sortConfig }
-    };
-
-    if (tab === 'pending') {
-        tabFilters.pending = { ...state, page: currentPendingPage };
-    } else if (tab === 'assigned') {
-        tabFilters.assigned = { ...state, page: currentAssignedPage };
-    }
-}
-
-function restoreTabFilterState(tab) {
-    if (tab !== 'pending' && tab !== 'assigned') return;
-    const state = tabFilters[tab];
-    if (!state) {
-        clearFilters(false);
-        return;
-    }
-
-    const searchInput = document.getElementById('search-input');
-    if (searchInput) searchInput.value = state.search || '';
-
-    document.querySelectorAll('#modality-dropdown input[type="checkbox"]').forEach(cb => {
-        cb.checked = state.modalities.includes(cb.value);
-    });
-
-    document.querySelectorAll('#lab-dropdown input[type="checkbox"]').forEach(cb => {
-        cb.checked = state.labs.includes(cb.value);
-    });
-
-    if (dateRangePicker) {
-        if (state.dateRange && state.dateRange.length > 0) {
-            dateRangePicker.setDate(state.dateRange, false);
-        } else {
-            dateRangePicker.clear();
-        }
-    }
-
-    filterOnlyComments = !!state.filterOnlyComments;
-    const commentsBtn = document.getElementById('btn-filter-comments');
-    if (commentsBtn) {
-        if (filterOnlyComments) {
-            commentsBtn.style.background = 'rgba(99, 102, 241, 0.08)';
-            commentsBtn.style.borderColor = 'var(--accent-primary)';
-            commentsBtn.style.color = 'var(--accent-primary)';
-        } else {
-            commentsBtn.style.background = 'var(--bg-tertiary)';
-            commentsBtn.style.borderColor = 'var(--border-color)';
-            commentsBtn.style.color = 'var(--text-primary)';
-        }
-    }
-
-    filterOnlyHistory = !!state.filterOnlyHistory;
-    const historyBtn = document.getElementById('btn-filter-history');
-    if (historyBtn) {
-        if (filterOnlyHistory) {
-            historyBtn.style.background = 'rgba(99, 102, 241, 0.08)';
-            historyBtn.style.borderColor = 'var(--accent-primary)';
-            historyBtn.style.color = 'var(--accent-primary)';
-        } else {
-            historyBtn.style.background = 'var(--bg-tertiary)';
-            historyBtn.style.borderColor = 'var(--border-color)';
-            historyBtn.style.color = 'var(--text-primary)';
-        }
-    }
-
-    sortConfig = state.sortConfig ? { ...state.sortConfig } : { key: null, direction: null };
-    updateSortIcons();
-
-    if (tab === 'pending') {
-        currentPendingPage = state.page !== undefined ? state.page : 0;
-    } else if (tab === 'assigned') {
-        currentAssignedPage = state.page !== undefined ? state.page : 0;
-    }
-}
 
 function switchTab(tab) {
     if (currentTab === tab) return;
-
-    // Save filter state for outgoing tab
-    if (currentTab === 'pending' || currentTab === 'assigned') {
-        saveTabFilterState(currentTab);
-    }
 
     currentTab = tab;
 
@@ -380,8 +282,7 @@ function switchTab(tab) {
         updateSlisBtn.style.display = tab === 'assigned' ? 'inline-flex' : 'none';
     }
 
-    // Restore filter state for incoming tab
-    restoreTabFilterState(tab);
+    // Keep active filters applied when switching tabs
     applyFilters();
 }
 
@@ -719,9 +620,6 @@ function matchesFilters(exam, search, selectedModalities, selectedLabs, dateFrom
 }
 
 function clearFilters(rerender = true) {
-    if (currentTab === 'pending' || currentTab === 'assigned') {
-        tabFilters[currentTab] = null;
-    }
     document.getElementById('search-input').value = '';
 
     if (dateRangePicker) {
