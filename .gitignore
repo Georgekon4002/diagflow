@@ -40,6 +40,7 @@ db/init_diagflow.sql
 db/init_mock_slis.sql
 *.db-shm
 *.db-wal
+db/prev
 
 ## Office Temporary Lock Files
 ~$*

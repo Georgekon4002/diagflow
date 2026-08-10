@@ -1830,15 +1830,17 @@ function groupExamByAnatomicalRegion(name, category, code) {
     // Specific exam code overrides
     if (c) {
         if (cat === 'CT' || /^21/.test(c)) {
+            if (['21620'].includes(c)) return { key: 'ct_head', title: '🧠 Κεφαλή', order: 7 };
             if (['21641', '21405', '21408'].includes(c)) return { key: 'ct_other', title: '📋 Λοιπές Εξετάσεις', order: 99 };
             if (['21680', '21602', '21650'].includes(c)) return { key: 'ct_pelvis', title: '🦴 Λεκάνη', order: 13 };
             if (['21725', '21701'].includes(c)) return { key: 'ct_lower', title: '🦵 Κάτω Άκρα', order: 2, subgroup: { key: 'amfo', title: '(Αμφω)', order: 3 } };
             if (['21102'].includes(c)) return { key: 'ct_abdomen', title: '🩺 Κοιλία', order: 10 };
         } else {
-            if (['22056', '22057'].includes(c)) return { key: 'mri_head', title: '👤 Κεφαλή', order: 11 };
+            if (['22056', '22057', '22540'].includes(c)) return { key: 'mri_head', title: '👤 Κεφαλή', order: 11 };
             if (['22201'].includes(c)) return { key: 'mri_chest', title: '🫁 Θώρακας', order: 2 };
+            if (['22204'].includes(c)) return { key: 'mri_aorta_breast', title: '🫀 Αορτή - Μαστοί', order: 9 };
+            if (['22405'].includes(c)) return { key: 'mri_abdomen', title: '🩺 Κοιλία', order: 10 };
             if (['22506', '22550', '22551', '22525', '22472'].includes(c)) return { key: 'mri_pelvis', title: '🦴 Λεκάνη', order: 12 };
-            if (['22204'].includes(c)) return { key: 'mri_upper', title: '💪 Άνω Άκρα', order: 4, subgroup: { key: 'left', title: '(Αριστερό)', order: 1 } };
             if (['22709', '22481', '22560', '22705', '22708'].includes(c)) return { key: 'mri_other', title: '📋 Λοιπές Εξετάσεις', order: 99 };
         }
     }
