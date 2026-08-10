@@ -47,14 +47,15 @@
 | Area | Feature | Description |
 |------|---------|-------------|
 | ⚙️ **Rule Engine** | **4-Stage Decision Pipeline** | Hard filters → weighted scoring → near-tie load balancing → solver pipeline with 100% decision transparency. |
+| 📋 **Order Grouping** | **Same Order ID Consistency** | Proposes the same diagnostician for all exams sharing the same Order ID (`extracode`) to ensure diagnostic consistency. |
 | 🧮 **Optimization** | **Google OR-Tools CP-SAT** | Global constraint solver for batch assignments, maximizing total score while enforcing daily capacity & modality quotas. |
 | ⚖️ **Load Balancing** | **Near-Tie Rotation** | Candidates within a configurable score tolerance (default 5%) are ranked by workload, preventing individual burnout. |
 | 🔄 **Session Offset** | **Real-Time Workload Tracking** | Tracks uncommitted suggestions within an active session so sequential proposals distribute workload evenly before confirmation. |
 | ⚡ **Auto-Assignments** | **Dynamic Routing Rules** | Automatically assigns exclusive doctor partnerships, lab-specific exam codes (e.g. Arthrografies, TMJ, Spectroscopies), and Παμμακάριστος on-call rotation. |
 | 🛡️ **Hard Constraints** | **Dynamic Quotas & Labs** | Enforces leave calendars, weekday quotas, modality limits (CT/MRI max counts), exclusive lab assignments, and skill proficiencies. |
 | 🔄 **Slis Synchronization** | **Two-Way Integration** | Pulls unassigned exams from Slis (past 3 days), pushes confirmed local assignments back, and runs daily 3 AM background master data syncs via APScheduler. |
-| 🖥️ **Secretariat Dashboard** | **Tabbed Review Interface** | `index.html` dashboard with pending/assigned tabs, instant suggestions, rule breakdowns, alternative candidate modals, bulk confirm/override, and Slis push. |
-| 🔐 **Admin Panel** | **Configuration Management** | Authenticated `admin.html` interface for managing diagnosticians, skills, doctor partnerships, availability calendars, dynamic routing rules, modality quotas, and scoring weights. |
+| 🖥️ **Secretariat Dashboard** | **4-Tab Interface** | `index.html` dashboard with pending, assigned, dashboard, and Slis search tabs (date range search [default 7 days] & reassignment by Order ID, Patient, Doctor, Diagnostician), instant suggestions, rule breakdowns, alternative modals, and Slis push. |
+| 🔐 **Admin Panel** | **Configuration Management** | Authenticated `admin.html` interface for managing diagnosticians, skills, exam catalog dictionary & bulk skill assignment (Εξετάσεις tab), doctor partnerships, availability calendars, dynamic routing rules, modality quotas, and scoring weights. |
 | 📜 **Audit Trail** | **Decision Logging** | Complete history logging original suggestions, final assignments, override indicators, and reason comments. |
 | 📦 **Desktop App** | **Standalone EXE Packaging** | PyInstaller build script bundling FastAPI and `pywebview` for native desktop execution without browser requirements. |
 
@@ -641,6 +642,10 @@ All PlantUML diagram source files are maintained in the [`puml/`](puml/) directo
 |:---:|:---:|
 | ![Filtering](media/screenshots/filtering.png) | ![Multiple Select](media/screenshots/multipleselect.png) |
 
+| Slis Search & Reassignment (4th Tab) |  |
+|:---:|:---:|
+| ![Slis Search & Reassign](media/screenshots/changediagnostician.png) |  |
+
 </div>
 
 ---
@@ -680,6 +685,10 @@ All PlantUML diagram source files are maintained in the [`puml/`](puml/) directo
 | Partnerships | Παμμακάριστος Schedule |
 |:---:|:---:|
 | ![Admin Partners](media/screenshots/admin_partners.png) | ![Admin Pammakaristos](media/screenshots/admin_pammakaristos.png) |
+
+| Exam Catalog & Anatomical Groups | Bulk Skill Assignment |
+|:---:|:---:|
+| ![Admin Exams 1](media/screenshots/admin_exams1.png) | ![Admin Exams 2](media/screenshots/admin_exams2.png) |
 
 | Rules Editor | Exclusive Labs & Capacity per Modality |
 |:---:|:---:|

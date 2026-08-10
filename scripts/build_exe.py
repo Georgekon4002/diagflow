@@ -137,7 +137,7 @@ def build():
                 db_src,
                 db_dst,
                 dirs_exist_ok=True,
-                ignore=shutil.ignore_patterns("*.db-wal", "*.db-shm", "*.db-journal")
+                ignore=shutil.ignore_patterns("*.db-wal", "*.db-shm", "*.db-journal", "server.txt")
             )
 
         env_example = ROOT / ".env.example"

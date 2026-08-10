@@ -159,11 +159,15 @@ def convert_file(md_path: Path):
 </html>
 """
 
-    out_path = md_path.with_suffix(".html")
+    if md_path.parent == ROOT and (ROOT / "guides").exists():
+        out_path = ROOT / "guides" / md_path.with_suffix(".html").name
+    else:
+        out_path = md_path.with_suffix(".html")
+
     with open(out_path, "w", encoding="utf-8") as f:
         f.write(full_html)
 
-    print(f"  Converted: {md_path.name} -> {out_path.name} (Images Embedded Base64)")
+    print(f"  Converted: {md_path.name} -> {out_path.relative_to(ROOT)} (Images Embedded Base64)")
 
 
 def main():
@@ -171,7 +175,7 @@ def main():
     print("  DiagFlow Markdown -> Standalone HTML Converter")
     print("=" * 60)
 
-    md_files = list(ROOT.glob("*.md"))
+    md_files = list(ROOT.glob("*.md")) + list((ROOT / "guides").glob("*.md"))
     for file in md_files:
         convert_file(file)
 

@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="media/logos/full_logo_multiple.png" alt="DiagFlow Logo" width="300" />
+  <img src="../media/logos/full_logo_multiple.png" alt="DiagFlow Logo" width="300" />
 </div>
 
 # 📘 DiagFlow — Οδηγός Χρήστη
@@ -16,10 +16,12 @@
   - [Ομαδικές Ενέργειες](#ομαδικές-ενέργειες)
 - [✅ Καρτέλα Ανατεθέντων Εξετάσεων](#-καρτέλα-ανατεθέντων-εξετάσεων)
   - [Αποστολή στο Slis](#αποστολή-στο-slis)
+- [🔍 4η Καρτέλα: Αναζήτηση Slis & Επανάθεση Εξετάσεων](#-4η-καρτέλα-αναζήτηση-slis--επανάθεση-εξετάσεων)
 - [🔐 Το Admin Panel](#-το-admin-panel)
   - [Είσοδος στο Admin Panel](#είσοδος-στο-admin-panel)
   - [Διαχείριση Διαγνωστών](#διαχείριση-διαγνωστών)
   - [Ημερολόγιο Διαθεσιμότητας](#ημερολόγιο-διαθεσιμότητας)
+  - [Κατάλογος Εξετάσεων & Ομαδικές Δεξιότητες](#κατάλογος-εξετάσεων--ομαδικές-δεξιότητες)
   - [Εξειδικεύσεις Διαγνωστών](#εξειδικεύσεις-διαγνωστών)
   - [Συνεργασίες Γιατρών](#συνεργασίες-γιατρών)
   - [Πρόγραμμα Παμμακαρίστου](#πρόγραμμα-παμμακαρίστου)
@@ -47,6 +49,8 @@
 
 ## 🔄 Πώς λειτουργεί η ροή ανάθεσης;
 
+> 💡 **Ομαδοποίηση βάσει Εντολής (`extracode`):** Όταν μια παραγγελία/εντολή περιλαμβάνει πολλαπλές εξετάσεις για τον ίδιο ασθενή (με τον ίδιο κωδικό Εντολής/extracode), η μηχανή κανόνων εξασφαλίζει ότι προτείνεται **ο ίδιος διαγνώστης για όλες τις εξετάσεις της εντολής**, διασφαλίζοντας την ιατρική και διαγνωστική συνοχή.
+
 Παρακάτω περιγράφεται βήμα-βήμα η ροή από τη στιγμή που φτάνει μια εξέταση μέχρι να σταλεί πίσω στο Slis:
 
 ```
@@ -73,7 +77,7 @@
 
 | Συνολική Ροή Ανάθεσης |
 |:---:|
-| ![Ροή](media/screenshots/flow.png) |
+| ![Ροή](../media/screenshots/flow.png) |
 
 </div>
 
@@ -92,11 +96,11 @@
 
 | Αρχική Οθόνη (Καρτέλα Εκκρεμών) | Αρχική Οθόνη (Καρτέλα Εκκρεμών — συνέχεια) |
 |:---:|:---:|
-| ![Αρχική 1](media/screenshots/homescreen1.png) | ![Αρχική 2](media/screenshots/homescreen2.png) |
+| ![Αρχική 1](../media/screenshots/homescreen1.png) | ![Αρχική 2](../media/screenshots/homescreen2.png) |
 
 | Επισκόπηση Dashboard |
 |:---:|
-| ![Dashboard](media/screenshots/dashboard_blurred.png) |
+| ![Dashboard](../media/screenshots/dashboard_blurred.png) |
 
 </div>
 
@@ -121,7 +125,7 @@
 
 | Φιλτράρισμα & Αναζήτηση |
 |:---:|
-| ![Φιλτράρισμα](media/screenshots/filtering.png) |
+| ![Φιλτράρισμα](../media/screenshots/filtering.png) |
 
 </div>
 
@@ -149,7 +153,7 @@
 
 | Ανάλυση Συστήματος Βαθμολόγησης | Λεπτομέρεια Βαθμολογίας |
 |:---:|:---:|
-| ![Σύστημα Βαθμολόγησης](media/screenshots/scoring-system.png) | ![Βαθμολόγηση](media/screenshots/scoring.png) |
+| ![Σύστημα Βαθμολόγησης](../media/screenshots/scoring-system.png) | ![Βαθμολόγηση](../media/screenshots/scoring.png) |
 
 </div>
 
@@ -178,7 +182,7 @@
 
 | Παράθυρο Εναλλακτικών Επιλογών |
 |:---:|
-| ![Εναλλακτικές](media/screenshots/alternatives_blurred.png) |
+| ![Εναλλακτικές](../media/screenshots/alternatives_blurred.png) |
 
 </div>
 
@@ -205,7 +209,7 @@
 
 | Πολλαπλή Επιλογή |
 |:---:|
-| ![Πολλαπλή Επιλογή](media/screenshots/multipleselect.png) |
+| ![Πολλαπλή Επιλογή](../media/screenshots/multipleselect.png) |
 
 </div>
 
@@ -226,11 +230,11 @@
 
 | Αυτόματη Ανάθεση (Καρτέλα Ανατεθέντων) |
 |:---:|
-| ![Αυτόματη Ανάθεση](media/screenshots/auto-assign.png) |
+| ![Αυτόματη Ανάθεση](../media/screenshots/auto-assign.png) |
 
 | Ετικέτα Κανόνα Αυτόματης Ανάθεσης |
 |:---:|
-| ![Ετικέτα AUTO](media/screenshots/red-comment_auto-assign.png) |
+| ![Ετικέτα AUTO](../media/screenshots/red-comment_auto-assign.png) |
 
 </div>
 
@@ -245,6 +249,32 @@
 - **Επιλέξετε συγκεκριμένες** εξετάσεις και να τις στείλετε μεμονωμένα
 
 > ⚠️ **Σημείωση:** Μέχρι να πατήσετε "Αποστολή στο Slis", οι αναθέσεις αποθηκεύονται **μόνο τοπικά** στο DiagFlow και δεν φαίνονται στο Slis.
+
+---
+
+## 🔍 4η Καρτέλα: Αναζήτηση Slis & Επανάθεση Εξετάσεων
+
+Στην 4η καρτέλα (**"🔍 Αναζήτηση Slis"**) μπορείτε να πραγματοποιήσετε απευθείας αναζήτηση εξετάσεων στη βάση δεδομένων του Slis και να αλλάξετε την ανάθεση διαγνώστη που έγινε από το σύστημα ή το χρήστη.
+
+### Πεδία Αναζήτησης
+
+- **📆 Εύρος Ημερομηνιών:** Προεπιλεγμένα αναζητά εξετάσεις των **τελευταίων 7 ημερών**. Μπορείτε να ορίσετε οποιοδήποτε προσαρμοσμένο εύρος ημερομηνιών.
+- **📋 Εντολή (`extracode`):** Αναζήτηση με τον κωδικό της εντολής/παραγγελίας (π.χ. `2783623`).
+- **👤 Ασθενής:** Αναζήτηση με το ονοματεπώνυμο ή τον κωδικό του ασθενή (π.χ. `857640` ή `ΓΕΩΡΓΙΟΥ`).
+- **🩺 Παραπέμπων Ιατρός:** Αναζήτηση με το όνομα ή τον κωδικό του παραπέμποντος γιατρού (π.χ. `ΔΗΜΗΤΡΙΟΥ`).
+- **👨‍⚕️ Διαγνώστης:** Αναζήτηση εξετάσεων ανατεθειμένων σε συγκεκριμένο διαγνώστη (π.χ. `ΤΡΙΑΝΤΑΦΥΛΛΟΥ`).
+
+### Αλλαγή / Επανάθεση Διαγνώστη
+
+Στον πίνακα των αποτελεσμάτων εμφανίζονται οι εξετάσεις με τον τρέχοντα ανατεθειμένο διαγνώστη. Από το πτυσσόμενο μενού (select) σε κάθε γραμμή, μπορείτε να επιλέξετε έναν νέο διαγνώστη και να πατήσετε **"Αλλαγή"** για να ενημερώσετε άμεσα την ανάθεση στη βάση Slis.
+
+<div align="center">
+
+| Αναζήτηση Slis & Επανάθεση Διαγνώστη (4η Καρτέλα) |
+|:---:|
+| ![Αναζήτηση Slis](../media/screenshots/changediagnostician.png) |
+
+</div>
 
 ---
 
@@ -279,7 +309,7 @@
 
 | Διαχείριση Διαγνωστών |
 |:---:|
-| ![Admin Διαγνωστές](media/screenshots/admin_diagnosticians.png) |
+| ![Admin Διαγνωστές](../media/screenshots/admin_diagnosticians.png) |
 
 </div>
 
@@ -298,7 +328,25 @@
 
 | Ημερολόγιο Διαθεσιμότητας |
 |:---:|
-| ![Admin Διαθεσιμότητα](media/screenshots/admin_availability.png) |
+| ![Admin Διαθεσιμότητα](../media/screenshots/admin_availability.png) |
+
+</div>
+
+---
+
+### Κατάλογος Εξετάσεων & Ομαδικές Δεξιότητες
+
+Στην καρτέλα **"📋 Εξετάσεις"** του Admin Panel προβάλλεται ο πλήρης κατάλογος όλων των κωδικών εξετάσεων (Exam Dictionary) ταξινομημένος ανά κατηγορία (CT, MRI, MRA) και ανατομική ομάδα (π.χ. Άνω Άκρα, Κάτω Άκρα, Εγκέφαλος, Θώρακας κ.λπ.).
+
+**Χαρακτηριστικά:**
+- **Αναζήτηση:** Άμεσο φιλτράρισμα εξετάσεων πληκτρολογώντας κωδικό ή όνομα εξέτασης.
+- **Ομαδική Ανάθεση Δεξιοτήτων:** Επιλέξτε πολλαπλές εξετάσεις μέσω checkbox, επιλέξτε διαγνώστη από τη φλοτέρ μπάρα (floating bar), ορίστε αν πρόκειται για **Προτίμηση** (`✓`) ή **Αποκλεισμό** (`✗`), και πατήστε **"🎯 Προσθήκη ως Δεξιότητες"** για μαζική ενημέρωση των ικανοτήτων του διαγνώστη.
+
+<div align="center">
+
+| Κατάλογος Εξετάσεων & Ανατομικές Ομάδες | Ομαδική Επιλογή & Ανάθεση Δεξιοτήτων |
+|:---:|:---:|
+| ![Admin Εξετάσεις 1](../media/screenshots/admin_exams1.png) | ![Admin Εξετάσεις 2](../media/screenshots/admin_exams2.png) |
 
 </div>
 
@@ -316,7 +364,7 @@
 
 | Μήτρα Εξειδικεύσεων (Θολή) | Μήτρα Εξειδικεύσεων |
 |:---:|:---:|
-| ![Admin Εξειδικεύσεις 1](media/screenshots/admin_skills1_blurred.png) | ![Admin Εξειδικεύσεις 2](media/screenshots/admin_skills2.png) |
+| ![Admin Εξειδικεύσεις 1](../media/screenshots/admin_skills1_blurred.png) | ![Admin Εξειδικεύσεις 2](../media/screenshots/admin_skills2.png) |
 
 </div>
 
@@ -333,7 +381,7 @@
 
 | Συνεργασίες Γιατρών |
 |:---:|
-| ![Admin Συνεργασίες](media/screenshots/admin_partners.png) |
+| ![Admin Συνεργασίες](../media/screenshots/admin_partners.png) |
 
 </div>
 
@@ -351,7 +399,7 @@
 
 | Πρόγραμμα Παμμακαρίστου |
 |:---:|
-| ![Admin Παμμακάριστος](media/screenshots/admin_pammakaristos.png) |
+| ![Admin Παμμακάριστος](../media/screenshots/admin_pammakaristos.png) |
 
 </div>
 
@@ -373,11 +421,11 @@
 
 | Επεξεργαστής Κανόνων | Αποκλειστικά Εργαστήρια & Χωρητικότητα ανά Modality |
 |:---:|:---:|
-| ![Admin Προχωρημένα 1](media/screenshots/admin_advanced1.png) | ![Admin Προχωρημένα 2](media/screenshots/admin_advanced2.png) |
+| ![Admin Προχωρημένα 1](../media/screenshots/admin_advanced1.png) | ![Admin Προχωρημένα 2](../media/screenshots/admin_advanced2.png) |
 
 | Επεξεργαστής Βαρών Βαθμολόγησης |
 |:---:|
-| ![Admin Προχωρημένα 3](media/screenshots/admin_advanced3.png) |
+| ![Admin Προχωρημένα 3](../media/screenshots/admin_advanced3.png) |
 
 </div>
 
@@ -408,14 +456,9 @@
 ---
 
 <div align="center">
-  <img src="media/logos/logo_multiple.png" alt="DiagFlow Logo" height="50" />
+  <img src="../media/logos/logo_multiple.png" alt="DiagFlow Logo" height="50" />
   &nbsp;&nbsp;&nbsp;&nbsp;
-  <img src="media/logos/textbox.png" alt="DiagFlow Textbox" height="50" />
+  <img src="../media/logos/textbox.png" alt="DiagFlow Textbox" height="50" />
   &nbsp;&nbsp;&nbsp;&nbsp;
-  <img src="media/logos/logo_transparent_crop.png" alt="DiagFlow Transparent Logo" height="50" />
+  <img src="../media/logos/logo_transparent_crop.png" alt="DiagFlow Transparent Logo" height="50" />
 </div>
-
----
-
-*Κοσμοϊατρική © 2026 — Εσωτερικό έγγραφο. Εμπιστευτικό.*
-
