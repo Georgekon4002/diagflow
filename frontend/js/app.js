@@ -2723,29 +2723,34 @@ function updateAssignedPagination(total) {
 
 /**
  * Called by the Ανανέωση button.
- * On the assigned tab it also triggers a Slis pull (expire + refresh).
- * On the pending tab it simply reloads from the DB.
+ * Always triggers a Slis pull (pulls fresh exams from Slis DB & expires old ones)
+ * and refreshes all exam lists (Pending, Assigned, and Dashboard).
  */
 async function handleRefreshClick() {
     const btn = document.getElementById('btn-refresh');
-    const originalHTML = btn.innerHTML;
-    btn.innerHTML = '<span class="loading-spinner"></span>';
-    btn.disabled = true;
+    const originalHTML = btn ? btn.innerHTML : '';
+    if (btn) {
+        btn.innerHTML = '<span class="loading-spinner"></span>';
+        btn.disabled = true;
+    }
 
     try {
-        if (currentTab === 'assigned') {
-            // Trigger the Slis pull/expire cycle
-            await apiCall('/slis/pull', 'POST');
-            await loadAssignedExams();
-            showToast('🔄 Τα δεδομένα ανανεώθηκαν από το Slis', 'info');
-        } else {
-            await loadPendingExams();
+        await apiCall('/slis/pull', 'POST');
+        await Promise.all([
+            loadPendingExams(),
+            loadAssignedExams()
+        ]);
+        if (currentTab === 'dashboard') {
+            await loadDashboard();
         }
+        showToast('🔄 Τα δεδομένα ανανεώθηκαν από το Slis', 'info');
     } catch (err) {
         showToast(`Σφάλμα ανανέωσης: ${err.message}`, 'error');
     } finally {
-        btn.innerHTML = originalHTML;
-        btn.disabled = false;
+        if (btn) {
+            btn.innerHTML = originalHTML;
+            btn.disabled = false;
+        }
     }
 }
 
