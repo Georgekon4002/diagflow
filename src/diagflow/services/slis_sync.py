@@ -117,11 +117,14 @@ def pull_from_slis() -> dict:
                 query = text(f"EXEC getExamsListForPeriod '{start_str}', '{end_str}'")
                 res = conn.execute(query)
                 keys = list(res.keys())
-                rows = [dict(zip(keys, row)) for row in res.fetchall()]
+                raw_rows = [dict(zip(keys, row)) for row in res.fetchall()]
+
+            # Normalize row keys to lowercase first so key access is case-insensitive
+            rows = [{k.lower(): v for k, v in r.items()} for r in raw_rows]
 
             unassigned_rows = [
                 r for r in rows
-                if r.get("DIAGNOSTIS") is None or r.get("DIAGNOSTIS") == "" or str(r.get("DIAGNOSTIS")).strip().lower() == "none"
+                if r.get("diagnostis") is None or r.get("diagnostis") == "" or str(r.get("diagnostis")).strip().lower() == "none"
             ]
 
             pulled_count = len(unassigned_rows)
@@ -133,13 +136,15 @@ def pull_from_slis() -> dict:
                 con.execute("ALTER TABLE slis_exams ADD COLUMN slis_synced_at TEXT DEFAULT NULL")
                 con.commit()
 
-            # Clean out stale exams that are NOT in the pulled real SLIS exams list (only if rows were fetched)
+            # Clean out mock/stale exams that are NOT in the pulled real SLIS exams list
             if pulled_exammoreids:
                 placeholders = ",".join(["?"] * len(pulled_exammoreids))
                 con.execute(
                     f"DELETE FROM slis_exams WHERE exammoreid NOT IN ({placeholders}) AND slis_synced_at IS NULL",
                     pulled_exammoreids
                 )
+            else:
+                con.execute("DELETE FROM slis_exams WHERE slis_synced_at IS NULL")
             con.commit()
 
             expired = delete_expired(con)
@@ -236,12 +241,21 @@ def pull_from_slis() -> dict:
             total_pending = count_row[0] if count_row else 0
             con.close()
 
-            # Clean orphaned local assignments in diagflow.db only if real SLIS returns exams
-            if pulled_exammoreids:
-                import diagflow.db.diagflow_db as cfg_db
-                with cfg_db._conn() as local_con:
+            # Clean orphaned & already-synced local assignments in diagflow.db
+            assigned_in_slis_ids = [
+                r.get("exammoreid") for r in rows
+                if r.get("exammoreid") is not None and r.get("diagnostis") is not None
+                and str(r.get("diagnostis")).strip().lower() not in ("", "0", "none", "null")
+            ]
+
+            import diagflow.db.diagflow_db as cfg_db
+            with cfg_db._conn() as local_con:
+                if pulled_exammoreids:
                     placeholders = ",".join(["?"] * len(pulled_exammoreids))
                     local_con.execute(f"DELETE FROM local_assignments WHERE exammoreid NOT IN ({placeholders})", pulled_exammoreids)
+                if assigned_in_slis_ids:
+                    placeholders_assigned = ",".join(["?"] * len(assigned_in_slis_ids))
+                    local_con.execute(f"DELETE FROM local_assignments WHERE exammoreid IN ({placeholders_assigned})", assigned_in_slis_ids)
 
             logger.info("pull_from_slis_production_complete", pulled=pulled_count, total_pending=total_pending)
             return {"pulled": pulled_count, "expired": expired, "total_pending": total_pending}
@@ -321,8 +335,21 @@ def delete_expired(con: sqlite3.Connection | None = None) -> int:
     Returns:
         Number of rows deleted.
     """
+    close_con = False
     if con is None:
         con = _get_db()
+        close_con = True
+
+    cutoff_date = (date.today() - timedelta(days=3)).isoformat()
+    cur = con.execute(
+        "DELETE FROM slis_exams WHERE visitdate < ? AND slis_synced_at IS NOT NULL",
+        (cutoff_date,)
+    )
+    deleted_count = cur.rowcount
+    con.commit()
+    if close_con:
+        con.close()
+    return deleted_count
 
 def push_exam_to_slis(exammoreid: int, diagnostician_id: int, diagnostician_name: str) -> dict:
     """
@@ -488,17 +515,20 @@ def search_slis_exams(
             except (ValueError, TypeError):
                 pass
 
-        if local_assign:
-            diag_id = local_assign["diagnostician_id"]
-            diag_name = local_assign.get("diagnostician_name") or (local_diags.get(diag_id) or f"ID: {diag_id}")
-            status = "pending_slis_update"
-            pending_slis_update = True
-        elif slis_diag_id is not None:
+        if slis_diag_id is not None:
+            # Real Slis DB is updated! Clear any stale local draft assignment for this exam
+            if local_assign and exam_more_id:
+                cfg_db.delete_local_assignment(exam_more_id)
             diag_id = slis_diag_id
             raw_name = r.get("code") or r.get("name")
             diag_name = str(raw_name).strip() if raw_name else (local_diags.get(diag_id) or f"ID: {diag_id}")
             status = "synced"
             pending_slis_update = False
+        elif local_assign:
+            diag_id = local_assign["diagnostician_id"]
+            diag_name = local_assign.get("diagnostician_name") or (local_diags.get(diag_id) or f"ID: {diag_id}")
+            status = "pending_slis_update"
+            pending_slis_update = True
         else:
             diag_id = None
             diag_name = ""

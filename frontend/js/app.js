@@ -116,6 +116,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
 
     initSlisSearchDatePicker();
+    initSlisSearchStickyScrollbar();
 
     showBackgroundWork('⏳ Φόρτωση δεδομένων και υπολογισμός προτάσεων...');
     try {
@@ -249,6 +250,7 @@ function switchTab(tab) {
     }
     if (searchContent) {
         searchContent.style.display = tab === 'search' ? 'block' : 'none';
+        if (tab === 'search') setTimeout(updateSlisSearchStickyScrollbar, 50);
     }
 
     const examsSection = document.querySelector('.exams-section');
@@ -3637,6 +3639,51 @@ function renderSlisSearchResults(results) {
         `;
     }).join('');
     updateSlisSearchBulkUI();
+    setTimeout(updateSlisSearchStickyScrollbar, 50);
+}
+
+let isSyncingSlisScroll = false;
+
+function updateSlisSearchStickyScrollbar() {
+    const container = document.getElementById('slis-search-table-container');
+    const table = document.getElementById('table-slis-search') || (container ? container.querySelector('table') : null);
+    const scrollbar = document.getElementById('slis-search-sticky-scrollbar');
+    const content = document.getElementById('slis-search-sticky-scrollbar-content');
+
+    if (!container || !table || !scrollbar || !content) return;
+
+    const scrollWidth = table.scrollWidth || container.scrollWidth;
+    const clientWidth = container.clientWidth;
+
+    if (scrollWidth > clientWidth + 5) {
+        content.style.width = scrollWidth + 'px';
+        scrollbar.style.display = 'block';
+        scrollbar.scrollLeft = container.scrollLeft;
+    } else {
+        scrollbar.style.display = 'none';
+    }
+}
+
+function initSlisSearchStickyScrollbar() {
+    const container = document.getElementById('slis-search-table-container');
+    const scrollbar = document.getElementById('slis-search-sticky-scrollbar');
+    if (!container || !scrollbar) return;
+
+    container.addEventListener('scroll', () => {
+        if (isSyncingSlisScroll) return;
+        isSyncingSlisScroll = true;
+        scrollbar.scrollLeft = container.scrollLeft;
+        isSyncingSlisScroll = false;
+    });
+
+    scrollbar.addEventListener('scroll', () => {
+        if (isSyncingSlisScroll) return;
+        isSyncingSlisScroll = true;
+        container.scrollLeft = scrollbar.scrollLeft;
+        isSyncingSlisScroll = false;
+    });
+
+    window.addEventListener('resize', updateSlisSearchStickyScrollbar);
 }
 
 function toggleSlisReassignDropdown(event, exammoreid) {
