@@ -158,8 +158,8 @@ def main():
 
     # Try launching webview window, fall back to default browser if webview fails
     try:
-        log("Opening DiagFlow app window...")
-        webview.create_window('DiagFlow - Diagnostic Routing System', APP_URL, width=1280, height=800)
+        log("Opening DiagFlow app window in full screen (maximized)...")
+        webview.create_window('DiagFlow - Diagnostic Routing System', APP_URL, width=1280, height=800, maximized=True)
         webview.start()
         log("DiagFlow app window closed. Exiting.")
     except Exception as wv_exc:
