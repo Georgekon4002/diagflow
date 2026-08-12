@@ -176,7 +176,7 @@ class OncallResponse(BaseModel):
 
 
 class BulkEligibleRequest(BaseModel):
-    exam_ids: list[str]
+    exam_ids: list[str | int]
 
 
 class BulkEligibleResponseItem(BaseModel):

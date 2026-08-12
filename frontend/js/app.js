@@ -1564,6 +1564,7 @@ async function confirmAssignment() {
     renderPendingTable();
     renderAssignedTable();
     updateTabCounts();
+    loadDashboard();
     // Invalidate all visible suggestion caches so they re-score with updated capacities
     invalidatePendingSuggestions();
 
@@ -1636,6 +1637,7 @@ async function overrideAssignment() {
     renderPendingTable();
     renderAssignedTable();
     updateTabCounts();
+    loadDashboard();
     // Invalidate all visible suggestion caches so they re-score with updated capacities
     invalidatePendingSuggestions();
 
@@ -3056,6 +3058,194 @@ async function loadDashboard() {
 // ══════════════════════════════════════════════
 
 let slisSearchDateRangePicker = null;
+let selectedSlisSearchExams = new Set();
+let slisSelectedDiagMap = {};
+let slisSearchSortConfig = { key: null, direction: null };
+let rawSlisSearchResults = [];
+
+function handleSlisSearchSort(key) {
+    if (slisSearchSortConfig.key === key) {
+        if (slisSearchSortConfig.direction === 'asc') {
+            slisSearchSortConfig.direction = 'desc';
+        } else if (slisSearchSortConfig.direction === 'desc') {
+            slisSearchSortConfig.direction = null;
+            slisSearchSortConfig.key = null;
+        }
+    } else {
+        slisSearchSortConfig.key = key;
+        slisSearchSortConfig.direction = 'asc';
+    }
+    updateSlisSearchSortIcons();
+    sortAndRenderSlisSearchResults();
+}
+
+function updateSlisSearchSortIcons() {
+    const keys = ['extracode', 'patient', 'date', 'lab', 'exam', 'doctor', 'diagnostician'];
+    keys.forEach(k => {
+        const el = document.getElementById(`sort-icon-${k}-slis`);
+        if (!el) return;
+        if (slisSearchSortConfig.key === k) {
+            el.textContent = slisSearchSortConfig.direction === 'asc' ? '▲' : '▼';
+            el.style.opacity = '1';
+            el.style.color = 'white';
+        } else {
+            el.textContent = '↕️';
+            el.style.opacity = '0.5';
+            el.style.color = 'inherit';
+        }
+    });
+}
+
+function sortAndRenderSlisSearchResults() {
+    if (!rawSlisSearchResults || rawSlisSearchResults.length === 0) {
+        renderSlisSearchResults([]);
+        return;
+    }
+
+    let sorted = [...rawSlisSearchResults];
+    if (slisSearchSortConfig.key && slisSearchSortConfig.direction) {
+        const dir = slisSearchSortConfig.direction === 'asc' ? 1 : -1;
+        const key = slisSearchSortConfig.key;
+
+        sorted.sort((a, b) => {
+            let valA = '';
+            let valB = '';
+
+            switch (key) {
+                case 'extracode':
+                    valA = String(a.extracode || a.exammoreid || '');
+                    valB = String(b.extracode || b.exammoreid || '');
+                    if (!isNaN(valA) && !isNaN(valB) && valA !== '' && valB !== '') {
+                        return (Number(valA) - Number(valB)) * dir;
+                    }
+                    break;
+                case 'patient':
+                    valA = String(a.patient_name || '');
+                    valB = String(b.patient_name || '');
+                    break;
+                case 'date':
+                    valA = String(a.visitdate || '');
+                    valB = String(b.visitdate || '');
+                    break;
+                case 'lab':
+                    valA = String(a.lab_name || '');
+                    valB = String(b.lab_name || '');
+                    break;
+                case 'exam':
+                    valA = String(cleanExamName(a.examname || a.exam_title || ''));
+                    valB = String(cleanExamName(b.examname || b.exam_title || ''));
+                    break;
+                case 'doctor':
+                    valA = String(a.issuing_doctor_name || '');
+                    valB = String(b.issuing_doctor_name || '');
+                    break;
+                case 'diagnostician':
+                    valA = String(a.diagnostician_name || (a.diagnostis ? `ID: ${a.diagnostis}` : ''));
+                    valB = String(b.diagnostician_name || (b.diagnostis ? `ID: ${b.diagnostis}` : ''));
+                    break;
+            }
+
+            return valA.localeCompare(valB, 'el', { numeric: true, sensitivity: 'base' }) * dir;
+        });
+    } else {
+        // Default sorting: Max date per extracode (descending), then extracode grouping
+        const maxDateMap = new Map();
+        rawSlisSearchResults.forEach(item => {
+            const ext = String(item.extracode || item.exammoreid || '');
+            const d = String(item.visitdate || '');
+            if (!maxDateMap.has(ext) || d > maxDateMap.get(ext)) {
+                maxDateMap.set(ext, d);
+            }
+        });
+
+        sorted.sort((a, b) => {
+            const extA = String(a.extracode || a.exammoreid || '');
+            const extB = String(b.extracode || b.exammoreid || '');
+
+            const maxDateA = maxDateMap.get(extA) || '';
+            const maxDateB = maxDateMap.get(extB) || '';
+
+            // 1. Sort by order's newest date (descending)
+            const dateComp = maxDateB.localeCompare(maxDateA);
+            if (dateComp !== 0) return dateComp;
+
+            // 2. Group by order ID (extracode)
+            if (extA !== extB) {
+                if (!isNaN(extA) && !isNaN(extB) && extA !== '' && extB !== '') {
+                    return Number(extB) - Number(extA);
+                }
+                return extA.localeCompare(extB, 'el', { numeric: true });
+            }
+
+            // 3. Within same order, sort by exammoreid
+            return Number(a.exammoreid || 0) - Number(b.exammoreid || 0);
+        });
+    }
+
+    renderSlisSearchResults(sorted);
+}
+
+function toggleSelectSlisSearchExam(exammoreid) {
+    const eid = Number(exammoreid);
+    if (selectedSlisSearchExams.has(eid)) {
+        selectedSlisSearchExams.delete(eid);
+    } else {
+        selectedSlisSearchExams.add(eid);
+    }
+
+    const allCbs = document.querySelectorAll('.slis-search-row-checkbox');
+    const masterCb = document.getElementById('slis-search-select-all');
+    if (masterCb && allCbs.length > 0) {
+        masterCb.checked = Array.from(allCbs).every(cb => cb.checked);
+    }
+
+    updateSlisSearchBulkUI();
+}
+
+function toggleSelectAllSlisSearch(masterCb) {
+    const isChecked = masterCb ? masterCb.checked : false;
+    document.querySelectorAll('.slis-search-row-checkbox').forEach(cb => {
+        cb.checked = isChecked;
+        const eid = Number(cb.value);
+        if (isChecked) selectedSlisSearchExams.add(eid);
+        else selectedSlisSearchExams.delete(eid);
+    });
+    updateSlisSearchBulkUI();
+}
+
+function updateSlisSearchBulkUI() {
+    const btnHeader = document.getElementById('btn-update-selected-slis-search');
+    const headerCountEl = document.getElementById('slis-search-selected-count');
+    const fab = document.getElementById('slis-search-floating-bar');
+    const fabCountEl = document.getElementById('slis-search-fab-selected-count');
+    const fabBtnText = document.getElementById('slis-search-fab-btn-text');
+
+    const pendingDiagEids = Object.keys(slisSelectedDiagMap).map(Number);
+    const combinedSet = new Set([...selectedSlisSearchExams, ...pendingDiagEids]);
+
+    const count = combinedSet.size;
+    if (headerCountEl) headerCountEl.textContent = count;
+    if (btnHeader) btnHeader.style.display = count > 0 ? 'inline-flex' : 'none';
+
+    if (fabCountEl) fabCountEl.textContent = `${selectedSlisSearchExams.size} επιλεγμένα`;
+    if (fab) {
+        fab.style.display = selectedSlisSearchExams.size > 0 ? 'flex' : 'none';
+    }
+
+    if (selectedSlisSearchExams.size === 0 && fabBtnText) {
+        fabBtnText.textContent = 'Επιλέξτε διαγνώστη...';
+    }
+}
+
+function clearSlisSearchSelection() {
+    selectedSlisSearchExams.clear();
+    const masterCb = document.getElementById('slis-search-select-all');
+    if (masterCb) masterCb.checked = false;
+    document.querySelectorAll('.slis-search-row-checkbox').forEach(cb => cb.checked = false);
+    const fabBtnText = document.getElementById('slis-search-fab-btn-text');
+    if (fabBtnText) fabBtnText.textContent = 'Επιλέξτε διαγνώστη...';
+    updateSlisSearchBulkUI();
+}
 
 function initSlisSearchDatePicker() {
     slisSearchDateRangePicker = flatpickr("#slis-search-date-range", {
@@ -3082,7 +3272,7 @@ function clearSlisSearchForm() {
     if (tbody) {
         tbody.innerHTML = `
             <tr>
-                <td colspan="8" style="text-align: center; color: #ffffff; font-weight: 500; padding: 24px;">
+                <td colspan="9" style="text-align: center; color: #ffffff; font-weight: 500; padding: 24px;">
                     Συμπληρώστε τα πεδία αναζήτησης και πατήστε "Αναζήτηση".
                 </td>
             </tr>
@@ -3090,6 +3280,12 @@ function clearSlisSearchForm() {
     }
     const countEl = document.getElementById('slis-search-count');
     if (countEl) countEl.textContent = '(0)';
+    selectedSlisSearchExams.clear();
+    slisSelectedDiagMap = {};
+    slisSearchSortConfig = { key: null, direction: null };
+    rawSlisSearchResults = [];
+    updateSlisSearchSortIcons();
+    updateSlisSearchBulkUI();
 }
 
 async function performSlisSearch() {
@@ -3130,7 +3326,8 @@ async function performSlisSearch() {
             diagnostician_query: diagnosticianQuery || null,
         });
 
-        renderSlisSearchResults(results || []);
+        rawSlisSearchResults = results || [];
+        sortAndRenderSlisSearchResults();
     } catch (err) {
         showToast(`Σφάλμα αναζήτησης Slis: ${err.message}`, 'error');
     } finally {
@@ -3141,30 +3338,229 @@ async function performSlisSearch() {
     }
 }
 
+function toggleSlisSearchFabDropdown(event) {
+    event.stopPropagation();
+    const menu = document.getElementById('slis-search-fab-dropdown-menu');
+    if (!menu) return;
+    const isCurrentlyOpen = menu.style.display === 'block';
+    menu.style.display = isCurrentlyOpen ? 'none' : 'block';
+
+    if (!isCurrentlyOpen) {
+        populateSlisSearchFabDiagnosticians();
+    }
+}
+
+let slisFabEligibilityCacheKey = null;
+let slisFabEligibilityMap = new Map();
+let slisFabEligibilityLoading = false;
+
+async function fetchSlisFabEligibility(selectedExamIds, cacheKey) {
+    if (!selectedExamIds || selectedExamIds.length === 0) return;
+    slisFabEligibilityLoading = true;
+    slisFabEligibilityCacheKey = cacheKey;
+    populateSlisSearchFabDiagnosticians();
+
+    try {
+        const res = await apiCall('/assignments/bulk-eligible-diagnosticians', 'POST', { exam_ids: selectedExamIds });
+        if (res && res.diagnosticians) {
+            const map = new Map();
+            res.diagnosticians.forEach(item => {
+                map.set(item.diagnostician_id, {
+                    isEligible: item.is_eligible,
+                    rejectReason: item.reject_reason
+                });
+            });
+            slisFabEligibilityMap = map;
+        }
+    } catch (err) {
+        console.error("Failed to fetch SLIS FAB eligibility", err);
+    } finally {
+        slisFabEligibilityLoading = false;
+        populateSlisSearchFabDiagnosticians();
+    }
+}
+
+function filterSlisSearchFabDiagnosticians() {
+    populateSlisSearchFabDiagnosticians();
+}
+
+function populateSlisSearchFabDiagnosticians() {
+    const list = document.getElementById('slis-search-fab-diag-list');
+    if (!list) return;
+
+    const input = document.getElementById('slis-search-fab-diag-search');
+    const search = normalizeGreek(input ? input.value : '');
+
+    const selectedExamIds = Array.from(selectedSlisSearchExams);
+    const cacheKey = selectedExamIds.sort().join(',');
+
+    if (selectedExamIds.length > 0 && slisFabEligibilityCacheKey !== cacheKey && !slisFabEligibilityLoading) {
+        fetchSlisFabEligibility(selectedExamIds, cacheKey);
+    }
+
+    const isLoading = slisFabEligibilityLoading;
+
+    // Fallback checks for modalities of selected exams while API loads
+    const selectedExams = (rawSlisSearchResults || []).filter(e => selectedSlisSearchExams.has(Number(e.exammoreid)));
+    const hasCt = selectedExams.some(e => {
+        const mod = (e.modality || e.category || '').toUpperCase();
+        return mod.includes('CT');
+    });
+    const hasMri = selectedExams.some(e => {
+        const mod = (e.modality || e.category || '').toUpperCase();
+        return mod.includes('MRI') || mod.includes('MRA');
+    });
+
+    const processedDiags = diagnosticians.map(d => {
+        let isEligible = true;
+        let rejectReason = '';
+        let isCalculating = false;
+
+        if (slisFabEligibilityCacheKey === cacheKey && slisFabEligibilityMap.has(d.id)) {
+            const info = slisFabEligibilityMap.get(d.id);
+            isEligible = info.isEligible;
+            rejectReason = info.rejectReason || '';
+        } else {
+            if (!d.available) {
+                isEligible = false;
+                rejectReason = 'Μη διαθέσιμος';
+            } else if (hasCt && !d.can_ct) {
+                isEligible = false;
+                rejectReason = 'Δεν αξιολογεί CTs';
+            } else if (hasMri && !d.can_mri) {
+                isEligible = false;
+                rejectReason = 'Δεν αξιολογεί MRIs';
+            } else {
+                const quota = getTodayQuota(d);
+                if (quota === 0) {
+                    isEligible = false;
+                    rejectReason = 'Μη διαθέσιμος';
+                } else if (quota !== 999 && d.current_day_count >= quota) {
+                    isEligible = false;
+                    rejectReason = 'Έχει συμπληρώσει το ημερήσιο όριο';
+                }
+            }
+            if (isLoading && isEligible) {
+                isCalculating = true;
+                rejectReason = '⏳ Υπολογισμός...';
+            }
+        }
+
+        return { ...d, isEligible, rejectReason, isCalculating };
+    });
+
+    // Sort: Fully eligible ones first, then calculating, then non-eligible, then alphabetical
+    processedDiags.sort((a, b) => {
+        if (a.isEligible && !a.isCalculating && (!b.isEligible || b.isCalculating)) return -1;
+        if ((!a.isEligible || a.isCalculating) && b.isEligible && !b.isCalculating) return 1;
+        return a.name.localeCompare(b.name, 'el');
+    });
+
+    const filtered = search
+        ? processedDiags.filter(d => normalizeGreek(d.name).includes(search))
+        : processedDiags;
+
+    if (filtered.length === 0) {
+        list.innerHTML = `<div style="padding: 10px; text-align: center; color: var(--text-tertiary); font-size: 12px;">Δεν βρέθηκαν ακτινοδιαγνώστες</div>`;
+        return;
+    }
+
+    let headerHtml = '';
+    if (isLoading) {
+        headerHtml = `
+            <div style="padding: 6px 10px; background: rgba(59, 130, 246, 0.12); border-radius: 6px; margin-bottom: 6px; font-size: 11px; color: var(--accent-primary, #3B82F6); display: flex; align-items: center; gap: 6px; font-weight: 500; border: 1px solid rgba(59, 130, 246, 0.25);">
+                <span class="global-spinner-sm"></span> ⏳ Υπολογισμός εξειδικεύσεων & ορίων σε εξέλιξη...
+            </div>
+        `;
+    }
+
+    list.innerHTML = headerHtml + filtered.map(d => {
+        const quota = getTodayQuota(d);
+        const quotaStr = quota === 999 ? '∞' : quota;
+        const isError = !d.isEligible && !d.isCalculating;
+        const isCalc = d.isCalculating;
+
+        let style = 'padding: 8px 10px; cursor: pointer; border-radius: 6px; font-size: 12px; transition: background 0.15s; color: var(--text-primary); border-bottom: 1px solid var(--border-color);';
+        let reasonHtml = '';
+
+        if (isError) {
+            style = 'padding: 8px 10px; cursor: pointer; border-radius: 6px; font-size: 12px; background: rgba(239, 68, 68, 0.12); color: #ef4444; font-weight: 600; border-bottom: 1px solid rgba(239, 68, 68, 0.25);';
+            reasonHtml = `<span style="display: block; font-size: 10px; opacity: 0.85; margin-top: 2px;">${escapeHtmlFull(d.rejectReason || 'Μη διαθέσιμος')}</span>`;
+        } else if (isCalc) {
+            style = 'padding: 8px 10px; cursor: pointer; border-radius: 6px; font-size: 12px; background: rgba(59, 130, 246, 0.08); color: var(--text-primary); border-bottom: 1px solid var(--border-color);';
+            reasonHtml = `<span style="display: block; font-size: 10px; color: var(--accent-primary, #3B82F6); margin-top: 2px; font-weight: 500;">⏳ Υπολογισμός εξειδίκευσης...</span>`;
+        }
+
+        return `
+            <div class="fab-diag-item" onclick="bulkSetSlisSearchDiagnostician(${d.id}, '${escapeHtml(d.name)}')" style="${style}">
+                <div style="display: flex; justify-content: space-between; align-items: center; gap: 8px;">
+                    <span style="font-weight: 600;">${escapeHtmlFull(d.name)}</span>
+                    <span style="font-size: 11px; opacity: ${isError ? '0.9' : '0.6'};">(${d.current_day_count}/${quotaStr})</span>
+                </div>
+                ${reasonHtml}
+            </div>
+        `;
+    }).join('');
+}
+
+function bulkSetSlisSearchDiagnostician(diagId, diagName) {
+    const menu = document.getElementById('slis-search-fab-dropdown-menu');
+    if (menu) menu.style.display = 'none';
+
+    if (selectedSlisSearchExams.size === 0) {
+        showToast('Δεν έχετε επιλέξει εξετάσεις', 'warning');
+        return;
+    }
+
+    const fabBtnText = document.getElementById('slis-search-fab-btn-text');
+    if (fabBtnText) fabBtnText.textContent = diagName;
+
+    selectedSlisSearchExams.forEach(eid => {
+        slisSelectedDiagMap[eid] = { id: diagId, name: diagName };
+
+        const btnText = document.getElementById(`slis-dropdown-text-${eid}`);
+        if (btnText) btnText.textContent = diagName;
+
+        const previewDiv = document.getElementById(`reassign-preview-${eid}`);
+        const previewName = document.getElementById(`reassign-preview-name-${eid}`);
+        if (previewDiv && previewName) {
+            previewName.textContent = diagName;
+            previewDiv.style.display = 'inline-block';
+        }
+    });
+
+    showToast(`✅ Ορίστηκε ${diagName} για ${selectedSlisSearchExams.size} επιλεγμένες εξετάσεις`, 'success');
+    updateSlisSearchBulkUI();
+}
+
 function renderSlisSearchResults(results) {
     currentSlisSearchResults = results || [];
     const tbody = document.getElementById('tbody-slis-search');
     const countEl = document.getElementById('slis-search-count');
     if (countEl) countEl.textContent = `(${results.length})`;
 
+    const masterCb = document.getElementById('slis-search-select-all');
+    if (masterCb) masterCb.checked = false;
+
     if (!tbody) return;
 
     if (!results || results.length === 0) {
         tbody.innerHTML = `
             <tr>
-                <td colspan="8" style="text-align: center; color: #ffffff; font-weight: 500; padding: 24px;">
+                <td colspan="9" style="text-align: center; color: #ffffff; font-weight: 500; padding: 24px;">
                     Δεν βρέθηκαν εξετάσεις με τα επιλεγμένα κριτήρια.
                 </td>
             </tr>
         `;
+        updateSlisSearchBulkUI();
         return;
     }
 
-    const diagOptions = diagnosticians.map(d => 
-        `<option value="${d.id}">${escapeHtmlFull(d.name)}</option>`
-    ).join('');
-
     tbody.innerHTML = results.map(exam => {
+        const eid = exam.exammoreid;
+        const isSelectedRow = selectedSlisSearchExams.has(Number(eid));
+        const pendingSelection = slisSelectedDiagMap[eid];
+
         const isPendingSlis = !!exam.pending_slis_update || exam.status === 'pending_slis_update';
         const isSynced = exam.status === 'synced' || (!isPendingSlis && exam.diagnostis !== null && exam.diagnostis !== undefined && String(exam.diagnostis).trim() !== '' && String(exam.diagnostis).trim() !== '0');
 
@@ -3190,9 +3586,16 @@ function renderSlisSearchResults(results) {
             diagHtml = `<span class="badge" style="background: rgba(245, 158, 11, 0.18); color: #f59e0b; border: 1px solid rgba(245, 158, 11, 0.4); font-weight: 600; padding: 4px 8px;">⏳ Εκκρεμεί</span>`;
         }
 
+        const dropdownBtnText = pendingSelection ? escapeHtmlFull(pendingSelection.name) : 'Επιλέξτε διαγνώστη...';
+        const previewDisplay = pendingSelection ? 'inline-block' : 'none';
+        const previewDiagName = pendingSelection ? escapeHtmlFull(pendingSelection.name) : '';
+
         return `
             <tr>
-                <td style="font-weight: 600;">#${escapeHtmlFull(exam.extracode || exam.exammoreid)}</td>
+                <td class="frozen-col-1" style="width: 44px; text-align: center;">
+                    <input type="checkbox" class="slis-search-row-checkbox" value="${eid}" onchange="toggleSelectSlisSearchExam(${eid})" ${isSelectedRow ? 'checked' : ''}>
+                </td>
+                <td class="frozen-col-2 extracode-cell" style="font-weight: 600;">#${escapeHtmlFull(exam.extracode || eid)}</td>
                 <td>
                     <div style="font-weight: 600;">${escapeHtmlFull(exam.patient_name || '—')}</div>
                     <div style="font-size: 11px; color: var(--text-tertiary);">ID: ${escapeHtmlFull(exam.patient_id || '—')}</div>
@@ -3210,32 +3613,31 @@ function renderSlisSearchResults(results) {
                 <td>
                     <div style="display: flex; flex-direction: column; gap: 6px;">
                         <div style="display: flex; align-items: center; gap: 6px;">
-                            <div class="slis-reassign-dropdown-wrap" id="slis-dropdown-wrap-${exam.exammoreid}" style="position: relative; display: inline-block;">
-                                <button class="btn btn-secondary btn-sm" id="slis-dropdown-btn-${exam.exammoreid}" type="button" onclick="toggleSlisReassignDropdown(event, ${exam.exammoreid})" style="font-size: 12px; padding: 6px 10px; border-radius: 6px; display: flex; align-items: center; gap: 6px; background: var(--bg-tertiary); color: var(--text-primary); border: 1px solid var(--border-color); white-space: nowrap; min-width: 190px; justify-content: space-between;">
-                                    <span id="slis-dropdown-text-${exam.exammoreid}">Επιλέξτε διαγνώστη...</span>
+                            <div class="slis-reassign-dropdown-wrap" id="slis-dropdown-wrap-${eid}" style="position: relative; display: inline-block;">
+                                <button class="btn btn-secondary btn-sm" id="slis-dropdown-btn-${eid}" type="button" onclick="toggleSlisReassignDropdown(event, ${eid})" style="font-size: 12px; padding: 6px 10px; border-radius: 6px; display: flex; align-items: center; gap: 6px; background: var(--bg-tertiary); color: var(--text-primary); border: 1px solid var(--border-color); white-space: nowrap; min-width: 190px; justify-content: space-between;">
+                                    <span id="slis-dropdown-text-${eid}">${dropdownBtnText}</span>
                                     <span style="font-size: 10px; opacity: 0.7;">▲</span>
                                 </button>
-                                <div class="slis-dropdown-menu" id="slis-dropdown-menu-${exam.exammoreid}" style="display: none; position: absolute; right: 0; bottom: 100%; margin-bottom: 6px; width: 270px; background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 8px; box-shadow: 0 -12px 28px rgba(0,0,0,0.6); z-index: 1000; padding: 8px;" onclick="event.stopPropagation()">
-                                    <input type="text" id="slis-diag-search-${exam.exammoreid}" class="form-input" placeholder="🔍 Αναζήτηση..." style="width: 100%; padding: 6px 10px; font-size: 12px; margin-bottom: 8px;" oninput="filterSlisReassignDiagnosticians(${exam.exammoreid})">
-                                    <div id="slis-diag-list-${exam.exammoreid}" style="max-height: 200px; overflow-y: auto; display: flex; flex-direction: column; gap: 2px;">
+                                <div class="slis-dropdown-menu" id="slis-dropdown-menu-${eid}" style="display: none; position: absolute; right: 0; bottom: 100%; margin-bottom: 6px; width: 270px; background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 8px; box-shadow: 0 -12px 28px rgba(0,0,0,0.6); z-index: 1000; padding: 8px;" onclick="event.stopPropagation()">
+                                    <input type="text" id="slis-diag-search-${eid}" class="form-input" placeholder="🔍 Αναζήτηση..." style="width: 100%; padding: 6px 10px; font-size: 12px; margin-bottom: 8px;" oninput="filterSlisReassignDiagnosticians(${eid})">
+                                    <div id="slis-diag-list-${eid}" style="max-height: 200px; overflow-y: auto; display: flex; flex-direction: column; gap: 2px;">
                                     </div>
                                 </div>
                             </div>
-                            <button class="btn btn-slis-update btn-sm" onclick="triggerSlisReassign(${exam.exammoreid})" style="white-space: nowrap;">
+                            <button class="btn btn-slis-update btn-sm" onclick="triggerSlisReassign(${eid})" style="white-space: nowrap;">
                                 Ενημέρωση Slis
                             </button>
                         </div>
-                        <div id="reassign-preview-${exam.exammoreid}" style="display: none; font-size: 11px; padding: 3px 8px; border-radius: 4px; background: rgba(99, 102, 241, 0.15); color: #a5b4fc; border: 1px solid rgba(99, 102, 241, 0.35); font-weight: 600; width: fit-content;">
-                            👉 Επιλογή για Slis: <span id="reassign-preview-name-${exam.exammoreid}"></span>
+                        <div id="reassign-preview-${eid}" style="display: ${previewDisplay}; font-size: 11px; padding: 3px 8px; border-radius: 4px; background: rgba(99, 102, 241, 0.15); color: #a5b4fc; border: 1px solid rgba(99, 102, 241, 0.35); font-weight: 600; width: fit-content;">
+                            👉 Επιλογή για Slis: <span id="reassign-preview-name-${eid}">${previewDiagName}</span>
                         </div>
                     </div>
                 </td>
             </tr>
         `;
     }).join('');
+    updateSlisSearchBulkUI();
 }
-
-let slisSelectedDiagMap = {};
 
 function toggleSlisReassignDropdown(event, exammoreid) {
     event.stopPropagation();
@@ -3476,14 +3878,88 @@ async function triggerSlisReassign(exammoreid) {
         if (result && result.success) {
             showToast(`✅ Η εξέταση #${exammoreid} ενημερώθηκε επιτυχώς στο Slis σε ${diagName}!`, 'success');
             delete slisSelectedDiagMap[exammoreid];
-            performSlisSearch(); // Refresh search results
-            loadPendingExams();
-            loadAssignedExams();
+            selectedSlisSearchExams.delete(Number(exammoreid));
+            await performSlisSearch(); // Refresh search results while retaining choices on other rows
+            await Promise.all([
+                loadPendingExams(),
+                loadAssignedExams(),
+                loadDiagnosticians(),
+                loadDashboard()
+            ]);
         } else {
             showToast(`❌ Αποτυχία ενημέρωσης Slis: ${result?.error || 'Άγνωστο σφάλμα'}`, 'error');
         }
     } catch (err) {
         showToast(`Σφάλμα: ${err.message}`, 'error');
+    }
+}
+
+async function triggerBatchSlisReassign() {
+    const pendingDiagEids = Object.keys(slisSelectedDiagMap).map(Number);
+    const combinedEids = Array.from(new Set([...selectedSlisSearchExams, ...pendingDiagEids]));
+
+    if (combinedEids.length === 0) {
+        showToast('Επιλέξτε εξετάσεις ή διαγνώστες για ενημέρωση', 'warning');
+        return;
+    }
+
+    const missingDiags = combinedEids.filter(eid => !slisSelectedDiagMap[eid] || !slisSelectedDiagMap[eid].id);
+    if (missingDiags.length > 0) {
+        showToast(`Παρακαλώ επιλέξτε διαγνώστη για όλες τις επιλεγμένες εξετάσεις (${missingDiags.length} χωρίς επιλογή)`, 'warning');
+        return;
+    }
+
+    const btn = document.getElementById('btn-update-selected-slis-search');
+    const originalHTML = btn ? btn.innerHTML : '';
+    if (btn) {
+        btn.innerHTML = '<span class="loading-spinner"></span> Ενημέρωση...';
+        btn.disabled = true;
+    }
+
+    let successCount = 0;
+    let failCount = 0;
+
+    try {
+        for (const eid of combinedEids) {
+            const sel = slisSelectedDiagMap[eid];
+            try {
+                const res = await apiCall('/slis/reassign', 'POST', {
+                    exammoreid: eid,
+                    diagnostician_id: sel.id,
+                    diagnostician_name: sel.name
+                });
+                if (res && res.success) {
+                    successCount++;
+                    delete slisSelectedDiagMap[eid];
+                    selectedSlisSearchExams.delete(eid);
+                } else {
+                    failCount++;
+                }
+            } catch (err) {
+                failCount++;
+            }
+        }
+
+        if (successCount > 0) {
+            showToast(`✅ Ενημερώθηκαν ${successCount} εξετάσεις επιτυχώς στο Slis!`, 'success');
+        }
+        if (failCount > 0) {
+            showToast(`⚠️ Αποτυχία ενημέρωσης για ${failCount} εξετάσεις`, 'error');
+        }
+
+        await performSlisSearch();
+        await Promise.all([
+            loadPendingExams(),
+            loadAssignedExams(),
+            loadDiagnosticians(),
+            loadDashboard()
+        ]);
+    } finally {
+        if (btn) {
+            btn.innerHTML = originalHTML;
+            btn.disabled = false;
+        }
+        updateSlisSearchBulkUI();
     }
 }
 

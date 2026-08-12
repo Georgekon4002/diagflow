@@ -348,8 +348,14 @@ def push_exam_to_slis(exammoreid: int, diagnostician_id: int, diagnostician_name
                 conn.commit()
 
         # Update local SQLite slis_exams cache in both production and mock mode so pending queries immediately see non-null diagnostis
+        cat = None
+        extra = None
         try:
             con = _get_db()
+            row = con.execute("SELECT category, extracode FROM slis_exams WHERE exammoreid = ?", (exammoreid,)).fetchone()
+            if row:
+                cat = row["category"] if "category" in row.keys() else None
+                extra = str(row["extracode"]) if ("extracode" in row.keys() and row["extracode"]) else None
             con.execute(
                 "UPDATE slis_exams SET diagnostis = ?, code = ?, slis_synced_at = ? WHERE exammoreid = ?",
                 (diagnostician_id, diagnostician_name, now_iso, exammoreid)
@@ -360,6 +366,7 @@ def push_exam_to_slis(exammoreid: int, diagnostician_id: int, diagnostician_name
             logger.warning("failed_to_update_local_slis_cache", exammoreid=exammoreid, error=str(cache_exc))
 
         cfg_db.mark_local_assignment_synced(exammoreid, now_iso)
+        cfg_db.log_assignment(exammoreid, diagnostician_id, now_iso, cat, extra)
 
         logger.info(
             "push_to_slis_success",

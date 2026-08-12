@@ -71,6 +71,7 @@
                     <button class="btn btn-secondary btn-sm" onclick="adminLogout()">Έξοδος</button>
                 </div>
             </div>
+        </div>
     </header>
 
     <!-- ─── Global Background Engine Activity Banner ─── -->
@@ -114,6 +115,39 @@
                         </div>
                     </div>
                     <button class="btn btn-ghost" onclick="clearUnifiedSelection()" style="margin-left: 8px;">
+                        Ακύρωση
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- ─── SLIS Search Floating Action Bar (Bulk Actions) ─── -->
+        <div id="slis-search-floating-bar" class="floating-action-bar" style="display: none;">
+            <div class="fab-content">
+                <span id="slis-search-fab-selected-count" class="fab-count">0 επιλεγμένα</span>
+
+                <div class="fab-actions">
+                    <div class="fab-dropdown-wrap" style="position: relative; display: inline-block;">
+                        <button class="btn btn-secondary" onclick="toggleSlisSearchFabDropdown(event)">
+                            <span id="slis-search-fab-btn-text">Επιλέξτε διαγνώστη...</span> <span style="font-size: 10px;">▼</span>
+                        </button>
+                        <div id="slis-search-fab-dropdown-menu" class="fab-dropdown-menu"
+                            style="display: none; position: absolute; top: 100%; right: 0; background: var(--bg-tertiary); border: 1px solid var(--border-color); border-radius: 8px; padding: 8px; margin-top: 6px; box-shadow: 0 8px 24px rgba(0,0,0,0.4); z-index: 10000; min-width: 220px;">
+                            <input type="text" id="slis-search-fab-diag-search" placeholder="🔍 Αναζήτηση..." class="search-input"
+                                style="width: 100%; margin-bottom: 8px; padding: 6px; font-size: 12px;" onclick="event.stopPropagation()"
+                                oninput="filterSlisSearchFabDiagnosticians()">
+                            <div id="slis-search-fab-diag-list" style="max-height: 200px; overflow-y: auto; display: flex; flex-direction: column; gap: 2px;">
+                                <!-- Populated dynamically -->
+                            </div>
+                        </div>
+                    </div>
+                    <button class="btn btn-slis-update" id="btn-update-selected-slis-search" onclick="triggerBatchSlisReassign()">
+                        <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                            <path d="M2 7h10M8 3l4 4-4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+                        </svg>
+                        Ενημέρωση στο Slis
+                    </button>
+                    <button class="btn btn-ghost" onclick="clearSlisSearchSelection()" style="margin-left: 8px;">
                         Ακύρωση
                     </button>
                 </div>
@@ -456,27 +490,50 @@
 
             <!-- Results Section -->
             <div id="slis-search-results-container">
-                <div class="section-title" style="margin-bottom: 12px;">
-                    <h3>Αποτελέσματα Αναζήτησης <span id="slis-search-count" class="section-count">(0)</span></h3>
+                <div class="section-title" style="margin-bottom: 12px; display: flex; align-items: center; justify-content: space-between;">
+                    <h3 style="margin: 0;">Αποτελέσματα Αναζήτησης <span id="slis-search-count" class="section-count">(0)</span></h3>
+                    <button class="btn btn-slis-update" id="btn-update-selected-slis-search" onclick="triggerBatchSlisReassign()" style="display: none;">
+                        <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                            <path d="M2 7h10M8 3l4 4-4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+                        </svg>
+                        Ενημέρωση επιλεγμένων στο Slis (<span id="slis-search-selected-count">0</span>)
+                    </button>
                 </div>
 
                 <div class="exams-table-container">
                     <table class="exams-table">
                         <thead>
                             <tr>
-                                <th>Εντολή</th>
-                                <th>Ασθενής</th>
-                                <th>Ημερομηνία</th>
-                                <th>Μονάδα</th>
-                                <th>Εξέταση</th>
-                                <th>Παραπέμπων Ιατρός</th>
-                                <th>Διαγνώστης Slis</th>
+                                <th class="frozen-col-1" style="width: 44px; text-align: center;">
+                                    <input type="checkbox" id="slis-search-select-all" onclick="toggleSelectAllSlisSearch(this)">
+                                </th>
+                                <th class="frozen-col-2" style="cursor: pointer;" onclick="handleSlisSearchSort('extracode')">
+                                    Εντολή <span id="sort-icon-extracode-slis" style="opacity:0.5; font-size:10px;">↕️</span>
+                                </th>
+                                <th style="cursor: pointer;" onclick="handleSlisSearchSort('patient')">
+                                    Ασθενής <span id="sort-icon-patient-slis" style="opacity:0.5; font-size:10px;">↕️</span>
+                                </th>
+                                <th style="cursor: pointer;" onclick="handleSlisSearchSort('date')">
+                                    Ημερομηνία <span id="sort-icon-date-slis" style="opacity:0.5; font-size:10px;">↕️</span>
+                                </th>
+                                <th style="cursor: pointer;" onclick="handleSlisSearchSort('lab')">
+                                    Μονάδα <span id="sort-icon-lab-slis" style="opacity:0.5; font-size:10px;">↕️</span>
+                                </th>
+                                <th style="cursor: pointer;" onclick="handleSlisSearchSort('exam')">
+                                    Εξέταση <span id="sort-icon-exam-slis" style="opacity:0.5; font-size:10px;">↕️</span>
+                                </th>
+                                <th style="cursor: pointer;" onclick="handleSlisSearchSort('doctor')">
+                                    Παραπέμπων Ιατρός <span id="sort-icon-doctor-slis" style="opacity:0.5; font-size:10px;">↕️</span>
+                                </th>
+                                <th style="cursor: pointer;" onclick="handleSlisSearchSort('diagnostician')">
+                                    Διαγνώστης Slis <span id="sort-icon-diagnostician-slis" style="opacity:0.5; font-size:10px;">↕️</span>
+                                </th>
                                 <th>Ενέργειες</th>
                             </tr>
                         </thead>
                         <tbody id="tbody-slis-search">
                             <tr>
-                                <td colspan="8"
+                                <td colspan="9"
                                     style="text-align: center; color: #ffffff; font-weight: 500; padding: 24px;">
                                     Συμπληρώστε τα πεδία αναζήτησης και πατήστε "Αναζήτηση".
                                 </td>
@@ -651,7 +708,7 @@
 
     <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
     <script src="https://cdn.jsdelivr.net/npm/flatpickr/dist/l10n/gr.js"></script>
-    <script src="js/app.js"></script>
+    <script src="js/app.js?v=1.0.1"></script>
 </body>
 
 </html>

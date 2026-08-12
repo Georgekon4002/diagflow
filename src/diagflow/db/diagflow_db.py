@@ -658,25 +658,30 @@ def get_all_local_assignments() -> dict[int, dict]:
         return {r["exammoreid"]: _row_to_dict(r) for r in rows}
 
 def get_daily_assignment_counts() -> dict[int, dict]:
-    with _conn() as con:
-        # We join with slis_exams to get the category (modality) for MRI/CT counts.
-        rows = con.execute(
-            """
-            SELECT diagnostician_id,
-                   COUNT(*) as total_cnt,
-                   SUM(CASE WHEN UPPER(modality) = 'MRI' THEN 1 ELSE 0 END) as mri_cnt,
-                   SUM(CASE WHEN UPPER(modality) = 'CT' THEN 1 ELSE 0 END) as ct_cnt
-            FROM assignment_log
-            WHERE substr(assigned_at, 1, 10) = date('now', 'localtime')
-            GROUP BY diagnostician_id
-            """
-        ).fetchall()
-    return {r["diagnostician_id"]: {"total": r["total_cnt"], "mri": r["mri_cnt"] or 0, "ct": r["ct_cnt"] or 0} for r in rows}
+    dash_data = get_dashboard_data()
+    counts = {}
+    for d in dash_data:
+        did = d["diagnostician_id"]
+        total = len(d.get("assigned_exam_ids", []))
+        mod_counts = d.get("modality_counts", {})
+        mri = mod_counts.get("MRI", 0) + mod_counts.get("MRA", 0)
+        ct = mod_counts.get("CT", 0)
+        counts[did] = {"total": total, "mri": mri, "ct": ct}
+    return counts
 
 def delete_local_assignment(exammoreid: int) -> bool:
     with _conn() as con:
         cur = con.execute("DELETE FROM local_assignments WHERE exammoreid = ?", (exammoreid,))
         return cur.rowcount > 0
+
+def log_assignment(exammoreid: int, diagnostician_id: int, assigned_at: str | None = None, modality: str | None = None, extracode: str | None = None) -> None:
+    if not assigned_at:
+        assigned_at = datetime.now().isoformat()
+    with _conn() as con:
+        con.execute(
+            "INSERT OR REPLACE INTO assignment_log (exammoreid, diagnostician_id, assigned_at, modality, extracode) VALUES (?, ?, ?, ?, ?)",
+            (exammoreid, diagnostician_id, assigned_at, modality, extracode),
+        )
 
 def mark_local_assignment_synced(exammoreid: int, synced_at: str | None = None) -> bool:
     return delete_local_assignment(exammoreid)
@@ -724,28 +729,41 @@ def get_dashboard_data() -> list[dict]:
 
         today_str = date.today().isoformat()
 
-        # 1. Fetch from local_assignments (ONLY FOR TODAY)
+        # 1. Fetch from local_assignments
+        local_assignment_map = {}
         local_rows = con.execute(
             """
-            SELECT diagnostician_id, exammoreid, extracode
+            SELECT diagnostician_id, exammoreid, extracode, assigned_at
             FROM local_assignments
-            WHERE substr(assigned_at, 1, 10) = ?
-            """,
-            (today_str,)
+            """
         ).fetchall()
+        for r in local_rows:
+            local_assignment_map[r["exammoreid"]] = {
+                "diagnostician_id": r["diagnostician_id"],
+                "extracode": r["extracode"],
+                "assigned_at": r["assigned_at"]
+            }
 
-        # 2. Fetch from assignment_log (ONLY FOR TODAY)
+        # 2. Fetch from assignment_log (for today's assignments)
+        log_assignment_map = {}
         log_rows = con.execute(
             """
-            SELECT diagnostician_id, exammoreid, extracode, modality as category
+            SELECT diagnostician_id, exammoreid, extracode, modality as category, assigned_at
             FROM assignment_log
             WHERE substr(assigned_at, 1, 10) = ?
             """,
             (today_str,)
         ).fetchall()
+        for r in log_rows:
+            log_assignment_map[r["exammoreid"]] = {
+                "diagnostician_id": r["diagnostician_id"],
+                "extracode": r["extracode"],
+                "category": r["category"],
+                "assigned_at": r["assigned_at"]
+            }
 
-    # 3. Fetch from mock_slis.db (assigned exams for TODAY only)
-    slis_rows = []
+    # 3. Fetch from mock_slis.db
+    slis_assignment_map = {}
     exam_details = {}
     try:
         from diagflow.services.assignment import _get_mock_db
@@ -760,48 +778,77 @@ def get_dashboard_data() -> list[dict]:
             vdate = str(r["visitdate"])[:10] if (r.keys() and "visitdate" in r.keys() and r["visitdate"]) else None
             synced_at = str(r["slis_synced_at"])[:10] if (has_synced_col and "slis_synced_at" in r.keys() and r["slis_synced_at"]) else None
             
-            # Count towards today's dashboard ONLY if assigned AND (synced today OR visit date is today)
-            is_today = (synced_at == today_str) if synced_at else (vdate == today_str)
-            if r["diagnostis"] is not None and is_today:
-                slis_rows.append({"diagnostician_id": r["diagnostis"], "exammoreid": eid, "extracode": r["extracode"], "category": r["category"]})
+            raw_diag = r["diagnostis"]
+            if raw_diag is not None and str(raw_diag).strip() != "" and str(raw_diag).strip() != "0" and str(raw_diag).strip().lower() != "none":
+                try:
+                    d_id = int(raw_diag)
+                except Exception:
+                    d_id = raw_diag
+                slis_assignment_map[eid] = {
+                    "diagnostician_id": d_id,
+                    "extracode": r["extracode"],
+                    "category": r["category"],
+                    "vdate": vdate,
+                    "synced_at": synced_at
+                }
         con_slis.close()
     except Exception:
         pass
 
-    seen_exam_ids = set()
+    all_assigned_eids = set(local_assignment_map.keys()) | set(slis_assignment_map.keys()) | set(log_assignment_map.keys())
 
-    def process_record(d_id, exammoreid, extracode=None, category=None):
-        if d_id not in dashboard_map:
-            return
-        if exammoreid and exammoreid in seen_exam_ids:
-            return
-        if exammoreid:
-            seen_exam_ids.add(exammoreid)
-            dashboard_map[d_id]["assigned_exam_ids"].append(exammoreid)
+    for eid in all_assigned_eids:
+        d_id = None
+        extracode = None
+        category = None
+        is_today = False
 
-        if not extracode and exammoreid in exam_details:
-            extracode = exam_details[exammoreid][0]
-        if not category and exammoreid in exam_details:
-            category = exam_details[exammoreid][1]
+        if eid in local_assignment_map:
+            info = local_assignment_map[eid]
+            d_id = info["diagnostician_id"]
+            extracode = info["extracode"]
+            assign_date = str(info["assigned_at"])[:10] if info["assigned_at"] else None
+            is_today = (assign_date == today_str) or (eid in slis_assignment_map and (slis_assignment_map[eid]["synced_at"] == today_str or slis_assignment_map[eid]["vdate"] == today_str))
+        elif eid in slis_assignment_map:
+            info = slis_assignment_map[eid]
+            d_id = info["diagnostician_id"]
+            extracode = info["extracode"]
+            category = info["category"]
+            synced_at = info["synced_at"]
+            vdate = info["vdate"]
+            is_today = (synced_at == today_str) or (vdate == today_str) or (eid in log_assignment_map)
+        elif eid in log_assignment_map:
+            info = log_assignment_map[eid]
+            d_id = info["diagnostician_id"]
+            extracode = info["extracode"]
+            category = info["category"]
+            is_today = True
 
-        order_val = str(extracode).strip() if (extracode is not None and str(extracode).strip() != "") else None
-        if order_val:
-            dashboard_map[d_id]["assigned_orders"].append(order_val)
+        if d_id is not None:
+            try:
+                d_id_int = int(d_id)
+            except Exception:
+                d_id_int = d_id
+        else:
+            d_id_int = None
 
-        mod = (category or "").upper()
-        if mod:
-            if mod not in dashboard_map[d_id]["modality_counts"]:
-                dashboard_map[d_id]["modality_counts"][mod] = 0
-            dashboard_map[d_id]["modality_counts"][mod] += 1
+        if is_today and d_id_int is not None and d_id_int in dashboard_map:
+            dashboard_map[d_id_int]["assigned_exam_ids"].append(eid)
 
-    for r in local_rows:
-        process_record(r["diagnostician_id"], r["exammoreid"], r["extracode"] if "extracode" in r.keys() else None)
+            if not extracode and eid in exam_details:
+                extracode = exam_details[eid][0]
+            if not category and eid in exam_details:
+                category = exam_details[eid][1]
 
-    for r in log_rows:
-        process_record(r["diagnostician_id"], r["exammoreid"], r["extracode"], r["category"])
+            order_val = str(extracode).strip() if (extracode is not None and str(extracode).strip() != "") else None
+            if order_val:
+                dashboard_map[d_id_int]["assigned_orders"].append(order_val)
 
-    for r in slis_rows:
-        process_record(r["diagnostician_id"], r["exammoreid"], r["extracode"], r["category"])
+            mod = category.upper() if isinstance(category, str) else ""
+            if mod:
+                if mod not in dashboard_map[d_id_int]["modality_counts"]:
+                    dashboard_map[d_id_int]["modality_counts"][mod] = 0
+                dashboard_map[d_id_int]["modality_counts"][mod] += 1
 
     return [d for d in dashboard_map.values() if len(d["assigned_exam_ids"]) > 0 or len(d["assigned_orders"]) > 0]
 
