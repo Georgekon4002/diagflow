@@ -47,6 +47,7 @@ CREATE TABLE IF NOT EXISTS slis_exams (
     -- ── Patient ──
     fname           TEXT,           -- Patient first name
     lname           TEXT,           -- Patient last name
+    age             INTEGER,        -- Patient age
 
     -- ── Exam type ──
     examid          INTEGER,        -- Omittable internal ID

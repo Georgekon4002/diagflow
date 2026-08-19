@@ -362,6 +362,7 @@ async def suggest_assignment(
         exam_id=exam_data["exam_id"],
         patient_id=exam_data["patient_id"],
         patient_name=exam_data.get("patient_name", ""),
+        age=exam_data.get("age"),
         modality=exam_data["modality"],
         body_part=exam_data["body_part"],
         exam_code=str(exam_data.get("examnumcode", "")),

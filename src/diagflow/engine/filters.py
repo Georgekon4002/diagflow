@@ -34,6 +34,7 @@ class ExamContext:
     exam_id: str
     patient_id: str
     patient_name: str = ""
+    age: Optional[int] = None
     modality: str = ""  # "CT" or "MRI"
     body_part: str = ""  # e.g., "abdomen", "neuro", "chest", "msk"
     exam_code: str = ""  # Added for skill matching

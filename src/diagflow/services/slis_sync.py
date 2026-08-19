@@ -87,7 +87,7 @@ def pull_from_slis() -> dict:
     Pull exam data from Slis DB or mock DB.
 
     In production (USE_MOCK_SLIS_DB=false):
-      - Executes stored procedure `EXEC getExamsListForPeriod 'YYYY-MM-DD', 'YYYY-MM-DD'`
+      - Executes stored procedure `EXEC getExamsListForPeriod_V1 'YYYY-MM-DD', 'YYYY-MM-DD'`
         for the last 3 days up to today.
       - Filters results to only exams where DIAGNOSTIS IS NULL (unassigned).
       - Clears old mock/non-existent exams in local slis_exams table.
@@ -114,7 +114,7 @@ def pull_from_slis() -> dict:
             logger.info("pulling_real_slis_exams", start=start_str, end=end_str)
 
             with engine.connect() as conn:
-                query = text(f"EXEC getExamsListForPeriod '{start_str}', '{end_str}'")
+                query = text(f"EXEC getExamsListForPeriod_V1 '{start_str}', '{end_str}'")
                 res = conn.execute(query)
                 keys = list(res.keys())
                 raw_rows = [dict(zip(keys, row)) for row in res.fetchall()]
@@ -134,7 +134,9 @@ def pull_from_slis() -> dict:
             cols = [row[1] for row in con.execute("PRAGMA table_info(slis_exams)").fetchall()]
             if "slis_synced_at" not in cols:
                 con.execute("ALTER TABLE slis_exams ADD COLUMN slis_synced_at TEXT DEFAULT NULL")
-                con.commit()
+            if "age" not in cols:
+                con.execute("ALTER TABLE slis_exams ADD COLUMN age INTEGER DEFAULT NULL")
+            con.commit()
 
             # Clean out mock/stale exams that are NOT in the pulled real SLIS exams list
             if pulled_exammoreids:
@@ -162,13 +164,13 @@ def pull_from_slis() -> dict:
                     """
                     INSERT INTO slis_exams (
                         oldexam, oldvisit, oldorder, oldpers, olddiagnostis, aa,
-                        extracode, visitid, demogid, fname, lname, examid,
+                        extracode, visitid, demogid, fname, lname, age, examid,
                         examnumcode, examname, visitdate, labcodeid, laboratoryname,
                         wardid, wcode, wname, diagnostis, personelid, code, name,
                         notes, exammoreid, category
                     ) VALUES (
                         :oldexam, :oldvisit, :oldorder, :oldpers, :olddiagnostis, :aa,
-                        :extracode, :visitid, :demogid, :fname, :lname, :examid,
+                        :extracode, :visitid, :demogid, :fname, :lname, :age, :examid,
                         :examnumcode, :examname, :visitdate, :labcodeid, :laboratoryname,
                         :wardid, :wcode, :wname, :diagnostis, :personelid, :code, :name,
                         :notes, :exammoreid, :category
@@ -179,6 +181,7 @@ def pull_from_slis() -> dict:
                         demogid=excluded.demogid,
                         fname=excluded.fname,
                         lname=excluded.lname,
+                        age=excluded.age,
                         examnumcode=excluded.examnumcode,
                         examname=excluded.examname,
                         visitdate=excluded.visitdate,
@@ -203,6 +206,7 @@ def pull_from_slis() -> dict:
                         "demogid": row_dict.get("demogid"),
                         "fname": row_dict.get("fname"),
                         "lname": row_dict.get("lname"),
+                        "age": int(row_dict["age"]) if row_dict.get("age") is not None and str(row_dict.get("age")).isdigit() else (row_dict.get("age") if isinstance(row_dict.get("age"), int) else None),
                         "examid": row_dict.get("examid"),
                         "examnumcode": row_dict.get("examnumcode"),
                         "examname": row_dict.get("examname"),
@@ -450,7 +454,7 @@ def search_slis_exams(
             from sqlalchemy import create_engine, text
             engine = create_engine(settings.slis_db_connection_string, connect_args={"timeout": 10})
             with engine.connect() as conn:
-                query = text(f"EXEC getExamsListForPeriod '{start_date}', '{end_date}'")
+                query = text(f"EXEC getExamsListForPeriod_V1 '{start_date}', '{end_date}'")
                 res = conn.execute(query)
                 keys = list(res.keys())
                 raw_rows = [dict(zip(keys, r)) for r in res.fetchall()]
@@ -553,6 +557,7 @@ def search_slis_exams(
             "fname": r.get("fname") or "",
             "lname": r.get("lname") or "",
             "patient_name": f"{r.get('fname') or ''} {r.get('lname') or ''}".strip(),
+            "age": r.get("age"),
             "examnumcode": r.get("examnumcode"),
             "examname": r.get("examname") or "",
             "modality": norm_cat,

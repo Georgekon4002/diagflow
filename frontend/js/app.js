@@ -507,6 +507,10 @@ function sortExams(exams) {
                     valA = (a.primaryExam.patient_name || `${a.primaryExam.fname || ''} ${a.primaryExam.lname || ''}`).trim();
                     valB = (b.primaryExam.patient_name || `${b.primaryExam.fname || ''} ${b.primaryExam.lname || ''}`).trim();
                     break;
+                case 'age':
+                    valA = a.primaryExam.age !== null && a.primaryExam.age !== undefined && a.primaryExam.age !== '' ? Number(a.primaryExam.age) : -1;
+                    valB = b.primaryExam.age !== null && b.primaryExam.age !== undefined && b.primaryExam.age !== '' ? Number(b.primaryExam.age) : -1;
+                    break;
                 case 'examcode':
                     valA = a.primaryExam.examnumcode || '';
                     valB = b.primaryExam.examnumcode || '';
@@ -597,6 +601,7 @@ function matchesFilters(exam, search, selectedModalities, selectedLabs, dateFrom
         const haystackRaw = [
             String(exam.extracode || exam.exam_id || ''),
             patName,
+            String(exam.age || ''),
             exam.wname || exam.issuing_doctor_name || '',
             exam.lab_name || exam.laboratoryname || '',
             cleanExamName(exam.examname || exam.exam_title || ''),
@@ -715,7 +720,7 @@ function handleSort(key) {
 }
 
 function updateSortIcons() {
-    const keys = ['extracode', 'date', 'lab', 'patient', 'examcode', 'doctor'];
+    const keys = ['extracode', 'patient', 'age', 'date', 'lab', 'examcode', 'doctor'];
     keys.forEach(k => {
         // Update both pending and assigned icons if they exist
         const iconPending = document.getElementById(`sort-icon-${k}`);
@@ -883,11 +888,13 @@ function renderPendingRows(rawExams) {
         const pamClass = isPammakristos(exam) ? 'pammakristos-row' : '';
         const span = info.groupSize;
 
-        // Grouped columns: Εντολή & Ασθενής (DEMOGID + Patient Name)
+        // Grouped columns: Εντολή & Ασθενής (DEMOGID + Patient Name) + Ηλικία
+        const ageDisplay = exam.age !== null && exam.age !== undefined && exam.age !== '' ? exam.age : '—';
         const groupedOrderPatientCols = info.isGroupHeader ? `
             <td class="extracode-cell frozen-col-2" rowspan="${span}"><span class="extracode-badge">${exam.extracode || exam.exam_id}</span></td>
             <td class="demogid-cell" style="border-left: 1px solid rgba(255, 255, 255, 0.2);" rowspan="${span}">${exam.demogid || exam.patient_id || '—'}</td>
-            <td style="border-right: 1px solid rgba(255, 255, 255, 0.2);" rowspan="${span}">${patientName}</td>` : '';
+            <td rowspan="${span}">${patientName}</td>
+            <td class="age-cell" style="text-align: center; border-right: 1px solid rgba(255, 255, 255, 0.2);" rowspan="${span}">${ageDisplay}</td>` : '';
 
         // Sub-grouped column: Ημερομηνία
         const dateCol = info.dateSpan > 0 ? `
@@ -1114,11 +1121,13 @@ function renderAssignedRows(rawExams) {
         const exammoreid = exam.exammoreid || '';
         const span = info.groupSize;
 
-        // Grouped columns: Εντολή & Ασθενής (DEMOGID + Patient Name)
+        // Grouped columns: Εντολή & Ασθενής (DEMOGID + Patient Name) + Ηλικία
+        const ageDisplay = exam.age !== null && exam.age !== undefined && exam.age !== '' ? exam.age : '—';
         const groupedOrderPatientCols = info.isGroupHeader ? `
             <td class="extracode-cell frozen-col-2" rowspan="${span}"><span class="extracode-badge">${exam.extracode || exam.exam_id}</span></td>
             <td class="demogid-cell" style="border-left: 1px solid rgba(255, 255, 255, 0.2);" rowspan="${span}">${exam.demogid || exam.patient_id || '—'}</td>
-            <td style="border-right: 1px solid rgba(255, 255, 255, 0.2);" rowspan="${span}">${patientName}</td>` : '';
+            <td rowspan="${span}">${patientName}</td>
+            <td class="age-cell" style="text-align: center; border-right: 1px solid rgba(255, 255, 255, 0.2);" rowspan="${span}">${ageDisplay}</td>` : '';
 
         // Sub-grouped column: Ημερομηνία
         const dateCol = info.dateSpan > 0 ? `
@@ -3082,7 +3091,7 @@ function handleSlisSearchSort(key) {
 }
 
 function updateSlisSearchSortIcons() {
-    const keys = ['extracode', 'patient', 'date', 'lab', 'exam', 'doctor', 'diagnostician'];
+    const keys = ['extracode', 'patient', 'age', 'date', 'lab', 'exam', 'doctor', 'diagnostician'];
     keys.forEach(k => {
         const el = document.getElementById(`sort-icon-${k}-slis`);
         if (!el) return;
@@ -3125,6 +3134,10 @@ function sortAndRenderSlisSearchResults() {
                     valA = String(a.patient_name || '');
                     valB = String(b.patient_name || '');
                     break;
+                case 'age':
+                    valA = a.age !== null && a.age !== undefined && a.age !== '' ? Number(a.age) : -1;
+                    valB = b.age !== null && b.age !== undefined && b.age !== '' ? Number(b.age) : -1;
+                    return (valA - valB) * dir;
                 case 'date':
                     valA = String(a.visitdate || '');
                     valB = String(b.visitdate || '');
@@ -3549,7 +3562,7 @@ function renderSlisSearchResults(results) {
     if (!results || results.length === 0) {
         tbody.innerHTML = `
             <tr>
-                <td colspan="9" style="text-align: center; color: #ffffff; font-weight: 500; padding: 24px;">
+                <td colspan="10" style="text-align: center; color: #ffffff; font-weight: 500; padding: 24px;">
                     Δεν βρέθηκαν εξετάσεις με τα επιλεγμένα κριτήρια.
                 </td>
             </tr>
@@ -3602,6 +3615,7 @@ function renderSlisSearchResults(results) {
                     <div style="font-weight: 600;">${escapeHtmlFull(exam.patient_name || '—')}</div>
                     <div style="font-size: 11px; color: var(--text-tertiary);">ID: ${escapeHtmlFull(exam.patient_id || '—')}</div>
                 </td>
+                <td style="text-align: center; font-weight: 500;">${exam.age !== null && exam.age !== undefined && exam.age !== '' ? escapeHtmlFull(exam.age) : '—'}</td>
                 <td>${formatDateDMY(exam.visitdate)}</td>
                 <td>${escapeHtmlFull(exam.lab_name || '—')}</td>
                 <td>

@@ -305,6 +305,9 @@
                                 <th colspan="2" style="text-align: center; cursor: pointer;"
                                     onclick="handleSort('patient')">Ασθενής <span id="sort-icon-patient"
                                         style="opacity:0.5; font-size:10px;">↕️</span></th>
+                                <th style="text-align: center; cursor: pointer;"
+                                    onclick="handleSort('age')">ΗΛΙΚΙΑ <span id="sort-icon-age"
+                                        style="opacity:0.5; font-size:10px;">↕️</span></th>
                                 <th style="cursor: pointer;" onclick="handleSort('date')">Ημερομηνία <span
                                         id="sort-icon-date" style="opacity:0.5; font-size:10px;">↕️</span></th>
                                 <th style="cursor: pointer;" onclick="handleSort('lab')">Μονάδα <span id="sort-icon-lab"
@@ -364,6 +367,9 @@
                                         style="opacity:0.5; font-size:10px;">↕️</span></th>
                                 <th colspan="2" style="text-align: center; cursor: pointer;"
                                     onclick="handleSort('patient')">Ασθενής <span id="sort-icon-patient-assigned"
+                                        style="opacity:0.5; font-size:10px;">↕️</span></th>
+                                <th style="text-align: center; cursor: pointer;"
+                                    onclick="handleSort('age')">ΗΛΙΚΙΑ <span id="sort-icon-age-assigned"
                                         style="opacity:0.5; font-size:10px;">↕️</span></th>
                                 <th style="cursor: pointer;" onclick="handleSort('date')">Ημερομηνία <span
                                         id="sort-icon-date-assigned" style="opacity:0.5; font-size:10px;">↕️</span></th>
@@ -513,6 +519,9 @@
                                 <th style="cursor: pointer;" onclick="handleSlisSearchSort('patient')">
                                     Ασθενής <span id="sort-icon-patient-slis" style="opacity:0.5; font-size:10px;">↕️</span>
                                 </th>
+                                <th style="text-align: center; cursor: pointer;" onclick="handleSlisSearchSort('age')">
+                                    ΗΛΙΚΙΑ <span id="sort-icon-age-slis" style="opacity:0.5; font-size:10px;">↕️</span>
+                                </th>
                                 <th style="cursor: pointer;" onclick="handleSlisSearchSort('date')">
                                     Ημερομηνία <span id="sort-icon-date-slis" style="opacity:0.5; font-size:10px;">↕️</span>
                                 </th>
@@ -533,7 +542,7 @@
                         </thead>
                         <tbody id="tbody-slis-search">
                             <tr>
-                                <td colspan="9"
+                                <td colspan="10"
                                     style="text-align: center; color: #ffffff; font-weight: 500; padding: 24px;">
                                     Συμπληρώστε τα πεδία αναζήτησης και πατήστε "Αναζήτηση".
                                 </td>

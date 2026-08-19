@@ -63,6 +63,7 @@ def _row_to_exam_dict(row: sqlite3.Row) -> dict:
         "fname":          row["fname"] or "",
         "lname":          row["lname"] or "",
         "patient_name":   f"{row['fname'] or ''} {row['lname'] or ''}".strip(),
+        "age":            row["age"] if "age" in row.keys() else None,
 
         # ── Exam type ──
         "examnumcode":    row["examnumcode"],

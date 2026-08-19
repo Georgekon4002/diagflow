@@ -286,6 +286,7 @@ CREATE TABLE IF NOT EXISTS slis_exams (
     demogid         INTEGER,
     fname           TEXT,
     lname           TEXT,
+    age             INTEGER,
     examid          INTEGER,
     examnumcode     INTEGER,
     examname        TEXT,
