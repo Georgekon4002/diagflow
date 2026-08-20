@@ -47,6 +47,39 @@ else:
 _MOCK_DB_PATH = _PROJECT_ROOT / settings.mock_slis_db_path
 
 
+def _get_templates_dir() -> Path:
+    """Resolve directory where template databases & SQL scripts reside."""
+    if getattr(sys, "frozen", False):
+        return Path(sys._MEIPASS) / "db" / "templates"  # type: ignore[attr-defined]
+    return Path(__file__).resolve().parent.parent.parent.parent / "db" / "templates"
+
+
+def ensure_mock_slis_db_initialized() -> None:
+    """If mock_slis.db is missing or empty in mock mode, seed it from templates."""
+    if not _MOCK_DB_PATH.exists() or _MOCK_DB_PATH.stat().st_size == 0:
+        _MOCK_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+        tmpl_dir = _get_templates_dir()
+        tmpl_db = tmpl_dir / "mock_slis.db"
+        if tmpl_db.exists():
+            import shutil
+            try:
+                shutil.copy2(tmpl_db, _MOCK_DB_PATH)
+                return
+            except Exception:
+                pass
+
+        tmpl_sql = tmpl_dir / "init_mock_slis.sql"
+        if tmpl_sql.exists():
+            try:
+                with open(tmpl_sql, "r", encoding="utf-8") as f:
+                    sql_content = f.read()
+                con = sqlite3.connect(str(_MOCK_DB_PATH))
+                con.executescript(sql_content)
+                con.close()
+            except Exception:
+                pass
+
+
 def ensure_slis_exams_table(con: sqlite3.Connection) -> None:
     """Ensure the slis_exams table and required columns exist in the SQLite cache DB."""
     con.execute("""
@@ -92,6 +125,7 @@ def ensure_slis_exams_table(con: sqlite3.Connection) -> None:
 
 def _get_db() -> sqlite3.Connection:
     """Open a read-write SQLite connection to the mock Slis DB."""
+    ensure_mock_slis_db_initialized()
     _MOCK_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     con = sqlite3.connect(str(_MOCK_DB_PATH))
     con.row_factory = sqlite3.Row
@@ -243,9 +277,10 @@ def push_exam_to_slis(exammoreid: int, diagnostician_id: int, diagnostician_name
     """
     Execute the SQL update required to update a single exam in Slis (or mock_slis.db).
     Updates the database and records local assignment sync timestamp.
+    Implements Optimistic Locking: Prevents overwriting if the exam was already assigned concurrently by another user.
 
     Returns:
-        dict with success, exammoreid, diagnostician_id, sql
+        dict with success, exammoreid, diagnostician_id, sql (or conflict, error)
     """
     import diagflow.db.diagflow_db as cfg_db
     now_iso = datetime.now().isoformat()
@@ -256,11 +291,27 @@ def push_exam_to_slis(exammoreid: int, diagnostician_id: int, diagnostician_name
             from sqlalchemy import create_engine, text
             engine = create_engine(settings.slis_db_connection_string, connect_args={"timeout": 10})
             with engine.connect() as conn:
-                conn.execute(
-                    text("UPDATE exammore SET diagnostisid = :diag_id WHERE exammoreid = :id"),
+                # Optimistic locking: Only update if unassigned (NULL / 0) or already set to this diagnostician
+                result = conn.execute(
+                    text("UPDATE exammore SET diagnostisid = :diag_id WHERE exammoreid = :id AND (diagnostisid IS NULL OR diagnostisid = 0 OR diagnostisid = :diag_id)"),
                     {"diag_id": diagnostician_id, "id": exammoreid}
                 )
                 conn.commit()
+                if result.rowcount == 0:
+                    # Concurrency conflict detected! Another user already updated Slis
+                    curr = conn.execute(
+                        text("SELECT e.diagnostisid, d.docname FROM exammore e LEFT JOIN diagnosticians d ON d.personelid = e.diagnostisid WHERE e.exammoreid = :id"),
+                        {"id": exammoreid}
+                    ).fetchone()
+                    assigned_name = curr[1] if (curr and curr[1]) else (f"ID {curr[0]}" if (curr and curr[0]) else "άλλον χρήστη")
+                    logger.warning("optimistic_lock_conflict_detected", exammoreid=exammoreid, current_diag=assigned_name)
+                    return {
+                        "success": False,
+                        "conflict": True,
+                        "exammoreid": exammoreid,
+                        "current_diagnostician": assigned_name,
+                        "error": f"Η εξέταση #{exammoreid} έχει ήδη ανατεθεί στον/στην {assigned_name} στο Slis από άλλον χρήστη.",
+                    }
 
         cat = None
         extra = None
@@ -271,10 +322,27 @@ def push_exam_to_slis(exammoreid: int, diagnostician_id: int, diagnostician_name
 
         try:
             con = _get_db()
-            row = con.execute("SELECT category, extracode FROM slis_exams WHERE exammoreid = ?", (exammoreid,)).fetchone()
+            row = con.execute("SELECT category, extracode, diagnostis, code, slis_synced_at FROM slis_exams WHERE exammoreid = ?", (exammoreid,)).fetchone()
             if row:
                 cat = cat or (row["category"] if "category" in row.keys() else None)
                 extra = extra or (str(row["extracode"]) if ("extracode" in row.keys() and row["extracode"]) else None)
+
+                # Mock Mode Optimistic Locking: check if already assigned to someone else
+                if (settings.use_mock_slis_db and 
+                    row["diagnostis"] is not None and 
+                    str(row["diagnostis"]).strip() not in ("", "0", "None", str(diagnostician_id)) and 
+                    row["slis_synced_at"] is not None):
+                    current_name = row["code"] or f"ID {row['diagnostis']}"
+                    con.close()
+                    logger.warning("optimistic_lock_conflict_mock", exammoreid=exammoreid, current_diag=current_name)
+                    return {
+                        "success": False,
+                        "conflict": True,
+                        "exammoreid": exammoreid,
+                        "current_diagnostician": current_name,
+                        "error": f"Η εξέταση #{exammoreid} έχει ήδη ανατεθεί στον/στην {current_name} στο Slis από άλλον χρήστη.",
+                    }
+
             con.execute(
                 "UPDATE slis_exams SET diagnostis = ?, code = ?, slis_synced_at = ? WHERE exammoreid = ?",
                 (diagnostician_id, diagnostician_name, now_iso, exammoreid)
@@ -491,7 +559,11 @@ def push_all_to_slis() -> dict:
             if "sql" in result:
                 queries.append(result["sql"])
         else:
-            failed.append({"exammoreid": exammoreid, "error": result.get("error")})
+            failed.append({
+                "exammoreid": exammoreid,
+                "conflict": result.get("conflict", False),
+                "error": result.get("error", "Failed to update")
+            })
 
     script_lines = ["BEGIN TRANSACTION;"] + [f"  {q}" for q in queries] + ["COMMIT;"]
     formatted_script = "\n".join(script_lines)
@@ -541,7 +613,11 @@ def push_selected_to_slis(exammoreid_list: list[int]) -> dict:
             if "sql" in result:
                 queries.append(result["sql"])
         else:
-            failed.append({"exammoreid": exammoreid, "error": result.get("error")})
+            failed.append({
+                "exammoreid": exammoreid,
+                "conflict": result.get("conflict", False),
+                "error": result.get("error", "Failed to update")
+            })
 
     script_lines = ["BEGIN TRANSACTION;"] + [f"  {q}" for q in queries] + ["COMMIT;"]
     formatted_script = "\n".join(script_lines)
@@ -559,13 +635,6 @@ def push_selected_to_slis(exammoreid_list: list[int]) -> dict:
 # ─────────────────────────────────────────────────────────────────
 #  Sync Diagnosticians and Doctors
 # ─────────────────────────────────────────────────────────────────
-
-def sync_diagnosticians() -> dict:
-    """
-    Pull diagnosticians from Slis DB (EXEC getdiagnosticsList) or mock DB,
-    and insert NEW ones into local diagflow.db (active=0 default, ON CONFLICT DO NOTHING).
-    """
-    import diagflow.db.diagflow_db as cfg_db
 
 def normalize_diag_id(raw_id) -> int | None:
     if raw_id is None:

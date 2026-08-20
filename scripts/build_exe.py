@@ -20,6 +20,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 SRC = ROOT / "src"
 FRONTEND = ROOT / "frontend"
+TEMPLATES = ROOT / "db" / "templates"
 
 
 def build():
@@ -33,6 +34,10 @@ def build():
     except ImportError:
         print("\n  PyInstaller not found. Installing...")
         subprocess.run([sys.executable, "-m", "pip", "install", "pyinstaller"], check=True)
+
+    # Ensure fresh template databases are seeded before packaging
+    print("\n  Ensuring database templates are up-to-date...")
+    subprocess.run([sys.executable, str(ROOT / "db" / "seed_templates.py")], cwd=str(ROOT), check=True)
 
     # Kill any running DiagFlow.exe process to release file locks
     try:
@@ -48,8 +53,9 @@ def build():
         "--noconsole",               # No terminal window — desktop app feel
         "--name", "DiagFlow",
         "--icon", str(ROOT / "media" / "logos" / "logo.ico"),  # Use .ico format for Windows EXE
-        # Include the frontend directory as bundled data
+        # Include frontend directory and db templates as bundled data
         "--add-data", f"{FRONTEND};frontend",
+        "--add-data", f"{TEMPLATES};db/templates",
         # Include the src package
         "--paths", str(SRC),
         # Hidden imports that PyInstaller may miss
@@ -129,16 +135,12 @@ def build():
 
     if result.returncode == 0:
         import shutil
-        db_src = ROOT / "db"
-        db_dst = ROOT / "dist" / "db"
-        if db_src.exists():
-            print(f"  Copying database files from {db_src} to {db_dst}...")
-            shutil.copytree(
-                db_src,
-                db_dst,
-                dirs_exist_ok=True,
-                ignore=shutil.ignore_patterns("*.db-wal", "*.db-shm", "*.db-journal", "server.txt")
-            )
+
+        # Ensure no residual db folder in dist (the app no longer requires a db folder)
+        dist_db = ROOT / "dist" / "db"
+        if dist_db.exists():
+            print("  Removing residual db folder from dist...")
+            shutil.rmtree(dist_db, ignore_errors=True)
 
         env_example = ROOT / ".env.example"
         if env_example.exists():
@@ -150,6 +152,7 @@ def build():
         print("\n" + "=" * 60)
         print("  BUILD SUCCESSFUL!")
         print(f"  EXE location: {ROOT / 'dist' / 'DiagFlow.exe'}")
+        print("  Standalone distribution contains only DiagFlow.exe and .env")
         print("=" * 60)
     else:
         print("\n" + "=" * 60)

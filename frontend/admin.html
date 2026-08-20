@@ -45,7 +45,7 @@
                     onclick="goBack()">
                     <span style="font-size: 14px;">←</span> Αρχική
                 </button>
-                <div class="admin-sidebar-logo">
+                <div class="admin-sidebar-logo" onclick="window.location.href='index.html'" style="cursor: pointer;" title="Επιστροφή στην αρχική">
                     <img src="media/logos/logo_multiple.png" alt="Logo">
                     <img src="media/logos/textbox.png" alt="DiagFlow">
                 </div>
@@ -112,6 +112,9 @@
                         </svg>
                         <span id="header-role-text">Admin</span>
                     </span>
+                    <button class="btn-header-icon" id="btn-theme-toggle" onclick="toggleTheme()" title="Εναλλαγή Φωτεινού/Σκοτεινού Θέματος">
+                        🌙
+                    </button>
                     <button class="btn btn-secondary btn-sm" onclick="openChangeCredsModal()">🔐 Αλλαγή username/password</button>
                     <button class="btn btn-secondary btn-sm" onclick="adminLogout()">Έξοδος</button>
                 </div>
@@ -138,11 +141,38 @@
                             </div>
                             <div class="form-group" style="margin:0;">
                                 <label class="form-label">Ημερομηνία</label>
-                                <input type="text" id="oncall-date" class="form-input filter-select"
-                                    placeholder="Επιλέξτε ημερομηνία" style="width:100%;">
+                                <input type="date" id="oncall-date" class="form-input" style="width:100%;">
                             </div>
                             <button class="btn btn-primary" onclick="setOncall()">Αποθήκευση</button>
                         </div>
+                    </div>
+
+                    <!-- ─── Manual Schedule Overrides History Table (Second in line) ─── -->
+                    <div class="admin-card" style="margin-top: var(--space-xl);">
+                        <div class="admin-card-title" style="display:flex; justify-content:space-between; align-items:center;">
+                            <span>📋 Αλλαγές στο Πρόγραμμα</span>
+                            <button class="btn btn-secondary btn-sm" onclick="loadPamakristosOverrides()" style="display:flex; align-items:center; gap:6px;">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.3" />
+                                </svg>
+                                Ανανέωση
+                            </button>
+                        </div>
+                        <p style="color:var(--text-secondary);font-size:var(--font-size-sm);margin-bottom:var(--space-md);">
+                            Εμφανίζονται οι έκτακτες ή χειροκίνητες αναθέσεις υπεύθυνου Παμμακάριστου ανά ημερομηνία.
+                        </p>
+                        <table class="admin-table" id="pamakristos-overrides-table">
+                            <thead>
+                                <tr>
+                                    <th style="width: 160px;">Ημερομηνία</th>
+                                    <th>Υπεύθυνος Διαγνώστης</th>
+                                    <th style="width: 120px; text-align: right;">Ενέργειες</th>
+                                </tr>
+                            </thead>
+                            <tbody id="pamakristos-overrides-tbody">
+                                <!-- Populated dynamically by admin.js -->
+                            </tbody>
+                        </table>
                     </div>
 
                     <!-- ─── Weekly Schedule Table ─── -->
@@ -351,12 +381,15 @@
                     </div>
 
                     <div class="admin-card" style="margin-top: 24px;">
-                        <div class="admin-card-title">Ημερήσια Όρια Διαγνωστών (Quotas)</div>
-                        <div style="overflow-x:auto;">
+                        <div class="admin-card-title" onclick="toggleDailyQuotasTable()" style="cursor: pointer; display: flex; justify-content: space-between; align-items: center; user-select: none;">
+                            <span>📊 Ημερήσια Όρια Διαγνωστών (Quotas)</span>
+                            <span id="quotas-toggle-arrow" style="font-size: 14px; transition: transform 0.2s ease;">▶</span>
+                        </div>
+                        <div id="quotas-table-wrapper" style="display: none; overflow-x:auto; transition: all 0.3s ease;">
                             <table class="admin-table">
                                 <thead>
                                     <tr>
-                                        <th>Διαγνώστης</th>
+                                        <th style="min-width: 200px;">Διαγνώστης</th>
                                         <th style="text-align:center;">Δευτέρα</th>
                                         <th style="text-align:center;">Τρίτη</th>
                                         <th style="text-align:center;">Τετάρτη</th>
@@ -411,7 +444,7 @@
 
                 <!-- ════════════ SECTION: Συνεργασίες ════════════ -->
                 <div id="section-partnerships" class="admin-section" style="display:none;">
-                    <div class="admin-card" style="position: relative; z-index: 10;">
+                    <div class="admin-card">
                         <div class="admin-card-title">🤝 Προσθήκη Συνεργασίας</div>
                         <p
                             style="color:var(--text-secondary);font-size:var(--font-size-sm);margin-bottom:var(--space-lg);">
@@ -768,99 +801,125 @@
                     <!-- SCORING WEIGHTS -->
                     <div class="admin-card">
                         <div class="admin-card-title">Δυναμικά Βάρη Αξιολόγησης (Scoring Weights)</div>
-                        <p
-                            style="color:var(--text-secondary);font-size:var(--font-size-sm);margin-bottom:var(--space-lg);">
-                            Καθορίστε τους πόντους για κάθε κριτήριο. Το άθροισμα των <b
-                                style="color:var(--text-primary);">Max %</b> πρέπει να είναι υποχρεωτικά ακριβώς 100%.
+                        <p style="color:var(--text-secondary);font-size:var(--font-size-sm);margin-bottom:var(--space-md);">
+                            Καθορίστε τους πόντους για κάθε κριτήριο. Το άθροισμα των <b style="color:var(--text-primary);">Max %</b> πρέπει να είναι υποχρεωτικά ακριβώς 100%.
                         </p>
 
-                        <div class="admin-form" style="grid-template-columns:1fr 1fr; align-items:start;">
+                        <!-- Live Interactive Combined Preview Bar -->
+                        <div class="score-visualizer-container" style="margin-bottom: 20px;">
+                            <div class="score-visualizer-header">
+                                <span>🎯 Προεπισκόπηση Κατανομής Βαρών (100% Target)</span>
+                                <span id="admin-weights-badge" class="score-total-badge">100%</span>
+                            </div>
+                            <div class="score-stacked-bar" id="admin-weights-stacked-bar">
+                                <div id="bar-partnership" class="score-bar-segment score-bar-partnership" style="width: 20%" title="Συνεργασία Ιατρού: 20%"></div>
+                                <div id="bar-history" class="score-bar-segment score-bar-history" style="width: 35%" title="Ιστορικό Ασθενή: 35%"></div>
+                                <div id="bar-skills" class="score-bar-segment score-bar-skills" style="width: 20%" title="Εξειδίκευση: 20%"></div>
+                                <div id="bar-lab" class="score-bar-segment score-bar-lab" style="width: 15%" title="Εργαστήριο: 15%"></div>
+                                <div id="bar-capacity" class="score-bar-segment score-bar-capacity" style="width: 10%" title="Χωρητικότητα: 10%"></div>
+                            </div>
+                            <div class="score-legend">
+                                <span class="score-legend-item"><span class="score-legend-dot" style="background:#6366F1"></span> Συνεργασία: <strong id="lbl-partnership">20%</strong></span>
+                                <span class="score-legend-item"><span class="score-legend-dot" style="background:#3B82F6"></span> Ιστορικό: <strong id="lbl-history">35%</strong></span>
+                                <span class="score-legend-item"><span class="score-legend-dot" style="background:#10B981"></span> Skills: <strong id="lbl-skills">20%</strong></span>
+                                <span class="score-legend-item"><span class="score-legend-dot" style="background:#F59E0B"></span> Εργαστήριο: <strong id="lbl-lab">15%</strong></span>
+                                <span class="score-legend-item"><span class="score-legend-dot" style="background:#06B6D4"></span> Χωρητικότητα: <strong id="lbl-capacity">10%</strong></span>
+                            </div>
+                        </div>
 
-                            <div class="form-group" style="margin:0;">
-                                <label class="form-label" style="font-weight:600; color:#3b82f6;">Συνεργασία Ιατρού (Max
-                                    %)</label>
-                                <input type="number" id="pts-partnership" class="form-input weight-input" value="20"
-                                    min="0" max="100" step="0.1" oninput="updateWeightsTotal()">
+                        <div class="admin-form" style="grid-template-columns:1fr 1fr; align-items:start; gap: 18px;">
+
+                            <!-- Partnership -->
+                            <div class="form-group" style="margin:0; background: rgba(99, 102, 241, 0.05); border: 1px solid rgba(99, 102, 241, 0.25); border-radius: 8px; padding: 14px;">
+                                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 6px;">
+                                    <label class="form-label" style="font-weight:700; color:#6366F1; margin:0; display:flex; align-items:center; gap:6px;">
+                                        <span class="score-legend-dot" style="background:#6366F1"></span> Συνεργασία Ιατρού (Max %)
+                                    </label>
+                                </div>
+                                <div style="display:flex; align-items:center; gap:10px;">
+                                    <input type="range" id="range-partnership" class="weight-range-slider weight-slider-partnership" min="0" max="100" step="1" value="20" oninput="syncWeightSlider('partnership', this.value)">
+                                    <input type="number" id="pts-partnership" class="form-input weight-input" value="20" min="0" max="100" step="0.1" style="width: 80px; text-align:center; font-weight:700;" oninput="syncWeightInput('partnership', this.value)">
+                                </div>
                             </div>
 
-                            <div class="form-group" style="margin:0;">
-                                <label class="form-label" style="font-weight:600; color:#3b82f6;">Ιστορικό Ασθενή (Max
-                                    %)</label>
-                                <input type="number" id="pts-history" class="form-input weight-input" value="35" min="0"
-                                    max="100" step="0.1" oninput="updateWeightsTotal()">
+                            <!-- History -->
+                            <div class="form-group" style="margin:0; background: rgba(59, 130, 246, 0.05); border: 1px solid rgba(59, 130, 246, 0.25); border-radius: 8px; padding: 14px;">
+                                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 6px;">
+                                    <label class="form-label" style="font-weight:700; color:#3B82F6; margin:0; display:flex; align-items:center; gap:6px;">
+                                        <span class="score-legend-dot" style="background:#3B82F6"></span> Ιστορικό Ασθενή (Max %)
+                                    </label>
+                                </div>
+                                <div style="display:flex; align-items:center; gap:10px;">
+                                    <input type="range" id="range-history" class="weight-range-slider weight-slider-history" min="0" max="100" step="1" value="35" oninput="syncWeightSlider('history', this.value)">
+                                    <input type="number" id="pts-history" class="form-input weight-input" value="35" min="0" max="100" step="0.1" style="width: 80px; text-align:center; font-weight:700;" oninput="syncWeightInput('history', this.value)">
+                                </div>
                             </div>
 
-                            <div class="form-group"
-                                style="margin:0; grid-column: span 2; border:1px solid var(--border-color); padding:16px; border-radius:8px; background:var(--bg-secondary);">
-                                <label class="form-label"
-                                    style="font-weight:600; color:#3b82f6; margin-bottom:12px; font-size:14px;">Εξειδίκευση
-                                    (Skills)</label>
+                            <!-- Skills -->
+                            <div class="form-group" style="margin:0; grid-column: span 2; border:1px solid rgba(16, 185, 129, 0.25); padding:16px; border-radius:8px; background:rgba(16, 185, 129, 0.04);">
+                                <label class="form-label" style="font-weight:700; color:#10B981; margin-bottom:12px; font-size:14px; display:flex; align-items:center; gap:6px;">
+                                    <span class="score-legend-dot" style="background:#10B981"></span> Εξειδίκευση (Skills)
+                                </label>
                                 <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:16px;">
                                     <div>
-                                        <label class="form-label"
-                                            style="font-size:12px; color:var(--text-secondary);">Προτίμηση (Max
-                                            %)</label>
-                                        <input type="number" id="pts-skills-pref" class="form-input weight-input"
-                                            value="20" min="0" max="100" step="0.1" oninput="updateWeightsTotal()">
+                                        <label class="form-label" style="font-size:12px; color:var(--text-secondary); font-weight:600;">Προτίμηση (Max %)</label>
+                                        <div style="display:flex; align-items:center; gap:8px;">
+                                            <input type="range" id="range-skills-pref" class="weight-range-slider weight-slider-skills" min="0" max="100" step="1" value="20" oninput="syncWeightSlider('skills-pref', this.value)">
+                                            <input type="number" id="pts-skills-pref" class="form-input weight-input" value="20" min="0" max="100" step="0.1" style="width:70px; text-align:center; font-weight:700;" oninput="syncWeightInput('skills-pref', this.value)">
+                                        </div>
                                     </div>
                                     <div>
-                                        <label class="form-label"
-                                            style="font-size:12px; color:var(--text-secondary);">Ουδέτερο (%)</label>
-                                        <input type="number" id="pts-skills-neut" class="form-input weight-input"
-                                            value="10" min="0" max="100" step="0.1" oninput="updateWeightsTotal()">
+                                        <label class="form-label" style="font-size:12px; color:var(--text-secondary); font-weight:600;">Ουδέτερο (%)</label>
+                                        <input type="number" id="pts-skills-neut" class="form-input weight-input" value="10" min="0" max="100" step="0.1" style="text-align:center;" oninput="updateWeightsTotal()">
                                     </div>
                                     <div>
-                                        <label class="form-label"
-                                            style="font-size:12px; color:var(--text-secondary);">Χωρίς Δεδομένα
-                                            (%)</label>
-                                        <input type="number" id="pts-skills-none" class="form-input weight-input"
-                                            value="0" min="0" max="100" step="0.1" oninput="updateWeightsTotal()">
+                                        <label class="form-label" style="font-size:12px; color:var(--text-secondary); font-weight:600;">Χωρίς Δεδομένα (%)</label>
+                                        <input type="number" id="pts-skills-none" class="form-input weight-input" value="0" min="0" max="100" step="0.1" style="text-align:center;" oninput="updateWeightsTotal()">
                                     </div>
                                 </div>
                             </div>
 
-                            <div class="form-group"
-                                style="margin:0; grid-column: span 2; border:1px solid var(--border-color); padding:16px; border-radius:8px; background:var(--bg-secondary);">
-                                <label class="form-label"
-                                    style="font-weight:600; color:#3b82f6; margin-bottom:12px; font-size:14px;">Προτίμηση
-                                    Εργαστηρίου</label>
+                            <!-- Lab Preference -->
+                            <div class="form-group" style="margin:0; grid-column: span 2; border:1px solid rgba(245, 158, 11, 0.25); padding:16px; border-radius:8px; background:rgba(245, 158, 11, 0.04);">
+                                <label class="form-label" style="font-weight:700; color:#F59E0B; margin-bottom:12px; font-size:14px; display:flex; align-items:center; gap:6px;">
+                                    <span class="score-legend-dot" style="background:#F59E0B"></span> Προτίμηση Εργαστηρίου
+                                </label>
                                 <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:16px;">
                                     <div>
-                                        <label class="form-label"
-                                            style="font-size:12px; color:var(--text-secondary);">Το Προτιμάει (Max
-                                            %)</label>
-                                        <input type="number" id="pts-lab-pref" class="form-input weight-input"
-                                            value="15" min="0" max="100" step="0.1" oninput="updateWeightsTotal()">
+                                        <label class="form-label" style="font-size:12px; color:var(--text-secondary); font-weight:600;">Το Προτιμάει (Max %)</label>
+                                        <div style="display:flex; align-items:center; gap:8px;">
+                                            <input type="range" id="range-lab-pref" class="weight-range-slider weight-slider-lab" min="0" max="100" step="1" value="15" oninput="syncWeightSlider('lab-pref', this.value)">
+                                            <input type="number" id="pts-lab-pref" class="form-input weight-input" value="15" min="0" max="100" step="0.1" style="width:70px; text-align:center; font-weight:700;" oninput="syncWeightInput('lab-pref', this.value)">
+                                        </div>
                                     </div>
                                     <div>
-                                        <label class="form-label"
-                                            style="font-size:12px; color:var(--text-secondary);">Ουδέτερο (%)</label>
-                                        <input type="number" id="pts-lab-neut" class="form-input weight-input"
-                                            value="10" min="0" max="100" step="0.1" oninput="updateWeightsTotal()">
+                                        <label class="form-label" style="font-size:12px; color:var(--text-secondary); font-weight:600;">Ουδέτερο (%)</label>
+                                        <input type="number" id="pts-lab-neut" class="form-input weight-input" value="10" min="0" max="100" step="0.1" style="text-align:center;" oninput="updateWeightsTotal()">
                                     </div>
                                     <div>
-                                        <label class="form-label"
-                                            style="font-size:12px; color:var(--text-secondary);">Προτιμά Άλλο
-                                            (%)</label>
-                                        <input type="number" id="pts-lab-other" class="form-input weight-input"
-                                            value="2" min="0" max="100" step="0.1" oninput="updateWeightsTotal()">
+                                        <label class="form-label" style="font-size:12px; color:var(--text-secondary); font-weight:600;">Προτιμά Άλλο (%)</label>
+                                        <input type="number" id="pts-lab-other" class="form-input weight-input" value="2" min="0" max="100" step="0.1" style="text-align:center;" oninput="updateWeightsTotal()">
                                     </div>
                                 </div>
                             </div>
 
-                            <div class="form-group" style="margin:0; grid-column:span 2;">
-                                <label class="form-label" style="font-weight:600; color:#3b82f6;">Χωρητικότητα (Max
-                                    %)</label>
-                                <input type="number" id="pts-capacity" class="form-input weight-input" value="10"
-                                    min="0" max="100" step="0.1" oninput="updateWeightsTotal()">
+                            <!-- Capacity -->
+                            <div class="form-group" style="margin:0; grid-column:span 2; background: rgba(6, 182, 212, 0.05); border: 1px solid rgba(6, 182, 212, 0.25); border-radius: 8px; padding: 14px;">
+                                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 6px;">
+                                    <label class="form-label" style="font-weight:700; color:#06B6D4; margin:0; display:flex; align-items:center; gap:6px;">
+                                        <span class="score-legend-dot" style="background:#06B6D4"></span> Χωρητικότητα (Max %)
+                                    </label>
+                                </div>
+                                <div style="display:flex; align-items:center; gap:10px;">
+                                    <input type="range" id="range-capacity" class="weight-range-slider weight-slider-capacity" min="0" max="100" step="1" value="10" oninput="syncWeightSlider('capacity', this.value)">
+                                    <input type="number" id="pts-capacity" class="form-input weight-input" value="10" min="0" max="100" step="0.1" style="width: 80px; text-align:center; font-weight:700;" oninput="syncWeightInput('capacity', this.value)">
+                                </div>
                             </div>
 
-                            <div class="form-group"
-                                style="margin:0; margin-top:8px; grid-column:span 2; display:flex; align-items:center; justify-content:space-between; padding-top:16px; border-top:1px solid var(--border-color);">
-                                <div id="weights-total-display" style="font-weight:600; font-size:16px; color:#10b981;">
+                            <div class="form-group" style="margin:0; margin-top:8px; grid-column:span 2; display:flex; align-items:center; justify-content:space-between; padding-top:16px; border-top:1px solid var(--border-color);">
+                                <div id="weights-total-display" style="font-weight:700; font-size:16px; color:#10b981;">
                                     Σύνολο Max: 100%</div>
-                                <button class="btn btn-primary" id="btn-save-weights"
-                                    onclick="saveSystemWeights()">Αποθήκευση</button>
+                                <button class="btn btn-primary" id="btn-save-weights" onclick="saveSystemWeights()">Αποθήκευση</button>
                             </div>
                         </div>
                     </div>

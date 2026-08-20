@@ -59,6 +59,7 @@ from diagflow.api.schemas import (
     SuggestionResponse,
 )
 from diagflow.engine.filters import ExamContext
+from diagflow.engine.pipeline import AssignmentSuggestion
 from diagflow.services.assignment import AssignmentService
 from diagflow.services.diagnostician import DiagnosticianService
 from diagflow.services.pamakristos import PamakristosScheduler
@@ -341,23 +342,18 @@ async def get_assigned_exams(
 #  Assignment Engine
 # ─────────────────────────────────────────────────────
 
-@router.post("/assignments/suggest", response_model=SuggestionResponse)
-async def suggest_assignment(
-    request: SuggestAssignmentRequest,
-    assign_svc: AssignmentService = Depends(get_assignment_service),
-    diag_svc: DiagnosticianService = Depends(get_diagnostician_service),
-):
-    """Generate an assignment suggestion for a specific exam."""
-    pending = assign_svc.get_pending_exams()
-    exam_data = next((e for e in pending if str(e["exam_id"]) == str(request.exam_id)), None)
-    
-    if not exam_data:
-        assigned = assign_svc.get_assigned_exams()
-        exam_data = next((e for e in assigned if str(e["exam_id"]) == str(request.exam_id)), None)
 
-    if not exam_data:
-        raise HTTPException(status_code=404, detail=f"Exam {request.exam_id} not found")
+class SuggestBatchRequest(BaseModel):
+    exam_ids: list[str]
 
+
+async def _generate_suggestion_for_exam(
+    exam_data: dict,
+    all_exams: list[dict],
+    assign_svc: AssignmentService,
+    diag_svc: DiagnosticianService,
+) -> AssignmentSuggestion | None:
+    """Core suggestion generator with multi-exam order alignment and virtual workload tracking."""
     exam = ExamContext(
         exam_id=exam_data["exam_id"],
         patient_id=exam_data["patient_id"],
@@ -392,12 +388,11 @@ async def suggest_assignment(
     for c in candidates:
         c.current_day_count += _session_suggestion_counts.get(c.id, 0)
 
-    # Multi-exam order alignment check
+    # Multi-exam order alignment check (same patient and same order/extracode)
     extracode_val = exam_data.get("extracode")
     patient_id_val = exam_data.get("patient_id")
     order_exams = []
     if extracode_val and patient_id_val:
-        all_exams = pending + assign_svc.get_assigned_exams()
         order_exams = [
             e for e in all_exams
             if str(e.get("patient_id")) == str(patient_id_val)
@@ -408,26 +403,21 @@ async def suggest_assignment(
         from diagflow.engine.filters import apply_hard_filters
         from diagflow.engine.scoring import score_all_candidates
 
-        # 1. Check if another exam in this exact same order (extracode) already has a cached suggestion or assignment
+        # 1. Check if another exam in this exact same order already has a cached suggestion or assignment
         existing_order_diag_id = None
-        existing_order_diag_name = None
-
         for e_item in order_exams:
             e_item_id = str(e_item["exam_id"])
-            if e_item_id == str(request.exam_id):
+            if e_item_id == str(exam_data["exam_id"]):
                 continue
             cached = _suggestion_cache.get(e_item_id)
             if cached and cached.suggested_diagnostician_id:
                 existing_order_diag_id = cached.suggested_diagnostician_id
-                existing_order_diag_name = cached.suggested_diagnostician_name
                 break
             elif e_item.get("diagnostis") and str(e_item.get("diagnostis")) not in ('0', '', 'None'):
                 existing_order_diag_id = e_item.get("diagnostis")
-                existing_order_diag_name = e_item.get("diagnostician_name") or e_item.get("diagnostis")
                 break
 
         best_cand_id = None
-
         if existing_order_diag_id:
             target_cand = next((c for c in candidates if str(c.id) == str(existing_order_diag_id)), None)
             if target_cand:
@@ -435,54 +425,51 @@ async def suggest_assignment(
                 if passed_target:
                     best_cand_id = target_cand.id
 
-        order_contexts = []
         cand_info = {}
-        for e_dict in order_exams:
-            e_ctx = ExamContext(
-                exam_id=e_dict["exam_id"],
-                patient_id=e_dict["patient_id"],
-                patient_name=e_dict.get("patient_name", ""),
-                modality=e_dict["modality"],
-                body_part=e_dict["body_part"],
-                exam_code=str(e_dict.get("examnumcode", "")),
-                exam_name=e_dict.get("examname", ""),
-                lab_id=e_dict["lab_id"],
-                lab_name=e_dict["lab_name"],
-                issuing_doctor_id=e_dict["issuing_doctor_id"],
-                issuing_doctor_name=e_dict["issuing_doctor_name"],
-                comments=e_dict.get("comments", ""),
-                is_pamakristos="ΠΑΜΜΑΚΑΡΙΣΤΟΣ" in e_dict.get("issuing_doctor_name", "").upper(),
-                oldpers=e_dict.get("oldpers"),
-            )
-            e_cands = await diag_svc.get_candidates_for_exam(
-                exam_id=e_ctx.exam_id,
-                modality=e_ctx.modality,
-                body_part=e_ctx.body_part,
-                lab_id=e_ctx.lab_id,
-                lab_name=e_ctx.lab_name,
-                issuing_doctor_id=e_ctx.issuing_doctor_id,
-                patient_id=e_ctx.patient_id,
-                exam_code=e_ctx.exam_code,
-                oldpers=e_ctx.oldpers,
-            )
-            for c in e_cands:
-                cand_info[c.id] = c
-            order_contexts.append((e_ctx, e_cands))
-
         if not best_cand_id:
+            order_contexts = []
+            for e_dict in order_exams:
+                e_ctx = ExamContext(
+                    exam_id=e_dict["exam_id"],
+                    patient_id=e_dict["patient_id"],
+                    patient_name=e_dict.get("patient_name", ""),
+                    modality=e_dict["modality"],
+                    body_part=e_dict["body_part"],
+                    exam_code=str(e_dict.get("examnumcode", "")),
+                    exam_name=e_dict.get("examname", ""),
+                    lab_id=e_dict["lab_id"],
+                    lab_name=e_dict["lab_name"],
+                    issuing_doctor_id=e_dict["issuing_doctor_id"],
+                    issuing_doctor_name=e_dict["issuing_doctor_name"],
+                    comments=e_dict.get("comments", ""),
+                    is_pamakristos="ΠΑΜΜΑΚΑΡΙΣΤΟΣ" in e_dict.get("issuing_doctor_name", "").upper(),
+                    oldpers=e_dict.get("oldpers"),
+                )
+                e_cands = await diag_svc.get_candidates_for_exam(
+                    exam_id=e_ctx.exam_id,
+                    modality=e_ctx.modality,
+                    body_part=e_ctx.body_part,
+                    lab_id=e_ctx.lab_id,
+                    lab_name=e_ctx.lab_name,
+                    issuing_doctor_id=e_ctx.issuing_doctor_id,
+                    patient_id=e_ctx.patient_id,
+                    exam_code=e_ctx.exam_code,
+                    oldpers=e_ctx.oldpers,
+                )
+                for c in e_cands:
+                    cand_info[c.id] = c
+                order_contexts.append((e_ctx, e_cands))
+
             cand_totals = {}
             cand_eligible_all = {}
-
             for ex_ctx, cands in order_contexts:
                 passed, _ = apply_hard_filters(cands, ex_ctx)
                 passed_ids = {p.id for p in passed}
-
                 for c in cands:
                     if c.id not in cand_eligible_all:
                         cand_eligible_all[c.id] = True
                     if c.id not in passed_ids:
                         cand_eligible_all[c.id] = False
-
                 if passed:
                     scored = score_all_candidates(passed, ex_ctx)
                     for sc in scored:
@@ -502,9 +489,9 @@ async def suggest_assignment(
                             best_cand_id = c_id
 
         suggestion = await assign_svc.suggest_assignment(exam, candidates)
-        if suggestion and best_cand_id and best_cand_id in cand_info:
-            best_cand = cand_info[best_cand_id]
-            if suggestion.suggested_diagnostician_id != best_cand_id:
+        if suggestion and best_cand_id:
+            best_cand = next((c for c in candidates if c.id == best_cand_id), cand_info.get(best_cand_id))
+            if best_cand and suggestion.suggested_diagnostician_id != best_cand_id:
                 suggestion.suggested_diagnostician_id = best_cand_id
                 suggestion.suggested_diagnostician_name = best_cand.name
                 if "Multi-exam Order Alignment" not in suggestion.rules_fired:
@@ -512,19 +499,87 @@ async def suggest_assignment(
     else:
         suggestion = await assign_svc.suggest_assignment(exam, candidates)
 
+    if suggestion:
+        if suggestion.suggested_diagnostician_id:
+            diag_id = suggestion.suggested_diagnostician_id
+            _session_suggestion_counts[diag_id] = _session_suggestion_counts.get(diag_id, 0) + 1
+
+        _suggestion_cache[exam.exam_id] = suggestion
+        _suggestion_cache[str(exam.exam_id)] = suggestion
+
+    return suggestion
+
+
+@router.post("/assignments/suggest-batch")
+async def suggest_batch_assignments(
+    request: SuggestBatchRequest,
+    assign_svc: AssignmentService = Depends(get_assignment_service),
+    diag_svc: DiagnosticianService = Depends(get_diagnostician_service),
+):
+    """Generate assignment suggestions for multiple exams in a single ultra-fast pass."""
+    pending = assign_svc.get_pending_exams()
+    assigned = assign_svc.get_assigned_exams()
+    all_exams = pending + assigned
+    exams_map = {str(e["exam_id"]): e for e in all_exams}
+
+    results = {}
+    for exam_id_str in request.exam_ids:
+        exam_data = exams_map.get(exam_id_str)
+        if not exam_data:
+            continue
+
+        suggestion = await _generate_suggestion_for_exam(exam_data, all_exams, assign_svc, diag_svc)
+        if suggestion:
+            results[str(suggestion.exam_id)] = {
+                "exam_id": suggestion.exam_id,
+                "patient_id": suggestion.patient_id,
+                "exam_summary": suggestion.exam_summary,
+                "suggested_diagnostician_id": suggestion.suggested_diagnostician_id,
+                "suggested_diagnostician_name": suggestion.suggested_diagnostician_name,
+                "confidence_score": suggestion.confidence_score,
+                "score_breakdown": suggestion.score_breakdown,
+                "alternatives": [
+                    a if isinstance(a, dict) else {
+                        "id": getattr(a, "id", None),
+                        "name": getattr(a, "name", ""),
+                        "score": getattr(a, "score", 0.0),
+                        "eliminated": getattr(a, "eliminated", False),
+                        "elimination_reason": getattr(a, "elimination_reason", None),
+                    }
+                    for a in suggestion.alternatives
+                ],
+                "rules_fired": suggestion.rules_fired,
+                "solver_status": suggestion.solver_status,
+                "is_direct_assignment": getattr(suggestion, "is_direct_assignment", False),
+                "direct_assignment_reason": getattr(suggestion, "direct_assignment_reason", None),
+                "pipeline_timestamp": suggestion.pipeline_timestamp,
+            }
+
+    return {"suggestions": results}
+
+
+@router.post("/assignments/suggest", response_model=SuggestionResponse)
+async def suggest_assignment(
+    request: SuggestAssignmentRequest,
+    assign_svc: AssignmentService = Depends(get_assignment_service),
+    diag_svc: DiagnosticianService = Depends(get_diagnostician_service),
+):
+    """Generate an assignment suggestion for a specific exam."""
+    pending = assign_svc.get_pending_exams()
+    assigned = assign_svc.get_assigned_exams()
+    all_exams = pending + assigned
+    exam_data = next((e for e in all_exams if str(e["exam_id"]) == str(request.exam_id)), None)
+
+    if not exam_data:
+        raise HTTPException(status_code=404, detail=f"Exam {request.exam_id} not found")
+
+    suggestion = await _generate_suggestion_for_exam(exam_data, all_exams, assign_svc, diag_svc)
+
     if not suggestion:
         raise HTTPException(
             status_code=422,
             detail="No eligible diagnosticians found after applying all rules. Manual assignment required.",
         )
-
-    # Increment the session counter for the suggested diagnostician
-    if suggestion.suggested_diagnostician_id:
-        diag_id = suggestion.suggested_diagnostician_id
-        _session_suggestion_counts[diag_id] = _session_suggestion_counts.get(diag_id, 0) + 1
-
-    _suggestion_cache[exam.exam_id] = suggestion
-    _suggestion_cache[str(exam.exam_id)] = suggestion
 
     return SuggestionResponse(
         exam_id=suggestion.exam_id,
@@ -682,9 +737,8 @@ async def bulk_eligible_diagnosticians(
     reasons: dict[int, str | None] = {d_id: None for d_id in eligible_diags}
     is_eligible = {d_id: True for d_id in eligible_diags}
 
-    for exam_data in selected_exams:
-        await asyncio.sleep(0)
-        exam = ExamContext(
+    exam_contexts = [
+        ExamContext(
             exam_id=exam_data["exam_id"],
             patient_id=exam_data["patient_id"],
             patient_name=exam_data.get("patient_name", ""),
@@ -700,18 +754,27 @@ async def bulk_eligible_diagnosticians(
             is_pamakristos="ΠΑΜΜΑΚΑΡΙΣΤΟΣ" in exam_data.get("issuing_doctor_name", "").upper(),
             oldpers=exam_data.get("oldpers"),
         )
-        
-        candidates = await diag_svc.get_candidates_for_exam(
-            exam_id=exam.exam_id,
-            modality=exam.modality,
-            body_part=exam.body_part,
-            lab_id=exam.lab_id,
-            issuing_doctor_id=exam.issuing_doctor_id,
-            patient_id=exam.patient_id,
-            exam_code=exam.exam_code,
-            lab_name=exam.lab_name,
-            oldpers=exam.oldpers,
-        )
+        for exam_data in selected_exams
+    ]
+
+    # Pre-fetch candidate evaluations for all selected exams in one batch
+    batch_candidates = await diag_svc.get_candidates_for_exams_batch(exam_contexts)
+
+    for exam in exam_contexts:
+        candidates = batch_candidates.get(str(exam.exam_id), [])
+        if not candidates:
+            candidates = await diag_svc.get_candidates_for_exam(
+                exam_id=exam.exam_id,
+                modality=exam.modality,
+                body_part=exam.body_part,
+                lab_id=exam.lab_id,
+                issuing_doctor_id=exam.issuing_doctor_id,
+                patient_id=exam.patient_id,
+                exam_code=exam.exam_code,
+                lab_name=exam.lab_name,
+                oldpers=exam.oldpers,
+            )
+
         # Run filters for this exam
         passed, results_dict = apply_hard_filters(
             candidates=[c for c in candidates if is_eligible[c.id]],
@@ -809,81 +872,59 @@ async def list_diagnosticians(
     """List all active diagnosticians."""
     return await svc.get_all_diagnosticians()
 
+
+@router.get("/doctors")
+def list_doctors_public(q: str = "", limit: int = 200):
+    """Public doctor list/search endpoint for autocompletion."""
+    return cfg_db.get_all_doctors(q=q, skip=0, limit=limit)
+
+
 @router.get("/dashboard")
 async def get_dashboard():
     """Get today's assigned exams per diagnostician."""
     dashboard_data = cfg_db.get_dashboard_data()
     
-    # Resolve exam descriptions from exam_dictionary in diagflow.db and slis_exams
     try:
+        from diagflow.services.assignment import _exam_details_cache
         dict_entries = cfg_db.get_exam_dictionary()
         exam_dict_map = {str(e["code"]).strip(): e["name"] for e in dict_entries if e.get("code") and e.get("name")}
+
+        local_assigns = cfg_db.get_all_local_assignments()
         
-        all_exam_ids = []
-        for d in dashboard_data:
-            all_exam_ids.extend(d.get("assigned_exam_ids", []))
-        
-        exam_names_from_slis = {}
-        if all_exam_ids:
-            try:
-                from diagflow.services.assignment import _get_mock_db
-                con = _get_mock_db()
-                placeholders = ",".join("?" * len(all_exam_ids))
-                rows = con.execute(f"SELECT exammoreid, examname, examnumcode, extracode FROM slis_exams WHERE exammoreid IN ({placeholders})", tuple(all_exam_ids)).fetchall()
-                for r in rows:
-                    r_dict = dict(r)
-                    eid_str = str(r_dict["exammoreid"])
-                    raw_name = (r_dict.get("examname") or "").strip()
-                    numcode = str(r_dict.get("examnumcode") or "").strip()
-                    name = raw_name or (exam_dict_map.get(numcode) if numcode else "")
-                    if name:
-                        exam_names_from_slis[eid_str] = name
-
-                # For any exammoreid still unmapped, try matching by order (extracode) in slis_exams
-                missing_eids = [eid for eid in all_exam_ids if str(eid) not in exam_names_from_slis]
-                if missing_eids:
-                    extra_rows = con.execute("SELECT exammoreid, examname, examnumcode, extracode FROM slis_exams WHERE examname IS NOT NULL AND examname != ''").fetchall()
-                    extra_map = {}
-                    for er in extra_rows:
-                        er_dict = dict(er)
-                        raw_n = (er_dict.get("examname") or "").strip()
-                        ncode = str(er_dict.get("examnumcode") or "").strip()
-                        n = raw_n or (exam_dict_map.get(ncode) if ncode else "")
-                        if er_dict.get("extracode") and n:
-                            extra_map[str(er_dict["extracode"]).strip()] = n
-                    
-                    local_extracodes = {}
-                    with cfg_db._conn() as local_con:
-                        tbl_local = cfg_db._tbl("local_assignments")
-                        tbl_log = cfg_db._tbl("assignment_log")
-                        lrows = local_con.execute(f"SELECT exammoreid, extracode FROM {tbl_local} WHERE exammoreid IS NOT NULL").fetchall()
-                        for lr in lrows:
-                            lr_dict = dict(lr)
-                            if lr_dict.get("exammoreid") and lr_dict.get("extracode"):
-                                local_extracodes[str(lr_dict["exammoreid"])] = str(lr_dict["extracode"]).strip()
-                        logrows = local_con.execute(f"SELECT exammoreid, extracode FROM {tbl_log} WHERE exammoreid IS NOT NULL").fetchall()
-                        for lr in logrows:
-                            lr_dict = dict(lr)
-                            if lr_dict.get("exammoreid") and lr_dict.get("extracode"):
-                                local_extracodes[str(lr_dict["exammoreid"])] = str(lr_dict["extracode"]).strip()
-
-                    for m_eid in missing_eids:
-                        m_str = str(m_eid)
-                        ext = local_extracodes.get(m_str)
-                        if ext and ext in extra_map:
-                            exam_names_from_slis[m_str] = extra_map[ext]
-
-                con.close()
-            except Exception as e:
-                print(f"Failed to fetch dashboard exam names: {e}")
-
         for d in dashboard_data:
             d["exam_names"] = {}
             for eid in d.get("assigned_exam_ids", []):
+                eid_int = int(eid)
                 eid_str = str(eid)
-                name = exam_names_from_slis.get(eid_str)
+                
+                # Check local assignment store first
+                loc = local_assigns.get(eid_int) or {}
+                name = loc.get("examname")
+                
+                # Check in-memory cache
+                if not name:
+                    c_info = _exam_details_cache.get(eid_int) or {}
+                    name = c_info.get("examname")
+                    if not name and c_info.get("examnumcode"):
+                        name = exam_dict_map.get(str(c_info["examnumcode"]).strip())
+
+                # Check mock slis DB if in mock mode
+                if not name and settings.use_mock_slis_db:
+                    try:
+                        from diagflow.services.assignment import _get_mock_db
+                        con = _get_mock_db()
+                        r = con.execute("SELECT examname, examnumcode FROM slis_exams WHERE exammoreid = ?", (eid_int,)).fetchone()
+                        if r:
+                            name = (r["examname"] or "").strip() or (exam_dict_map.get(str(r["examnumcode"]).strip()) if r["examnumcode"] else "")
+                        con.close()
+                    except Exception:
+                        pass
+
                 if not name or name.startswith("Εξέταση ") or "Εξέταση 20" in name:
-                    name = "Γενική Εξέταση"
+                    # Look up modality to give clean descriptive name
+                    mod = loc.get("modality") or "Εξέταση"
+                    name = f"{mod} Απεικόνιση"
+
                 d["exam_names"][name] = d["exam_names"].get(name, 0) + 1
     except Exception as e:
         print(f"Failed to process dashboard exam names: {e}")
@@ -1346,6 +1387,19 @@ async def admin_set_oncall(
     )
     scheduler.set_manual_override_from_admin(record)
     return record
+
+
+@router.get("/admin/pamakristos/overrides")
+async def admin_get_pamakristos_overrides(_=Depends(_require_admin)):
+    return cfg_db.get_pamakristos_manual_overrides()
+
+
+@router.delete("/admin/pamakristos/overrides/{avail_id}")
+async def admin_delete_pamakristos_override(avail_id: int, _=Depends(_require_admin)):
+    success = cfg_db.delete_pamakristos_manual_override(avail_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Override not found")
+    return {"status": "success", "deleted_id": avail_id}
 
 
 # ─────────────────────────────────────────────────────

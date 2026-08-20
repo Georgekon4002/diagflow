@@ -1,3 +1,180 @@
+
+// ═══════════════════════════════════════════════════════
+//  Apple Glass Custom Dropdown & Autocomplete Engine
+// ═══════════════════════════════════════════════════════
+
+function enhanceSelectWithCustomGlass(sel) {
+    if (!sel) return;
+    if (typeof sel === 'string') sel = document.getElementById(sel);
+    if (!sel || sel.tagName !== 'SELECT') return;
+
+    let wrapper = sel.nextElementSibling;
+    if (!wrapper || !wrapper.classList.contains('custom-glass-dropdown-wrap')) {
+        wrapper = document.createElement('div');
+        wrapper.className = 'custom-glass-dropdown-wrap';
+        if (sel.style.width) wrapper.style.width = sel.style.width;
+        if (sel.style.maxWidth) wrapper.style.maxWidth = sel.style.maxWidth;
+        sel.parentNode.insertBefore(wrapper, sel.nextSibling);
+        sel.style.display = 'none';
+    }
+
+    const selectedOption = sel.options[sel.selectedIndex] || sel.options[0];
+    const initialText = selectedOption ? selectedOption.textContent : '— Επιλέξτε —';
+    const isPlaceholder = !sel.value;
+
+    wrapper.innerHTML = `
+        <div class="custom-glass-dropdown-trigger ${isPlaceholder ? 'placeholder-text' : ''}" tabindex="0">
+            <span class="custom-glass-trigger-label">${escapeHtml(initialText)}</span>
+            <span style="font-size: 10px; opacity: 0.6; margin-left: 6px;">▼</span>
+        </div>
+        <div class="custom-glass-dropdown-menu" style="display: none;">
+            <div class="custom-glass-search-wrap">
+                <svg width="13" height="13" viewBox="0 0 14 14" fill="none">
+                    <circle cx="6" cy="6" r="4.5" stroke="currentColor" stroke-width="1.5" />
+                    <path d="M9.5 9.5L12.5 12.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
+                </svg>
+                <input type="text" class="custom-glass-search-input" placeholder="🔍 Αναζήτηση..." autocomplete="off">
+            </div>
+            <div class="custom-glass-options-list"></div>
+        </div>
+    `;
+
+    const trigger = wrapper.querySelector('.custom-glass-dropdown-trigger');
+    const menu = wrapper.querySelector('.custom-glass-dropdown-menu');
+    const searchInput = wrapper.querySelector('.custom-glass-search-input');
+    const optionsList = wrapper.querySelector('.custom-glass-options-list');
+
+    function populateOptions(filterText = '') {
+        const query = typeof normalizeGreek === 'function' ? normalizeGreek(filterText) : filterText.toUpperCase();
+        let optionsHtml = '';
+        let count = 0;
+
+        for (let i = 0; i < sel.options.length; i++) {
+            const opt = sel.options[i];
+            const optText = opt.textContent;
+            const optVal = opt.value;
+            const normText = typeof normalizeGreek === 'function' ? normalizeGreek(optText) : optText.toUpperCase();
+            const normVal = typeof normalizeGreek === 'function' ? normalizeGreek(optVal) : optVal.toUpperCase();
+
+            if (query && !normText.includes(query) && !normVal.includes(query)) {
+                continue;
+            }
+            count++;
+            const isSelected = sel.value === optVal;
+            optionsHtml += `
+                <div class="custom-glass-option ${isSelected ? 'selected' : ''}" data-value="${escapeHtml(optVal)}" data-text="${escapeHtml(optText)}">
+                    <span>${escapeHtml(optText)}</span>
+                    ${isSelected ? '<span style="color:var(--accent-primary); font-weight:bold; font-size:12px;">✓</span>' : ''}
+                </div>
+            `;
+        }
+
+        if (count === 0) {
+            optionsHtml = '<div style="padding: 10px; text-align: center; color: var(--text-tertiary); font-size: 12px;">Δεν βρέθηκαν αποτελέσματα</div>';
+        }
+        optionsList.innerHTML = optionsHtml;
+
+        optionsList.querySelectorAll('.custom-glass-option').forEach(optEl => {
+            optEl.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const val = optEl.getAttribute('data-value');
+                const txt = optEl.getAttribute('data-text');
+                sel.value = val;
+                trigger.querySelector('.custom-glass-trigger-label').textContent = txt;
+                trigger.classList.toggle('placeholder-text', !val);
+                menu.style.display = 'none';
+                trigger.classList.remove('open');
+                sel.dispatchEvent(new Event('change', { bubbles: true }));
+            });
+        });
+    }
+
+    trigger.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const isOpen = menu.style.display === 'block';
+        document.querySelectorAll('.custom-glass-dropdown-menu').forEach(m => m.style.display = 'none');
+        document.querySelectorAll('.custom-glass-dropdown-trigger').forEach(t => t.classList.remove('open'));
+        document.querySelectorAll('.custom-glass-dropdown-wrap').forEach(w => w.classList.remove('open-active'));
+        document.querySelectorAll('.admin-card, .form-group').forEach(c => c.classList.remove('has-open-dropdown'));
+        
+        if (!isOpen) {
+            menu.style.display = 'block';
+            trigger.classList.add('open');
+            wrapper.classList.add('open-active');
+            const parentCard = wrapper.closest('.admin-card') || wrapper.closest('.form-group') || wrapper.closest('.modal-card');
+            if (parentCard) parentCard.classList.add('has-open-dropdown');
+            searchInput.value = '';
+            populateOptions('');
+            setTimeout(() => searchInput.focus(), 50);
+        }
+    });
+
+    searchInput.addEventListener('click', (e) => e.stopPropagation());
+    searchInput.addEventListener('input', (e) => {
+        populateOptions(e.target.value);
+    });
+
+    document.addEventListener('click', (e) => {
+        if (!wrapper.contains(e.target)) {
+            menu.style.display = 'none';
+            trigger.classList.remove('open');
+        }
+    });
+}
+
+function debounceDoctorSearch() {
+    clearTimeout(window._docSearchTimer);
+    window._docSearchTimer = setTimeout(() => {
+        const input = document.getElementById('part-doctor-search');
+        const box = document.getElementById('part-doctor-results');
+        if (!input || !box) return;
+        const q = input.value.trim();
+        if (!q) {
+            box.style.display = 'none';
+            return;
+        }
+        
+        const normQ = typeof normalizeGreek === 'function' ? normalizeGreek(q) : q.toUpperCase();
+        let matches = (doctors || []).filter(d => {
+            const nameNorm = typeof normalizeGreek === 'function' ? normalizeGreek(d.name || '') : (d.name || '').toUpperCase();
+            const idNorm = (d.id || '').toUpperCase();
+            return nameNorm.includes(normQ) || idNorm.includes(normQ);
+        });
+
+        if (!matches.length) {
+            box.innerHTML = '<div style="padding: 10px; font-size: 12px; color: var(--text-tertiary); text-align: center;">Δεν βρέθηκε ιατρός</div>';
+            box.style.display = 'block';
+            return;
+        }
+
+        box.className = 'autocomplete-suggestions-box';
+        box.innerHTML = matches.slice(0, 15).map(d => `
+            <div class="autocomplete-item" onclick="selectPartDoctor('${escapeHtml(d.id)}', '${escapeHtml(d.name)}')">
+                <span style="font-weight: 600;">🩺 ${escapeHtml(d.name)}</span>
+                <span style="font-size: 11px; color: var(--text-tertiary); font-family: monospace;">(${escapeHtml(d.id)})</span>
+            </div>
+        `).join('');
+        box.style.display = 'block';
+    }, 150);
+}
+
+function selectPartDoctor(id, name) {
+    const input = document.getElementById('part-doctor-search');
+    const idInput = document.getElementById('part-doctor-id');
+    const box = document.getElementById('part-doctor-results');
+    if (input) input.value = `${name} (${id})`;
+    if (idInput) idInput.value = id;
+    if (box) box.style.display = 'none';
+}
+
+document.addEventListener('click', (e) => {
+    const box = document.getElementById('part-doctor-results');
+    const input = document.getElementById('part-doctor-search');
+    if (box && input && !box.contains(e.target) && e.target !== input) {
+        box.style.display = 'none';
+    }
+});
+
 /**
  * DiagFlow — Admin Panel JavaScript
  *
@@ -272,7 +449,37 @@ function showDbStatusDetails() {
 //  Auth Guard & Init
 // ══════════════════════════════════════════════
 
+// ── Theme Management ──
+function initTheme() {
+    const savedTheme = localStorage.getItem('diagflow_theme') || 'light';
+    setTheme(savedTheme);
+}
+
+function toggleTheme() {
+    const currentTheme = document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light';
+    const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
+    setTheme(newTheme);
+}
+
+function setTheme(theme) {
+    if (theme === 'dark') {
+        document.documentElement.setAttribute('data-theme', 'dark');
+        document.documentElement.classList.add('dark-theme');
+        document.body.classList.add('dark-theme');
+        const btn = document.getElementById('btn-theme-toggle');
+        if (btn) btn.textContent = '☀️';
+    } else {
+        document.documentElement.removeAttribute('data-theme');
+        document.documentElement.classList.remove('dark-theme');
+        document.body.classList.remove('dark-theme');
+        const btn = document.getElementById('btn-theme-toggle');
+        if (btn) btn.textContent = '🌙';
+    }
+    localStorage.setItem('diagflow_theme', theme);
+}
+
 document.addEventListener('DOMContentLoaded', async () => {
+    initTheme();
     checkDbStatus();
     if (!adminToken) {
         showToast('Απαιτείται σύνδεση διαχειριστή.', 'error');
@@ -352,6 +559,7 @@ async function loadAll() {
         loadAvailability(),
         loadOncall(),
         loadPamakristosWeeklySchedule(),
+        loadPamakristosOverrides(),
         loadAdvancedOptions(),
         loadSystemWeights(),
         loadAdminUsers(),
@@ -431,6 +639,10 @@ function showSection(name) {
 
     if (name === 'exams') {
         renderExamsSection();
+    } else if (name === 'oncall') {
+        loadOncall();
+        loadPamakristosOverrides();
+        loadPamakristosWeeklySchedule();
     }
 }
 
@@ -579,15 +791,21 @@ async function loadOncall() {
     const el = document.getElementById('oncall-current');
     if (el) {
         el.innerHTML = `
-            <strong style="color:var(--text-primary);font-size:var(--font-size-md);">${oncall.diagnostician_name}</strong>
+            <strong style="color:var(--text-primary);font-size:var(--font-size-md);">${oncall.diagnostician_name || '—'}</strong>
             <span style="margin-left:8px;color:var(--text-tertiary);">(${formatDate(oncall.date)})</span>
         `;
+    }
+    const oncallDateInput = document.getElementById('oncall-date');
+    if (oncallDateInput && !oncallDateInput.value) {
+        const todayIso = new Date().toISOString().split('T')[0];
+        oncallDateInput.value = todayIso;
     }
 }
 
 let weeklyScheduleData = [];
 
 async function loadPamakristosWeeklySchedule() {
+    setTimeout(() => { document.querySelectorAll(".pamakristos-schedule-select").forEach(sel => enhanceSelectWithCustomGlass(sel)); }, 50);
     try {
         const data = await apiCall('/admin/pamakristos/weekly-schedule');
         weeklyScheduleData = data || [];
@@ -658,21 +876,87 @@ async function savePamakristosWeeklySchedule() {
     }
 }
 
+async function setOncall() {
+    const diagId = document.getElementById('oncall-diag-select').value;
+    const dateVal = document.getElementById('oncall-date').value;
+    if (!diagId || !dateVal) {
+        showToast('Παρακαλώ επιλέξτε διαγνώστη και ημερομηνία.', 'warning');
+        return;
+    }
+    const isoDate = dateVal.trim();
+    try {
+        await apiCall('/admin/oncall', 'POST', {
+            diagnostician_id: parseInt(diagId),
+            date: isoDate
+        });
+        showToast('✅ Ο υπεύθυνος Παμμακάριστου ορίστηκε επιτυχώς!', 'success');
+        await Promise.all([loadOncall(), loadPamakristosOverrides()]);
+    } catch (err) {
+        showToast(`Σφάλμα: ${err.message}`, 'error');
+    }
+}
+
+let pamakristosOverridesData = [];
+
+async function loadPamakristosOverrides() {
+    try {
+        const data = await apiCall('/admin/pamakristos/overrides');
+        pamakristosOverridesData = data || [];
+        renderPamakristosOverrides();
+    } catch (err) {
+        console.warn("Failed to load Pamakristos overrides", err);
+    }
+}
+
+function renderPamakristosOverrides() {
+    const tbody = document.getElementById('pamakristos-overrides-tbody');
+    if (!tbody) return;
+
+    const todayStr = new Date().toISOString().split('T')[0];
+    const filtered = (pamakristosOverridesData || []).filter(item => item && item.date >= todayStr);
+
+    if (filtered.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="3" style="text-align:center; padding:16px; color:var(--text-tertiary);">Δεν υπάρχουν καταγεγραμμένες αλλαγές για σήμερα ή μελλοντικές ημερομηνίες.</td></tr>`;
+        return;
+    }
+
+    tbody.innerHTML = filtered.map(item => `
+        <tr>
+            <td style="font-weight:600; padding:10px;">${formatDate(item.date)}</td>
+            <td style="padding:10px;"><strong>${escapeHtml(item.diagnostician_name)}</strong></td>
+            <td style="padding:10px; text-align:right;">
+                <button class="btn btn-danger btn-sm" onclick="deletePamakristosOverride(${item.id})" title="Διαγραφή ανάθεσης">🗑️ Διαγραφή</button>
+            </td>
+        </tr>
+    `).join('');
+}
+
+async function deletePamakristosOverride(id) {
+    if (!confirm("Θέλετε να διαγράψετε αυτή τη χειροκίνητη αλλαγή προγράμματος;")) return;
+    try {
+        await apiCall(`/admin/pamakristos/overrides/${id}`, 'DELETE');
+        showToast('Η αλλαγή διαγράφηκε.', 'success');
+        await Promise.all([loadOncall(), loadPamakristosOverrides()]);
+    } catch (err) {
+        showToast(`Σφάλμα διαγραφής: ${err.message}`, 'error');
+    }
+}
+
 function populateDiagnosticianSelects() {
-    const selects = ['oncall-diag-select', 'avail-diag', 'skill-diag', 'part-diag', 'schedule-diag', 'adv-route-diag', 'adv-excl-diag', 'adv-quota-diag'];
+    const selects = ['oncall-diag-select', 'avail-diag', 'skill-diag', 'part-diag', 'schedule-diag', 'adv-route-diag', 'adv-excl-diag', 'adv-quota-diag', 'new-user-role', 'adv-route-lab', 'adv-excl-lab', 'adv-quota-modality'];
     selects.forEach(id => {
         const sel = document.getElementById(id);
         if (!sel) return;
         
-        let html = '<option value="">— Επιλέξτε —</option>';
-        diagnosticians.forEach(d => {
-            // Filter out inactive diagnosticians
-            if (!d.active) {
-                return;
-            }
-            html += `<option value="${d.id}" data-name="${d.name}">${d.name}</option>`;
-        });
-        sel.innerHTML = html;
+        if (id.includes('diag')) {
+            let html = '<option value="">— Επιλέξτε —</option>';
+            diagnosticians.forEach(d => {
+                if (!d.active) return;
+                html += `<option value="${d.id}" data-name="${d.name}">${d.name}</option>`;
+            });
+            sel.innerHTML = html;
+        }
+        enhanceSelectWithCustomGlass(sel);
     });
 }
 
@@ -737,7 +1021,7 @@ function renderDiagnosticians() {
             <td><input type="checkbox" style="accent-color:var(--accent-primary);" ${d.can_ct ? 'checked' : ''} onchange="toggleDiagCT(${d.id}, this.checked)"></td>
             <td><input type="checkbox" style="accent-color:var(--accent-primary);" ${d.can_mri ? 'checked' : ''} onchange="toggleDiagMRI(${d.id}, this.checked)"></td>
             <td>
-                <select class="form-input filter-select" style="width:120px;padding:4px;font-size:12px;" onchange="updatePreferredLab(${d.id}, this.value)">
+                <select class="form-input filter-select preferred-lab-select" style="width:140px;padding:4px;font-size:12px;" onchange="updatePreferredLab(${d.id}, this.value)">
                     <option value="" ${!d.preferred_lab_id ? 'selected' : ''}>Κανένα</option>
                     <option value="1" ${d.preferred_lab_id === 1 ? 'selected' : ''}>ΚΟΛΙΑΤΣΟΥ (1)</option>
                     <option value="5" ${d.preferred_lab_id === 5 ? 'selected' : ''}>ΣΕΠΟΛΙΑ (5)</option>
@@ -754,6 +1038,7 @@ function renderDiagnosticians() {
     `).join('');
     
     updateDiagPagination();
+    document.querySelectorAll(".preferred-lab-select").forEach(sel => enhanceSelectWithCustomGlass(sel));
 }
 
 function changeDiagPage(dir) {
@@ -1051,6 +1336,7 @@ function renderSkills() {
         });
     }
     tbody.innerHTML = html;
+    setTimeout(() => { document.querySelectorAll(".pamakristos-schedule-select").forEach(sel => enhanceSelectWithCustomGlass(sel)); }, 50);
     updateSkillsFloatingBar();
 }
 
@@ -1304,6 +1590,7 @@ function renderPartnerships() {
         });
     }
     tbody.innerHTML = html;
+    setTimeout(() => { document.querySelectorAll(".pamakristos-schedule-select").forEach(sel => enhanceSelectWithCustomGlass(sel)); }, 50);
     updatePartnershipsFloatingBar();
 }
 
@@ -2186,6 +2473,7 @@ function updateExamsFloatingBar() {
     if (currentSelectedDiagId && eligibleDiags.some(d => String(d.id) === String(currentSelectedDiagId))) {
         selectEl.value = currentSelectedDiagId;
     }
+    enhanceSelectWithCustomGlass(selectEl);
 }
 
 async function addSelectedExamsAsSkills() {
@@ -2642,6 +2930,10 @@ function formatDate(dateStr) {
     } catch { return dateStr; }
 }
 
+function formatDateDMY(dateStr) {
+    return formatDate(dateStr);
+}
+
 function showToast(message, type = 'info') {
     let container = document.getElementById('toast-container');
     if (!container) {
@@ -2770,16 +3062,22 @@ function renderWeeklyScheduleGrid() {
     const quotaKeys = ['quota_monday', 'quota_tuesday', 'quota_wednesday', 'quota_thursday', 'quota_friday', 'quota_saturday', 'quota_sunday'];
 
     tbody.innerHTML = activeDiags.map(d => {
-        let cells = `<td style="font-weight:500;">${d.name}</td>`;
+        let cells = `<td style="font-weight:600; color:var(--text-primary); padding:10px 14px;">${escapeHtml(d.name)}</td>`;
+
         for (let day = 0; day < 7; day++) {
-            const quotaVal = d[quotaKeys[day]] || 0;
+            const quotaVal = d[quotaKeys[day]] !== undefined ? d[quotaKeys[day]] : 0;
+            const isZero = quotaVal === 0;
+            const badgeStyle = isZero
+                ? 'background:rgba(239, 68, 68, 0.1); color:#EF4444; border:1px solid rgba(239, 68, 68, 0.3); font-weight:700;'
+                : 'background:rgba(99, 102, 241, 0.08); color:var(--accent-primary); border:1px solid rgba(99, 102, 241, 0.25); font-weight:700;';
             cells += `
-                <td style="text-align:center;">
+                <td style="text-align:center; padding:6px 8px;">
                     <input type="number" 
-                           class="form-input"
-                           style="width:50px;padding:4px;text-align:center;${quotaVal === 0 ? 'background-color:#ffe4e6;color:#e11d48;font-weight:bold;' : ''}" 
+                           class="form-input quota-daily-input"
+                           style="width:56px; padding:6px 4px; text-align:center; border-radius:8px; font-size:13px; transition:all 0.2s; ${badgeStyle}" 
                            value="${quotaVal}"
                            min="0"
+                           title="${quotaVal === 0 ? 'Κλειστό / 0 όριο' : 'Ημερήσιο όριο: ' + quotaVal}"
                            onchange="updateWeeklyQuota(${d.id}, '${quotaKeys[day]}', this.value)">
                 </td>
             `;
@@ -3241,12 +3539,33 @@ function editModalityQuota(id) {
     };
 }
 
+function toggleDailyQuotasTable() {
+    const wrapper = document.getElementById('quotas-table-wrapper');
+    const arrow = document.getElementById('quotas-toggle-arrow');
+    if (!wrapper || !arrow) return;
+    const isHidden = wrapper.style.display === 'none';
+    wrapper.style.display = isHidden ? 'block' : 'none';
+    arrow.textContent = isHidden ? '▼' : '▶';
+}
+
 const WEIGHT_KEYS = [
     'pts_partnership', 'pts_history', 
     'pts_skills_pref', 'pts_skills_neut', 'pts_skills_none',
     'pts_lab_pref', 'pts_lab_neut', 'pts_lab_other',
     'pts_capacity'
 ];
+
+function syncWeightSlider(name, val) {
+    const numInput = document.getElementById(`pts-${name}`);
+    if (numInput) numInput.value = val;
+    updateWeightsTotal();
+}
+
+function syncWeightInput(name, val) {
+    const slider = document.getElementById(`range-${name}`);
+    if (slider) slider.value = Math.round(parseFloat(val) || 0);
+    updateWeightsTotal();
+}
 
 async function loadSystemWeights() {
     try {
@@ -3268,47 +3587,76 @@ async function loadSystemWeights() {
 }
 
 function updateWeightsTotal() {
-    // Only sum the max potential points for validation
-    const maxKeys = ['pts-partnership', 'pts-history', 'pts-skills-pref', 'pts-lab-pref', 'pts-capacity'];
-    let sum = 0;
-    
-    maxKeys.forEach(id => {
+    const pVal = parseFloat(document.getElementById('pts-partnership')?.value || 0);
+    const hVal = parseFloat(document.getElementById('pts-history')?.value || 0);
+    const sPrefVal = parseFloat(document.getElementById('pts-skills-pref')?.value || 0);
+    const lPrefVal = parseFloat(document.getElementById('pts-lab-pref')?.value || 0);
+    const cVal = parseFloat(document.getElementById('pts-capacity')?.value || 0);
+
+    const sum = pVal + hVal + sPrefVal + lPrefVal + cVal;
+
+    // Update individual sliders if not focused
+    const syncSliderIfUnfocused = (id, val) => {
+        const sl = document.getElementById(id);
+        if (sl && document.activeElement !== sl) sl.value = Math.round(val);
+    };
+    syncSliderIfUnfocused('range-partnership', pVal);
+    syncSliderIfUnfocused('range-history', hVal);
+    syncSliderIfUnfocused('range-skills-pref', sPrefVal);
+    syncSliderIfUnfocused('range-lab-pref', lPrefVal);
+    syncSliderIfUnfocused('range-capacity', cVal);
+
+    // Update labels
+    const setLbl = (id, val) => {
         const el = document.getElementById(id);
-        if (el) sum += parseFloat(el.value || 0);
-    });
-    
-    const display = document.getElementById('weights-total-display');
-    const btn = document.getElementById('btn-save-weights');
-    const errMsg = document.getElementById('weights-error-message');
-    
-    if (display) {
-        display.textContent = `Σύνολο Max: ${sum.toFixed(1).replace(/\.0$/, '')}%`;
-        if (Math.abs(sum - 100) > 0.1) {
-            display.style.color = '#ef4444'; // Red
-            if (btn) btn.disabled = true;
-            if (errMsg) {
-                errMsg.style.color = '#ef4444';
-                errMsg.style.fontWeight = 'bold';
-            }
-        } else {
-            display.style.color = '#10b981'; // Green
-            if (btn) btn.disabled = false;
-            if (errMsg) {
-                errMsg.style.color = 'var(--text-secondary)';
-                errMsg.style.fontWeight = 'normal';
-            }
-        }
-    }
-    
-    // Live update the table
-    const currentWeights = {};
-    WEIGHT_KEYS.forEach(k => {
-        const id = k.replaceAll('_', '-');
+        if (el) el.textContent = `${val.toFixed(1).replace(/\.0$/, '')}%`;
+    };
+    setLbl('lbl-partnership', pVal);
+    setLbl('lbl-history', hVal);
+    setLbl('lbl-skills', sPrefVal);
+    setLbl('lbl-lab', lPrefVal);
+    setLbl('lbl-capacity', cVal);
+
+    // Update segments in live stacked bar
+    const setBar = (id, val) => {
         const el = document.getElementById(id);
         if (el) {
-            currentWeights[k] = parseFloat(el.value || 0) / 100;
+            el.style.width = `${Math.max(0, val)}%`;
+            el.title = `${val}%`;
         }
-    });
+    };
+    setBar('bar-partnership', pVal);
+    setBar('bar-history', hVal);
+    setBar('bar-skills', sPrefVal);
+    setBar('bar-lab', lPrefVal);
+    setBar('bar-capacity', cVal);
+
+    // Update total display and badge
+    const display = document.getElementById('weights-total-display');
+    const badge = document.getElementById('admin-weights-badge');
+    const btn = document.getElementById('btn-save-weights');
+
+    const totalText = `${sum.toFixed(1).replace(/\.0$/, '')}%`;
+    if (badge) badge.textContent = totalText;
+
+    if (display) {
+        display.textContent = `Σύνολο Max: ${totalText}`;
+        if (Math.abs(sum - 100) > 0.1) {
+            display.style.color = '#ef4444';
+            if (badge) {
+                badge.style.color = '#ef4444';
+                badge.style.background = 'rgba(239, 68, 68, 0.15)';
+            }
+            if (btn) btn.disabled = true;
+        } else {
+            display.style.color = '#10b981';
+            if (badge) {
+                badge.style.color = '#10b981';
+                badge.style.background = 'rgba(16, 185, 129, 0.15)';
+            }
+            if (btn) btn.disabled = false;
+        }
+    }
 }
 
 async function saveSystemWeights() {

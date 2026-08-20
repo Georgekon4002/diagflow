@@ -31,6 +31,39 @@ _DB_PATH = _PROJECT_ROOT / "db" / "diagflow.db"
 _last_db_mtime = 0.0
 
 
+def _get_templates_dir() -> Path:
+    """Resolve directory where template databases & SQL scripts reside."""
+    if getattr(sys, "frozen", False):
+        return Path(sys._MEIPASS) / "db" / "templates"  # type: ignore[attr-defined]
+    return Path(__file__).resolve().parent.parent.parent.parent / "db" / "templates"
+
+
+def _ensure_diagflow_db_initialized() -> None:
+    """If diagflow.db is missing or empty in mock mode, seed it from templates."""
+    if not _DB_PATH.exists() or _DB_PATH.stat().st_size == 0:
+        _DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+        tmpl_dir = _get_templates_dir()
+        tmpl_db = tmpl_dir / "diagflow.db"
+        if tmpl_db.exists():
+            import shutil
+            try:
+                shutil.copy2(tmpl_db, _DB_PATH)
+                return
+            except Exception:
+                pass
+        
+        tmpl_sql = tmpl_dir / "init_diagflow.sql"
+        if tmpl_sql.exists():
+            try:
+                with open(tmpl_sql, "r", encoding="utf-8") as f:
+                    sql_content = f.read()
+                con = sqlite3.connect(_DB_PATH)
+                con.executescript(sql_content)
+                con.close()
+            except Exception:
+                pass
+
+
 def _tbl(name: str) -> str:
     """Return 'df_<name>' when using central DB, else '<name>' for mock SQLite."""
     if not settings.use_mock_slis_db:
@@ -157,6 +190,7 @@ def _ensure_schema(con: sqlite3.Connection) -> None:
 def _conn() -> Generator[DBAdapter, None, None]:
     global _last_db_mtime
     if settings.use_mock_slis_db:
+        _ensure_diagflow_db_initialized()
         _DB_PATH.parent.mkdir(parents=True, exist_ok=True)
         raw_con = sqlite3.connect(_DB_PATH, timeout=10.0)
         raw_con.row_factory = sqlite3.Row
@@ -506,6 +540,30 @@ def get_partnerships_by_doctor(issuing_doctor_id: str) -> list[dict]:
     return [_row_to_dict(r) for r in rows]
 
 
+def get_partnerships_for_doctors(doctor_ids: list[str]) -> dict[str, list[dict]]:
+    """Batch fetch active partnerships for multiple issuing doctor IDs."""
+    if not doctor_ids:
+        return {}
+    tbl = _tbl("partnerships")
+    clean_ids = list({str(d).strip() for d in doctor_ids if str(d).strip()})
+    if not clean_ids:
+        return {}
+    placeholders = ", ".join(["?"] * len(clean_ids))
+    with _conn() as con:
+        rows = con.execute(
+            f"SELECT issuing_doctor_id, preferred_diagnostician_id, priority, exclusive, is_active "
+            f"FROM {tbl} "
+            f"WHERE issuing_doctor_id IN ({placeholders}) "
+            f"ORDER BY priority DESC",
+            tuple(clean_ids),
+        ).fetchall()
+    result: dict[str, list[dict]] = {}
+    for r in rows:
+        r_dict = _row_to_dict(r)
+        result.setdefault(str(r_dict["issuing_doctor_id"]).strip(), []).append(r_dict)
+    return result
+
+
 # ── Availability ──────────────────────────────────────────────────────────────
 
 def get_all_availability() -> list[dict]:
@@ -667,6 +725,36 @@ def get_oncall_diagnostician(date_str: str) -> dict | None:
     return None
 
 
+def get_pamakristos_manual_overrides(from_date: str | None = None) -> list[dict]:
+    """Retrieve manual on-call schedule overrides for Pammakaristos from today onwards."""
+    if from_date is None:
+        from datetime import date
+        from_date = str(date.today())
+    tbl_a = _tbl("availability")
+    tbl_d = _tbl("diagnosticians")
+    with _conn() as con:
+        rows = con.execute(
+            f"SELECT a.id, a.diagnostician_id, d.name AS diagnostician_name, a.date, a.status, a.notes "
+            f"FROM {tbl_a} a "
+            f"JOIN {tbl_d} d ON d.id = a.diagnostician_id "
+            f"WHERE a.is_pamakristos_oncall = 1 AND a.date >= ? "
+            f"ORDER BY a.date ASC",
+            (from_date,)
+        ).fetchall()
+    return [_row_to_dict(r) for r in rows]
+
+
+def delete_pamakristos_manual_override(avail_id: int) -> bool:
+    """Delete or revert a manual on-call schedule override."""
+    tbl_a = _tbl("availability")
+    with _conn() as con:
+        cur = con.execute(
+            f"DELETE FROM {tbl_a} WHERE id = ? AND is_pamakristos_oncall = 1",
+            (avail_id,)
+        )
+        return cur.rowcount > 0
+
+
 # ── Doctors ───────────────────────────────────────────────────────────────────
 
 def _normalize_greek_str(s: str) -> str:
@@ -755,7 +843,6 @@ def delete_doctor(doctor_id: str) -> bool:
 
 def upsert_local_assignment(exammoreid: int, diagnostician_id: int, diagnostician_name: str, assigned_at: str, modality: str | None = None, extracode: str | None = None, is_auto: bool = False, rule_desc: str | None = None) -> dict:
     tbl_local = _tbl("local_assignments")
-    tbl_log = _tbl("assignment_log")
     with _conn() as con:
         existing_local = con.execute(f"SELECT exammoreid FROM {tbl_local} WHERE exammoreid = ?", (exammoreid,)).fetchone()
         if existing_local:

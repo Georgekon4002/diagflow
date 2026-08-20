@@ -22,6 +22,12 @@ from diagflow.engine.pipeline import AssignmentPipeline, AssignmentSuggestion
 
 logger = structlog.get_logger(__name__)
 
+# Global in-memory cache for fast suggestion generation and metadata resolution
+_exam_details_cache: dict[int, dict] = {}
+_pending_exams_cache_data: list[dict] | None = None
+_pending_exams_cache_time: float = 0.0
+
+
 # ── Resolve mock DB path relative to the project root ─────────────
 if getattr(sys, "frozen", False):
     _exe_dir = Path(sys.executable).parent
@@ -38,7 +44,8 @@ _MOCK_DB_PATH = _PROJECT_ROOT / settings.mock_slis_db_path
 
 def _get_mock_db() -> sqlite3.Connection:
     """Open a read-write SQLite connection to the mock Slis database."""
-    from diagflow.services.slis_sync import ensure_slis_exams_table
+    from diagflow.services.slis_sync import ensure_slis_exams_table, ensure_mock_slis_db_initialized
+    ensure_mock_slis_db_initialized()
     _MOCK_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     con = sqlite3.connect(str(_MOCK_DB_PATH))
     con.row_factory = sqlite3.Row
@@ -204,19 +211,26 @@ class AssignmentService:
         )
 
         try:
-            mod = None
-            ext = None
-            if settings.use_mock_slis_db:
-                try:
-                    con = _get_mock_db()
-                    row = con.execute("SELECT category, extracode FROM slis_exams WHERE exammoreid = ?", (int(exam_id),)).fetchone()
-                    if row:
-                        mod = row["category"] if "category" in row.keys() else None
-                        ext = str(row["extracode"]) if ("extracode" in row.keys() and row["extracode"]) else None
-                    con.close()
-                except Exception:
-                    pass
-            cfg_db.upsert_local_assignment(int(exam_id), diagnostician_id, diagnostician_name, now_iso, modality=mod, extracode=ext, is_auto=False)
+            eid_int = int(exam_id)
+            exam_info = _exam_details_cache.get(eid_int) or {}
+            mod = exam_info.get("category") or exam_info.get("modality")
+            ext = str(exam_info.get("extracode")) if exam_info.get("extracode") else None
+            ename = exam_info.get("examname") or exam_info.get("exam_name") or exam_info.get("exam_title")
+            
+            if not mod or not ext or not ename:
+                if settings.use_mock_slis_db:
+                    try:
+                        con = _get_mock_db()
+                        row = con.execute("SELECT category, extracode, examname FROM slis_exams WHERE exammoreid = ?", (eid_int,)).fetchone()
+                        if row:
+                            if not mod: mod = row["category"] if "category" in row.keys() else None
+                            if not ext: ext = str(row["extracode"]) if ("extracode" in row.keys() and row["extracode"]) else None
+                            if not ename: ename = row["examname"] if "examname" in row.keys() else None
+                        con.close()
+                    except Exception:
+                        pass
+
+            cfg_db.upsert_local_assignment(eid_int, diagnostician_id, diagnostician_name, now_iso, modality=mod, extracode=ext, is_auto=False)
         except Exception as e:
             logger.warning("local_assignment_update_failed", error=str(e))
 
@@ -331,6 +345,15 @@ def _get_pending_exams_from_db() -> list[dict]:
         now_iso = datetime.now().isoformat()
         for r in raw_exam_rows:
             exam_id = int(r["exammoreid"])
+            _exam_details_cache[exam_id] = {
+                "exammoreid": exam_id,
+                "extracode": r.get("extracode"),
+                "category": r.get("category"),
+                "modality": r.get("category"),
+                "examname": r.get("examname") or r.get("exam_name") or r.get("exam_title") or "",
+                "examnumcode": r.get("examnumcode"),
+                "patient_name": f"{r.get('fname') or ''} {r.get('lname') or ''}".strip(),
+            }
             if exam_id in local_assignments:
                 continue  # already handled (staged in df_local_assignments)
 
@@ -447,7 +470,16 @@ def _get_assigned_exams_from_db() -> list[dict]:
                     for r in res.fetchall():
                         r_dict = {k.lower(): v for k, v in zip(keys, r)}
                         if r_dict.get("exammoreid"):
-                            exam_metadata[int(r_dict["exammoreid"])] = r_dict
+                            eid = int(r_dict["exammoreid"])
+                            exam_metadata[eid] = r_dict
+                            _exam_details_cache[eid] = {
+                                "exammoreid": eid,
+                                "extracode": r_dict.get("extracode"),
+                                "category": r_dict.get("category"),
+                                "modality": r_dict.get("category"),
+                                "examname": r_dict.get("examname") or r_dict.get("exam_name") or "",
+                                "examnumcode": r_dict.get("examnumcode"),
+                            }
             except Exception as e:
                 logger.warning("failed_to_fetch_mssql_assigned_metadata", error=str(e))
         else:

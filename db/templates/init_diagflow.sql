@@ -24,12 +24,12 @@ CREATE TABLE availability (
     notes                   TEXT,
     UNIQUE(diagnostician_id, date)
 );
-INSERT INTO "availability" VALUES(1,1,'2026-08-10','available',0,NULL);
-INSERT INTO "availability" VALUES(2,2,'2026-08-10','available',1,'Εφημερία Παμμακάριστος');
-INSERT INTO "availability" VALUES(3,3,'2026-08-10','available',0,NULL);
-INSERT INTO "availability" VALUES(4,4,'2026-08-10','absent',0,'Άδεια');
-INSERT INTO "availability" VALUES(5,5,'2026-08-10','available',0,NULL);
-INSERT INTO "availability" VALUES(6,6,'2026-08-10','available',0,NULL);
+INSERT INTO "availability" VALUES(1,1,'2026-08-20','available',0,NULL);
+INSERT INTO "availability" VALUES(2,2,'2026-08-20','available',1,'Εφημερία Παμμακάριστος');
+INSERT INTO "availability" VALUES(3,3,'2026-08-20','available',0,NULL);
+INSERT INTO "availability" VALUES(4,4,'2026-08-20','absent',0,'Άδεια');
+INSERT INTO "availability" VALUES(5,5,'2026-08-20','available',0,NULL);
+INSERT INTO "availability" VALUES(6,6,'2026-08-20','available',0,NULL);
 CREATE TABLE diagnostician_skills (
     id                INTEGER PRIMARY KEY AUTOINCREMENT,
     diagnostician_id  INTEGER NOT NULL REFERENCES diagnosticians(id) ON DELETE CASCADE,
@@ -68,12 +68,12 @@ CREATE TABLE diagnosticians (
     preferred_lab_id INTEGER DEFAULT NULL,
     created_at       TEXT    DEFAULT (datetime('now'))
 );
-INSERT INTO "diagnosticians" VALUES(1,'ΔΙΑΓΝΩΣΤΗΣ Α',1,1,1,15,15,15,15,15,0,0,1,'2026-08-10 11:51:57');
-INSERT INTO "diagnosticians" VALUES(2,'ΔΙΑΓΝΩΣΤΗΣ Β',1,1,1,15,15,15,15,15,0,0,1,'2026-08-10 11:51:57');
-INSERT INTO "diagnosticians" VALUES(3,'ΔΙΑΓΝΩΣΤΗΣ Γ',1,1,1,15,15,15,15,15,0,0,2,'2026-08-10 11:51:57');
-INSERT INTO "diagnosticians" VALUES(4,'ΔΙΑΓΝΩΣΤΗΣ Δ',1,1,0,12,12,12,12,12,0,0,1,'2026-08-10 11:51:57');
-INSERT INTO "diagnosticians" VALUES(5,'ΔΙΑΓΝΩΣΤΗΣ Ε',1,0,1,12,12,12,12,12,0,0,2,'2026-08-10 11:51:57');
-INSERT INTO "diagnosticians" VALUES(6,'ΔΙΑΓΝΩΣΤΗΣ Ζ',1,1,1,15,15,15,15,15,0,0,1,'2026-08-10 11:51:57');
+INSERT INTO "diagnosticians" VALUES(1,'ΔΙΑΓΝΩΣΤΗΣ Α',1,1,1,15,15,15,15,15,0,0,1,'2026-08-20 12:13:30');
+INSERT INTO "diagnosticians" VALUES(2,'ΔΙΑΓΝΩΣΤΗΣ Β',1,1,1,15,15,15,15,15,0,0,1,'2026-08-20 12:13:30');
+INSERT INTO "diagnosticians" VALUES(3,'ΔΙΑΓΝΩΣΤΗΣ Γ',1,1,1,15,15,15,15,15,0,0,2,'2026-08-20 12:13:30');
+INSERT INTO "diagnosticians" VALUES(4,'ΔΙΑΓΝΩΣΤΗΣ Δ',1,1,0,12,12,12,12,12,0,0,1,'2026-08-20 12:13:30');
+INSERT INTO "diagnosticians" VALUES(5,'ΔΙΑΓΝΩΣΤΗΣ Ε',1,0,1,12,12,12,12,12,0,0,2,'2026-08-20 12:13:30');
+INSERT INTO "diagnosticians" VALUES(6,'ΔΙΑΓΝΩΣΤΗΣ Ζ',1,1,1,15,15,15,15,15,0,0,1,'2026-08-20 12:13:30');
 CREATE TABLE doctors (
     id          TEXT PRIMARY KEY,
     name        TEXT NOT NULL

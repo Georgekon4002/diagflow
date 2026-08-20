@@ -11,7 +11,7 @@ from datetime import date
 
 import structlog
 
-from diagflow.engine.filters import CandidateDiagnostician
+from diagflow.engine.filters import CandidateDiagnostician, ExamContext
 import diagflow.db.diagflow_db as cfg_db
 
 logger = structlog.get_logger(__name__)
@@ -181,6 +181,130 @@ class DiagnosticianService:
         )
 
         return candidates
+
+    async def get_candidates_for_exams_batch(
+        self,
+        exams: list[ExamContext],
+    ) -> dict[str, list[CandidateDiagnostician]]:
+        """
+        High-performance batch candidate evaluation for multiple exams simultaneously.
+        Pre-loads all diagnosticians, absences, daily counts, skills, and doctor partnerships
+        in single bulk operations, turning O(N) database queries into O(1) in-memory lookups.
+        """
+        if not exams:
+            return {}
+
+        today = str(date.today())
+        import time
+        now = time.time()
+        if not hasattr(DiagnosticianService, "_cache_timestamp") or (now - getattr(DiagnosticianService, "_cache_timestamp", 0)) > 3.0:
+            DiagnosticianService._cached_all_diags = cfg_db.get_all_diagnosticians()
+            DiagnosticianService._cached_absent_ids = cfg_db.get_absent_diagnostician_ids(today)
+            DiagnosticianService._cached_daily_counts = cfg_db.get_daily_assignment_counts()
+            DiagnosticianService._cached_skills_by_diag = cfg_db.get_all_skills_grouped()
+            DiagnosticianService._cache_timestamp = now
+
+        all_diags = DiagnosticianService._cached_all_diags
+        absent_ids = DiagnosticianService._cached_absent_ids
+        daily_counts = DiagnosticianService._cached_daily_counts
+        all_skills_by_diag = DiagnosticianService._cached_skills_by_diag
+
+        # Gather all unique doctor IDs across the batch
+        doctor_ids = [e.issuing_doctor_id for e in exams if e.issuing_doctor_id]
+        doctor_partnerships_batch = cfg_db.get_partnerships_for_doctors(doctor_ids)
+
+        all_configured_exam_codes = {
+            str(sk["exam_code"]).strip()
+            for diag_skills in all_skills_by_diag.values()
+            for sk in diag_skills
+            if sk.get("exam_code")
+        }
+
+        weekday_str = date.today().strftime("%A").lower()
+        quota_key = f"quota_{weekday_str}"
+
+        batch_result: dict[str, list[CandidateDiagnostician]] = {}
+
+        for exam in exams:
+            clean_exam_code = str(exam.exam_code or "").strip()
+            exam_code_has_skills = clean_exam_code in all_configured_exam_codes
+
+            partnerships = doctor_partnerships_batch.get(str(exam.issuing_doctor_id).strip(), [])
+            if not partnerships and exam.issuing_doctor_id:
+                # Fallback if not found in batch map
+                partnerships = cfg_db.get_partnerships_by_doctor(exam.issuing_doctor_id)
+
+            partnership_map: dict[int, dict] = {
+                p["preferred_diagnostician_id"]: p for p in partnerships if p.get("is_active", 1) == 1
+            }
+
+            candidates: list[CandidateDiagnostician] = []
+
+            for diag in all_diags:
+                if not diag["active"]:
+                    continue
+
+                diag_id = int(diag["id"])
+                skills = all_skills_by_diag.get(diag_id, [])
+
+                skill_match = None
+                for skill in skills:
+                    if str(skill["exam_code"]).strip() == clean_exam_code:
+                        skill_match = skill
+                        break
+
+                if skill_match:
+                    skill_proficiency = 1.0 if skill_match.get("is_preferred") else 0.5
+                else:
+                    skill_proficiency = 0.0
+
+                can_ct = bool(diag["can_ct"])
+                can_mri = bool(diag["can_mri"])
+                preferred_lab_id = diag.get("preferred_lab_id")
+                is_available = diag_id not in absent_ids
+                daily_quota = diag.get(quota_key, 0)
+
+                pship = partnership_map.get(diag_id)
+                is_partner = pship is not None
+                is_exclusive = bool(pship.get("exclusive", 0)) if pship else False
+
+                has_history = False
+                history_count = 0
+                if exam.oldpers and exam.oldpers == diag_id:
+                    has_history = True
+                    history_count = 1
+
+                counts_dict = daily_counts.get(diag_id, {"total": 0, "mri": 0, "ct": 0})
+                if isinstance(counts_dict, int):
+                    counts_dict = {"total": counts_dict, "mri": 0, "ct": 0}
+
+                has_skill_data = (len(skills) > 0) or exam_code_has_skills
+
+                candidate = CandidateDiagnostician(
+                    id=diag_id,
+                    name=str(diag["name"]),
+                    can_ct=can_ct,
+                    can_mri=can_mri,
+                    is_available=is_available,
+                    daily_quota=daily_quota,
+                    current_day_count=counts_dict.get("total", 0),
+                    current_day_mri_count=counts_dict.get("mri", 0),
+                    current_day_ct_count=counts_dict.get("ct", 0),
+                    skill_proficiency=skill_proficiency,
+                    has_skill_match=skill_match is not None,
+                    has_skill_data=has_skill_data,
+                    accepts_lab=True,
+                    is_partnership_match=is_partner,
+                    is_partnership_exclusive=is_exclusive,
+                    has_patient_history=has_history,
+                    patient_history_count=history_count,
+                )
+                setattr(candidate, "preferred_lab_id", preferred_lab_id)
+                candidates.append(candidate)
+
+            batch_result[str(exam.exam_id)] = candidates
+
+        return batch_result
 
     async def get_all_diagnosticians(self) -> list[dict]:
         """Get all active diagnosticians for the UI dropdown/list."""

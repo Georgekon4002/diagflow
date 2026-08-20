@@ -22,7 +22,7 @@
     <header class="app-header">
         <div class="header-content">
             <div class="header-left">
-                <div class="logo">
+                <div class="logo" onclick="switchTab('pending')" style="cursor: pointer;" title="Αρχική (Εκκρεμείς)">
                     <img src="media/logos/logo_multiple.png" alt="Kosmoiatriki Logo" class="logo-img">
                     <img src="media/logos/textbox.png" alt="DiagFlow" class="logo-text-img">
                 </div>
@@ -38,6 +38,14 @@
                     <span class="oncall-label">🏥 Παμμακάριστος:</span>
                     <span class="oncall-name" id="oncall-name">—</span>
                 </div>
+
+                <button class="btn-header-icon" id="btn-shortcuts-help" onclick="openShortcutsModal()" title="Συντομεύσεις Πληκτρολογίου">
+                    ⌨️
+                </button>
+
+                <button class="btn-header-icon" id="btn-theme-toggle" onclick="toggleTheme()" title="Εναλλαγή Φωτεινού/Σκοτεινού Θέματος">
+                    🌙
+                </button>
 
                 <!-- Shown when NOT logged in -->
                 <button class="btn btn-admin-login" id="btn-admin-login" onclick="openLoginModal()">
@@ -286,10 +294,6 @@
 
             <!-- ─── Pending Exams Table ─── -->
             <div id="tab-content-pending" class="tab-content active">
-                <div
-                    style="font-size: 13px; color: var(--text-secondary); text-align: center; margin-bottom: 12px; font-style: italic;">
-                    Εμφανίζονται οι εξετάσεις CT/MRI των τελευταίων 3 ημερών χωρίς διαγνώστη
-                </div>
                 <div class="exams-table-container">
                     <table class="exams-table" id="exams-table-pending">
                         <thead>
@@ -347,6 +351,9 @@
                         <button class="btn btn-secondary btn-sm" id="btn-pending-next"
                             onclick="changePendingPage(1)">Επόμενο</button>
                     </div>
+                </div>
+                <div style="font-size: 11px; color: var(--text-tertiary); text-align: center; margin: 2px 0 6px 0; font-style: italic;">
+                    Εμφανίζονται οι εξετάσεις CT/MRI των τελευταίων 3 ημερών χωρίς διαγνώστη
                 </div>
             </div>
 
@@ -465,18 +472,27 @@
                             placeholder="π.χ. 857640 ή ΓΕΩΡΓΙΟΥ" style="width: 100%;"
                             onkeydown="if(event.key==='Enter') performSlisSearch()">
                     </div>
-                    <div>
+                    <div style="position: relative;">
                         <label class="form-label"
                             style="font-size: 12px; font-weight: 600; display: block; margin-bottom: 4px;">🩺 Παραπέμπων Ιατρός</label>
                         <input type="text" id="slis-search-doctor" class="form-input"
                             placeholder="π.χ. 99512413 ή ΔΗΜΗΤΡΙΟΥ" style="width: 100%;"
-                            onkeydown="if(event.key==='Enter') performSlisSearch()">
+                            autocomplete="off"
+                            oninput="handleSlisDoctorAutocomplete(this.value)"
+                            onfocus="handleSlisDoctorAutocomplete(this.value)"
+                            onkeydown="handleAutocompleteKeydown(event, 'slis-search-doctor-results', performSlisSearch)">
+                        <div id="slis-search-doctor-results" class="autocomplete-suggestions-box"></div>
                     </div>
-                    <div>
+                    <div style="position: relative;">
                         <label class="form-label"
                             style="font-size: 12px; font-weight: 600; display: block; margin-bottom: 4px;">👨‍⚕️ Διαγνώστης</label>
                         <input type="text" id="slis-search-diagnostis" class="form-input" placeholder="π.χ. ΤΡΙΑΝΤΑΦΥΛΛΟΥ"
-                            style="width: 100%;" onkeydown="if(event.key==='Enter') performSlisSearch()">
+                            style="width: 100%;"
+                            autocomplete="off"
+                            oninput="handleSlisDiagAutocomplete(this.value)"
+                            onfocus="handleSlisDiagAutocomplete(this.value)"
+                            onkeydown="handleAutocompleteKeydown(event, 'slis-search-diagnostis-results', performSlisSearch)">
+                        <div id="slis-search-diagnostis-results" class="autocomplete-suggestions-box"></div>
                     </div>
                     <div>
                         <label class="form-label"
@@ -701,19 +717,65 @@
     <!-- ─── Toast Notification ─── -->
     <div class="toast-container" id="toast-container"></div>
 
-    <!-- ─── Refreshing Suggestions Overlay ─── -->
-    <div class="modal-overlay" id="refreshing-suggestions-modal"
-        style="display: none; z-index: 20000; background: rgba(15, 23, 42, 0.75); backdrop-filter: blur(5px);">
-        <div class="modal-card"
-            style="max-width: 440px; text-align: center; padding: 32px 24px; border-radius: 20px; background: var(--bg-secondary); border: 1px solid var(--border-color); box-shadow: 0 20px 50px rgba(0, 0, 0, 0.6);">
-            <div style="font-size: 52px; margin-bottom: 12px; animation: bounce 1.5s infinite;">🔄✨</div>
-            <h3 id="refreshing-modal-title" style="margin-bottom: 12px; font-size: 19px; color: var(--text-primary); font-weight: 700;">Επεξεργασία & Φόρτωση</h3>
-            <p id="refreshing-modal-subtitle" style="font-size: 14px; color: var(--text-secondary); line-height: 1.6; margin: 0;">
-                Υπολογισμός προτάσεων και φόρτωση δεδομένων... 🩺⏳<br>
-                <strong style="color: var(--accent-primary); font-size: 15px;">Παρακαλώ περιμένετε...</strong>
-            </p>
-            <div style="margin-top: 24px; display: flex; justify-content: center;">
-                <span class="loading-spinner" style="width: 32px; height: 32px; border-width: 3px;"></span>
+    <!-- ─── Slis Disconnection / Mock Warning Modal ─── -->
+    <div class="modal-overlay" id="slis-warning-modal" style="display: none; z-index: 25000; background: rgba(15, 23, 42, 0.8); backdrop-filter: blur(6px);">
+        <div class="modal" style="max-width: 520px; border: 2px solid #ef4444; box-shadow: 0 20px 50px rgba(239, 68, 68, 0.35);">
+            <div class="modal-header" style="background: rgba(239, 68, 68, 0.1); border-bottom: 1px solid rgba(239, 68, 68, 0.2); padding: 16px 20px;">
+                <h3 style="color: #ef4444; display: flex; align-items: center; gap: 8px; margin: 0; font-size: 16px; font-weight: 700;">
+                    ⚠️ ΠΡΟΣΟΧΗ: Μη Πραγματικά Δεδομένα
+                </h3>
+                <button class="modal-close" onclick="closeSlisWarningModal()">&times;</button>
+            </div>
+            <div class="modal-body" style="padding: 20px; font-size: 14px; line-height: 1.6; color: var(--text-primary);">
+                <p style="margin: 0; font-weight: 500;">
+                    <strong>ΠΡΟΣΟΧΗ!</strong> Τα δεδομένα δεν είναι τα πραγματικά. Υπάρχει πρόβλημα με τη σύνδεση στη βάση του Slis. Επανεκκινήστε την εφαρμογή ή ελέγξτε αν είστε συνδεδεμένοι σε δίκτυο με πρόσβαση στη βάση του Slis και ότι η πρόσβαση γίνεται σωστά από το αρχείο <code>.env</code> στον φάκελο της εφαρμογής.
+                </p>
+            </div>
+            <div class="modal-footer" style="padding: 12px 20px; display: flex; justify-content: flex-end; background: var(--bg-tertiary);">
+                <button class="btn btn-primary" style="background-color: #ef4444; border-color: #ef4444; padding: 8px 18px; font-weight: 600;" onclick="closeSlisWarningModal()">
+                    Κατάλαβα
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ─── Keyboard Shortcuts Modal ─── -->
+    <div class="modal-overlay" id="shortcuts-modal" style="display: none; z-index: 24000; background: rgba(15, 23, 42, 0.7); backdrop-filter: blur(5px);">
+        <div class="modal" style="max-width: 500px;">
+            <div class="modal-header">
+                <h3 style="display: flex; align-items: center; gap: 8px; margin: 0;">⌨️ Συντομεύσεις Πληκτρολογίου</h3>
+                <button class="modal-close" onclick="closeShortcutsModal()">&times;</button>
+            </div>
+            <div class="modal-body" style="padding: 16px;">
+                <table class="shortcuts-table" style="width: 100%; font-size: 13px; border-collapse: collapse;">
+                    <tr style="border-bottom: 1px solid var(--border-color);">
+                        <td style="padding: 10px 8px; width: 140px;"><kbd>↑</kbd> / <kbd>↓</kbd></td>
+                        <td style="padding: 10px 8px;">Πλοήγηση στις γραμμές των εξετάσεων</td>
+                    </tr>
+                    <tr style="border-bottom: 1px solid var(--border-color);">
+                        <td style="padding: 10px 8px;"><kbd>Enter</kbd> / <kbd>Space</kbd></td>
+                        <td style="padding: 10px 8px;">Επιβεβαίωση πρότασης επιλεγμένης γραμμής</td>
+                    </tr>
+                    <tr style="border-bottom: 1px solid var(--border-color);">
+                        <td style="padding: 10px 8px;"><kbd>O</kbd></td>
+                        <td style="padding: 10px 8px;">Άνοιγμα παραθύρου αλλαγής διαγνώστη (Override)</td>
+                    </tr>
+                    <tr style="border-bottom: 1px solid var(--border-color);">
+                        <td style="padding: 10px 8px;"><kbd>/</kbd></td>
+                        <td style="padding: 10px 8px;">Εστίαση στην αναζήτηση εξετάσεων</td>
+                    </tr>
+                    <tr style="border-bottom: 1px solid var(--border-color);">
+                        <td style="padding: 10px 8px;"><kbd>Ctrl + A</kbd></td>
+                        <td style="padding: 10px 8px;">Επιλογή όλων των εξετάσεων της σελίδας</td>
+                    </tr>
+                    <tr>
+                        <td style="padding: 10px 8px;"><kbd>Esc</kbd></td>
+                        <td style="padding: 10px 8px;">Κλείσιμο παραθύρων / Ακύρωση επιλογής</td>
+                    </tr>
+                </table>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-primary" onclick="closeShortcutsModal()">Κλείσιμο</button>
             </div>
         </div>
     </div>

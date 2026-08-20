@@ -55,6 +55,8 @@ def score_capacity(candidate: CandidateDiagnostician, weights: dict | None = Non
     Score = remaining_slots / total_quota
     At quota → 0.0, fully available → 1.0
     Over quota → 0.0 (should have been filtered, but defensive)
+    For candidates with infinite quota (>= 500, e.g. 999), score scales smoothly against
+    a standard daily baseline (20 exams) so they do not receive an unfair mathematical bonus.
     """
     if weights is None:
         weights = {}
@@ -63,10 +65,20 @@ def score_capacity(candidate: CandidateDiagnostician, weights: dict | None = Non
     if candidate.daily_quota <= 0:
         actual_pts = 0.0
         raw = 0.0
+        explanation = "Μηδενικό ημερήσιο όριο"
+    elif candidate.daily_quota >= 500:
+        baseline = 20.0
+        raw = max(0.0, 1.0 - (candidate.current_day_count / baseline))
+        actual_pts = raw * pts_max
+        explanation = f"Χωρίς ημερήσιο όριο ({candidate.current_day_count} εξετάσεις σήμερα)"
     else:
         remaining = max(0, candidate.daily_quota - candidate.current_day_count)
         raw = remaining / candidate.daily_quota
         actual_pts = raw * pts_max
+        explanation = (
+            f"Υπόλοιπο: {max(0, candidate.daily_quota - candidate.current_day_count)}"
+            f"/{candidate.daily_quota} εξετάσεις"
+        )
 
     return ScoreComponent(
         rule_name="capacity",
@@ -74,10 +86,7 @@ def score_capacity(candidate: CandidateDiagnostician, weights: dict | None = Non
         raw_score=raw,
         weight=pts_max,
         weighted_score=actual_pts,
-        explanation=(
-            f"Υπόλοιπο: {max(0, candidate.daily_quota - candidate.current_day_count)}"
-            f"/{candidate.daily_quota} εξετάσεις"
-        ),
+        explanation=explanation,
     )
 
 
@@ -309,21 +318,20 @@ def score_all_candidates(
         is_near_tie = (top_score - score.total_score) <= tolerance
 
         if is_near_tie:
-            # Within the near-tie group: sort by workload, then random
+            # Within the near-tie group: sort by workload (fewest exams today first), then fair random jitter
             # Negate current_day_count so fewer exams = higher sort priority (reverse=True)
             return (
-                1,                            # Group 0 = near-tie (sorts higher with reverse=True)
+                1,                            # Group 1 = near-tie (sorts higher with reverse=True)
                 -candidate.current_day_count, # Fewest exams today first
-                candidate.daily_quota,        # Larger quota = more capacity
-                random.random(),              # Random jitter for final tie-break
+                random.random(),              # Fair random jitter for tie-break
             )
         else:
             # Outside the tolerance: rank strictly by score
             return (
-                0,                            # Group 1 = strict (sorts lower)
+                0,                            # Group 0 = strict (sorts lower)
                 score.total_score,            # Higher score wins
                 -candidate.current_day_count,
-                candidate.daily_quota,
+                random.random(),
             )
 
     scored_pairs.sort(key=sort_key, reverse=True)
