@@ -1,113 +1,79 @@
 @startuml
 
-title DiagFlow — System Architecture
+title DiagFlow — Multi-Client Central Database Architecture
 skinparam backgroundColor #FEFEFE
 skinparam componentStyle rectangle
 skinparam defaultFontName Inter
 skinparam shadowing false
 
-' ─── External Systems ───
-package "External Systems" as ext #E8EAF6 {
-    database "Slis DB\n(MSSQL — production)" as slisdb {
-        collections "exammore (exams)"
-        collections "Personnel (diagnosticians)"
-        collections "Doctors"
-    }
-
-    database "mock_slis.db\n(SQLite — development)" as mockdb {
-        collections "slis_exams"
-        collections "exam_categories"
-        collections "diagnosticians"
-        collections "doctors"
-    }
-}
-
-' ─── Desktop Packaging ───
-package "Desktop Executable (Standalone EXE)" as desktop #FFF3E0 {
-    component "PyInstaller Package\n(scripts/build_exe.py)" as pyinst
-    component "pywebview App Launcher\n(src/diagflow/launcher.py)" as launcher
-}
-
-' ─── DiagFlow Core ───
-package "DiagFlow FastAPI Server" as core #E3F2FD {
-    component "FastAPI\nApplication" as api
-    component "APScheduler\n(daily 3 AM sync)" as cron #F3E5F5
-
-    package "Services" as services #B3E5FC {
-        component "Assignment\nService" as assign_svc
-        component "Diagnostician\nService" as diag_svc
-        component "Παμμακάριστος\nScheduler" as pam_svc
-        component "Slis Sync\nService" as sync_svc
-    }
-
-    package "Rule Engine Pipeline" as engine #BBDEFB {
-        component "Stage 0: Exclusive &\nRouting Rules" as stage0
-        component "Stage 1: Hard Filters\n(Availability, Quotas, Skills, Labs)" as filters
-        component "Stage 2: Weighted Scoring\n(Dynamic System Weights)" as scoring
-        component "Stage 3: Near-Tie Balancer\n(& Session Virtual Workload)" as balancer
-        component "Stage 4: OR-Tools\nCP-SAT Solver" as solver
-    }
-
-    package "Data Access Layer" as data #B2EBF2 {
-        component "diagflow_db.py\n(raw sqlite3 CRUD)" as cfg_layer
-        component "engines.py\n(SQLAlchemy — prod)" as sa_engines
-    }
-
-    database "diagflow.db\n(Config & State)" as configdb {
-        collections "diagnosticians"
-        collections "diagnostician_skills"
-        collections "partnerships"
-        collections "availability"
-        collections "doctors"
-        collections "local_assignments"
-        collections "assignment_log"
-        collections "pamakristos_schedule"
-        collections "exam_routing_rules"
-        collections "exclusive_lab_rules"
-        collections "modality_quotas"
-        collections "system_settings"
-        collections "admin_users"
+' ─── Central Server (MSSQL) ───
+package "Central Server (Hospital LAN / MSSQL)" as central_srv #E8EAF6 {
+    database "Central Slis & DiagFlow DB\n(MSSQL — production)" as central_db {
+        frame "Slis Native Schema" {
+            collections "exammore (exams)" as slis_exams
+            collections "Stored Procedures\n(getExamsListForPeriod_V1,\ngetWardDoctors, getdiagnosticsList)" as slis_sps
+        }
+        frame "DiagFlow Schema (df_* prefix)" as df_schema #E1F5FE {
+            collections "df_diagnosticians" as df_diag
+            collections "df_diagnostician_skills" as df_skills
+            collections "df_partnerships" as df_part
+            collections "df_availability" as df_avail
+            collections "df_doctors" as df_docs
+            collections "df_local_assignments (shared staged)" as df_local
+            collections "df_assignment_log (central audit)" as df_log
+            collections "df_pamakristos_schedule" as df_pam
+            collections "df_exam_routing_rules" as df_rules
+            collections "df_exclusive_lab_rules" as df_exlab
+            collections "df_modality_quotas" as df_quotas
+            collections "df_system_settings" as df_settings
+            collections "df_admin_users" as df_admin
+            collections "df_exam_dictionary" as df_dict
+        }
     }
 }
 
-' ─── Frontend ───
-package "Frontend (Static HTML/JS)" as front #E8F5E9 {
-    component "Secretariat\nDashboard\n(index.html)" as dashboard
-    component "Admin\nPanel\n(admin.html)" as admin
-    actor "Operator" as operator
+' ─── Mock Development Environment ───
+package "Offline / Mock Dev Environment" as mock_env #FFF3E0 {
+    database "mock_slis.db & diagflow.db\n(Local SQLite — development)" as local_mock {
+        collections "slis_exams" as mock_exams
+        collections "local config tables" as mock_cfg
+    }
+}
+
+' ─── Client Machine A (DiagFlow.exe) ───
+package "Client PC 1 (Secretariat / Admin)" as client1 #E3F2FD {
+    component "DiagFlow.exe (Client A)\n(PyInstaller + pywebview GUI)" as app1 {
+        component "FastAPI Server (Port 8080)" as api1
+        component "Rule Engine & OR-Tools Solver" as engine1
+        component "Dual-Engine DB Layer\n(diagflow_db.py / engines.py)" as db_layer1
+    }
+    actor "Operator A" as op1
+}
+
+' ─── Client Machine B (DiagFlow.exe) ───
+package "Client PC 2 (Secretariat / Admin)" as client2 #E3F2FD {
+    component "DiagFlow.exe (Client B)\n(PyInstaller + pywebview GUI)" as app2 {
+        component "FastAPI Server (Port 8080)" as api2
+        component "Rule Engine & OR-Tools Solver" as engine2
+        component "Dual-Engine DB Layer\n(diagflow_db.py / engines.py)" as db_layer2
+    }
+    actor "Operator B" as op2
 }
 
 ' ─── Connections ───
-slisdb <..> sync_svc : "pyodbc SP calls\n(EXEC getExamsListForPeriod,\nEXEC getWardDoctors,\nEXEC getdiagnosticsList)"
-mockdb <--> sync_svc : "SQLite read/write\n(development)"
+op1 --> app1 : "Interacts via Native Window"
+op2 --> app2 : "Interacts via Native Window"
 
-cfg_layer --> configdb : "sqlite3\nCRUD"
+db_layer1 --> central_db : "LAN Connection (SQLAlchemy / pyodbc)\nReads/Writes df_* tables & runs SPs"
+db_layer2 --> central_db : "LAN Connection (SQLAlchemy / pyodbc)\nReads/Writes df_* tables & runs SPs"
 
-sync_svc --> cfg_layer : "sync diagnosticians\n& doctors"
-cron --> sync_svc : "trigger daily\nsync_doctors()"
+app1 ..> local_mock : "When USE_MOCK_SLIS_DB=true"
 
-services --> engine : "run 4-stage pipeline"
-assign_svc --> cfg_layer : "upsert_local_assignment\nauto-assign routing rules"
-diag_svc --> cfg_layer : "get candidates, skills,\npartnerships, availability"
-pam_svc --> cfg_layer : "get/set on-call schedule"
-
-stage0 --> filters : "unrouted candidates"
-filters --> scoring : "passed candidates"
-scoring --> balancer : "scored candidate list"
-balancer --> solver : "tie-broken candidate list"
-
-api --> services : "orchestrate"
-api --> dashboard : "serve /\n+ REST /api/*"
-api --> admin : "serve /admin.html\n+ REST /api/admin/*"
-dashboard --> operator : "suggestions, breakdowns,\neliminations, alternatives"
-operator --> dashboard : "confirm / override / push"
-admin --> api : "admin configuration CRUD"
-
-assign_svc --> sync_svc : "push assignments to Slis"
-assign_svc --> cfg_layer : "log decision to audit trail"
-
-pyinst --> launcher : "bundles into DiagFlow.exe"
-launcher --> api : "spawns FastAPI in thread\n(port 8080)"
-launcher --> dashboard : "opens in native window\n(pywebview)"
+note bottom of central_srv
+    **Multi-PC Synchronization:**
+    * Admin settings changed on PC 1 are stored immediately in central **df_*** tables.
+    * Staged assignments in **df_local_assignments** and counts are shared in real time across all PCs.
+    * Confirmed assignments update **exammore** and log centrally to **df_assignment_log**.
+end note
 
 @enduml

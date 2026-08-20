@@ -72,35 +72,62 @@
 </head>
 <body>
 <h1 id="diagflow-cross-computer-deployment-distribution-guide">DiagFlow — Cross-Computer Deployment &amp; Distribution Guide</h1>
-<p>This guide provides step-by-step instructions for deploying DiagFlow to other computers, configuring database access (real MSSQL or mock SQLite), building standalone executables, and packaging GitHub releases.</p>
+<p>This guide provides step-by-step instructions for deploying DiagFlow across multiple computers on a local hospital network (LAN), initializing the central database (MSSQL <code>df_*</code> tables), building standalone executables, and packaging releases.</p>
 <hr />
-<h2 id="1-system-requirements-prerequisites">1. System Requirements &amp; Prerequisites</h2>
+<h2 id="1-system-architecture-central-database-setup">1. System Architecture &amp; Central Database Setup</h2>
+<p>In a multi-user clinical environment, DiagFlow connects all client machines to a <strong>Central MSSQL Database</strong> (where both native Slis tables and DiagFlow <code>df_*</code> tables reside).</p>
+<pre><code> ┌────────────────────────────────────────────────────────┐
+ │            Central MSSQL Database Server               │
+ │                (e.g., server_hostname/SlisDB)          │
+ │                                                        │
+ │  ┌─────────────────────────┐  ┌─────────────────────┐  │
+ │  │      Native Slis        │  │   DiagFlow Schema   │  │
+ │  │   Tables &amp; Procedures   │  │    (df_* prefix)    │  │
+ │  │  - exammore             │  │  - df_diagnosticians│  │
+ │  │  - getExamsListForPeriod│  │  - df_availability  │  │
+ │  │  - getWardDoctors       │  │  - df_local_assign  │  │
+ │  │  - getdiagnosticsList   │  │  - df_assignment_log│  │
+ │  └─────────────────────────┘  └─────────────────────┘  │
+ └───────────────────────────▲────────────────────────────┘
+                             │ LAN (pyodbc / port 1433)
+            ┌────────────────┴────────────────┐
+            │                                 │
+   ┌────────┴────────┐               ┌────────┴────────┐
+   │   Client PC 1   │               │   Client PC 2   │
+   │  DiagFlow.exe   │               │  DiagFlow.exe   │
+   │ (Secretariat A) │               │ (Secretariat B) │
+   └─────────────────┘               └─────────────────┘
+</code></pre>
+<h3 id="central-database-initialization-steps">Central Database Initialization Steps:</h3>
+<ol>
+<li><strong>Create Tables:</strong> Run the T-SQL script <a href="file:///c:/Users/georg/Desktop/internship/diagflow/db/create_central_tables.sql">db/create_central_tables.sql</a> on the central MSSQL instance. This creates all 14 <code>df_*</code> tables with constraints, indexes, and foreign keys.</li>
+<li><strong>Seed Initial Data:</strong> Run the data initialization script <a href="file:///c:/Users/georg/Desktop/internship/diagflow/db/seed_central_tables.sql">db/seed_central_tables.sql</a> to populate initial diagnosticians, skills, doctors, partnerships, and system routing rules.</li>
+</ol>
+<hr />
+<h2 id="2-system-requirements-prerequisites">2. System Requirements &amp; Prerequisites</h2>
 <h3 id="target-computer-end-user-pc-requirements">Target Computer (End-User PC) Requirements</h3>
 <ul>
 <li><strong>Operating System</strong>: Windows 10 (64-bit) or Windows 11.</li>
 <li><strong>Microsoft Edge WebView2 Runtime</strong>: Required for embedded desktop GUI window (Pre-installed on Windows 11 &amp; updated Windows 10; downloadable from <a href="https://developer.microsoft.com/en-us/microsoft-edge/webview2/">Microsoft Edge WebView2</a>).</li>
-<li><strong>Microsoft ODBC Driver 17 for SQL Server</strong>: Required if connecting to real Slis MSSQL database (<code>USE_MOCK_SLIS_DB=false</code>). Downloadable from <a href="https://learn.microsoft.com/en-us/sql/connect/odbc/download-odbc-driver-for-sql-server">Microsoft SQL Server ODBC Driver Downloads</a>.</li>
+<li><strong>Microsoft ODBC Driver 17 for SQL Server</strong>: Required for LAN database connectivity (<code>USE_MOCK_SLIS_DB=false</code>). Downloadable from <a href="https://learn.microsoft.com/en-us/sql/connect/odbc/download-odbc-driver-for-sql-server">Microsoft SQL Server ODBC Driver Downloads</a>.</li>
 </ul>
 <hr />
-<h2 id="2-configuration-env">2. Configuration (<code>.env</code>)</h2>
-<p>Every deployment requires a <code>.env</code> file located in the application root (or alongside <code>DiagFlow.exe</code>).</p>
-<h3 id="example-env-file">Example <code>.env</code> File:</h3>
+<h2 id="3-configuration-env">3. Configuration (<code>.env</code>)</h2>
+<p>Every client PC requires a <code>.env</code> file placed in the <strong>same directory as <code>DiagFlow.exe</code></strong>.</p>
+<h3 id="production-env-example">Production <code>.env</code> Example:</h3>
 <pre><code class="language-ini"># ============================================================
 # DiagFlow — Environment Configuration
 # ============================================================
 
-# --- Database Connection ---
-# Read-only / main access to Slis database tables
-SLIS_DB_CONNECTION_STRING=mssql+pyodbc://&lt;USERNAME&gt;:&lt;PASSWORD&gt;@&lt;SERVER_IP_OR_HOSTNAME&gt;/&lt;DATABASE_NAME&gt;?driver=ODBC+Driver+17+for+SQL+Server
+# --- Central Database Connection ---
+SLIS_DB_CONNECTION_STRING=mssql+pyodbc://diagflow_user:YourPassword@server_hostname/SlisDB?driver=ODBC+Driver+17+for+SQL+Server
+CONFIG_DB_CONNECTION_STRING=mssql+pyodbc://diagflow_user:YourPassword@server_hostname/SlisDB?driver=ODBC+Driver+17+for+SQL+Server
 
-# DiagFlow config tables (can target the same DB or a dedicated DB)
-CONFIG_DB_CONNECTION_STRING=mssql+pyodbc://&lt;USERNAME&gt;:&lt;PASSWORD&gt;@&lt;SERVER_IP_OR_HOSTNAME&gt;/&lt;DATABASE_NAME&gt;?driver=ODBC+Driver+17+for+SQL+Server
-
-# Set to false in production to connect to real Slis SQL Server instance
+# Set to false in production to connect to the central MSSQL server
 USE_MOCK_SLIS_DB=false
 MOCK_SLIS_DB_PATH=db/mock_slis.db
 
-# --- Rule Engine Weights ---
+# --- Rule Engine Scoring Weights ---
 WEIGHT_PARTNERSHIP=0.35
 WEIGHT_PATIENT_HISTORY=0.20
 WEIGHT_SKILLS=0.20
@@ -108,31 +135,27 @@ WEIGHT_LAB=0.15
 WEIGHT_CAPACITY=0.10
 
 # --- Server Settings ---
-APP_HOST=127.0.0.1
+APP_HOST=0.0.0.0
 APP_PORT=8080
 APP_ENV=production
 LOG_LEVEL=INFO
 </code></pre>
+<blockquote>
+<p>💡 <strong>Tip:</strong> If your database password contains special characters like <code>@</code>, URL-encode it (e.g. <code>%40</code> instead of <code>@</code>). If connecting over a corporate LAN without TLS certificates, append <code>&amp;TrustServerCertificate=yes</code> to the connection string.</p>
+</blockquote>
 <hr />
-<h2 id="3-database-connection-modes">3. Database Connection Modes</h2>
-<h3 id="mode-a-production-mode-real-slis-mssql-database">Mode A: Production Mode (Real Slis MSSQL Database)</h3>
-<ol>
-<li>Set <code>USE_MOCK_SLIS_DB=false</code> in <code>.env</code>.</li>
-<li>Configure <code>SLIS_DB_CONNECTION_STRING</code> with valid host, port, credentials, and database name.</li>
-<li>Ensure ODBC Driver 17 is installed on the target machine.</li>
-<li>Verify database firewall/network access between target computer and SQL Server.</li>
-<li>Verify the required Slis stored procedures exist in the target Slis DB:</li>
-<li><code>EXEC getWardDoctors</code> (returns <code>CODE</code>, <code>DOCNAME</code> — called on launch &amp; 3 AM cron)</li>
-<li><code>EXEC getExamsListForPeriod 'YYYY-MM-DD', 'YYYY-MM-DD'</code> (returns unassigned exams for the period — called on launch &amp; refresh)</li>
-<li><code>EXEC getdiagnosticsList</code> (returns <code>PERSONELID</code>, <code>DOCNAME</code> — called on Admin Panel "Refresh")</li>
-<li>Verify table write-back permissions (<code>UPDATE exammore SET diagnostisid=? WHERE exammoreid=?</code>).</li>
-</ol>
-<h3 id="mode-b-standalone-demo-mode-sqlite-mock-db">Mode B: Standalone / Demo Mode (SQLite Mock DB)</h3>
-<ol>
-<li>Set <code>USE_MOCK_SLIS_DB=true</code> in <code>.env</code>.</li>
-<li>Ensure <code>db/mock_slis.db</code> and <code>db/diagflow.db</code> are present in the <code>db/</code> folder next to the executable.</li>
-</ol>
-<hr />
+<h2 id="4-multi-pc-client-distribution">4. Multi-PC Client Distribution</h2>
+<p>To distribute DiagFlow to other computers in the network:<br />
+1. Copy <code>dist/DiagFlow.exe</code> to a folder on the client PC (e.g. <code>C:\DiagFlow\</code>).<br />
+2. Place the configured <code>.env</code> file in <code>C:\DiagFlow\.env</code>.<br />
+3. Create a desktop shortcut to <code>DiagFlow.exe</code>.<br />
+4. Double-click <code>DiagFlow.exe</code>. The app launches in full-screen desktop mode, connected directly to the shared central database.</p>
+<h3 id="multi-user-real-time-synchronization-features">Multi-User Real-Time Synchronization Features:</h3>
+<ul>
+<li><strong>Admin Settings:</strong> Changes made in the Admin Panel on any PC (such as updating leaves or doctor partnerships) are saved directly in <code>df_*</code> tables and become effective across all PCs immediately.</li>
+<li><strong>Shared Staging State:</strong> Staged assignments reside in <code>df_local_assignments</code>, ensuring all secretarial staff see the same real-time daily quota counts and unassigned exam pools.</li>
+<li><strong>Central Audit Trail:</strong> All confirmed assignments are recorded in <code>df_assignment_log</code> on the central database.</li>
+</ul>
 <h2 id="31-running-diagflow-on-localhost-local-development-server-guide">3.1 Running DiagFlow on Localhost (Local Development &amp; Server Guide)</h2>
 <p>This section provides complete, step-by-step instructions for setting up and running DiagFlow directly on <code>localhost</code> (127.0.0.1) for development, testing, and debugging purposes.</p>
 <h3 id="1-system-requirements-software-tools">1. System Requirements &amp; Software Tools</h3>

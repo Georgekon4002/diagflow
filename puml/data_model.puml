@@ -6,135 +6,137 @@ skinparam defaultFontName Inter
 skinparam shadowing false
 skinparam linetype ortho
 
-' ─── DiagFlow Config Database (diagflow.db) ───
-package "diagflow.db — Config & State" as diagflow_db #E3F2FD {
+' ─── DiagFlow Config Database (Central MSSQL df_* / Mock SQLite) ───
+package "DiagFlow Schema (df_* in Central DB / plain in SQLite)" as diagflow_db #E3F2FD {
 
-    entity "diagnosticians" as diag {
+    entity "df_diagnosticians" as diag {
         * **id** : INTEGER <<PK>>
         --
-        * name : TEXT
-        * active : INTEGER (0/1)
-        can_ct : INTEGER (0/1)
-        can_mri : INTEGER (0/1)
+        * name : TEXT / NVARCHAR(255)
+        * active : INTEGER / BIT (0/1)
+        can_ct : INTEGER / BIT (0/1)
+        can_mri : INTEGER / BIT (0/1)
         quota_monday..sunday : INTEGER
         preferred_lab_id : INTEGER
     }
 
-    entity "diagnostician_skills" as skills {
-        * **id** : INTEGER <<PK>>
+    entity "df_diagnostician_skills" as skills {
+        * **id** : INTEGER <<PK, IDENTITY>>
         --
         * diagnostician_id : INTEGER <<FK>>
-        * exam_code : TEXT
-        is_preferred : INTEGER (0/1)
+        * exam_code : TEXT / NVARCHAR(50)
+        is_preferred : INTEGER / BIT (0/1)
         --
         UNIQUE(diagnostician_id, exam_code)
     }
 
-    entity "partnerships" as partners {
-        * **id** : INTEGER <<PK>>
+    entity "df_partnerships" as partners {
+        * **id** : INTEGER <<PK, IDENTITY>>
         --
-        * issuing_doctor_id : TEXT <<FK>>
-        * issuing_doctor_name : TEXT
+        * issuing_doctor_id : TEXT / NVARCHAR(50) <<FK>>
+        * issuing_doctor_name : TEXT / NVARCHAR(255)
         * preferred_diagnostician_id : INTEGER <<FK>>
         priority : INTEGER
-        exclusive : INTEGER (0/1)
-        is_active : INTEGER (0/1)
+        exclusive : INTEGER / BIT (0/1)
+        is_active : INTEGER / BIT (0/1)
     }
 
-    entity "availability" as avail {
-        * **id** : INTEGER <<PK>>
+    entity "df_availability" as avail {
+        * **id** : INTEGER <<PK, IDENTITY>>
         --
         * diagnostician_id : INTEGER <<FK>>
-        * date : TEXT (ISO-8601)
-        * status : TEXT
-        is_pamakristos_oncall : INTEGER (0/1)
-        notes : TEXT
+        * date : TEXT / NVARCHAR(10) (ISO-8601)
+        * status : TEXT / NVARCHAR(50)
+        is_pamakristos_oncall : INTEGER / BIT (0/1)
+        notes : TEXT / NVARCHAR(500)
         --
         UNIQUE(diagnostician_id, date)
     }
 
-    entity "doctors" as docs {
-        * **id** : TEXT <<PK>>
+    entity "df_doctors" as docs {
+        * **id** : TEXT / NVARCHAR(50) <<PK>>
         --
-        * name : TEXT
+        * name : TEXT / NVARCHAR(255)
     }
 
-    entity "local_assignments" as local_assign {
+    entity "df_local_assignments (shared staged)" as local_assign {
         * **exammoreid** : INTEGER <<PK>>
         --
         * diagnostician_id : INTEGER
-        * diagnostician_name : TEXT
-        * assigned_at : TEXT (ISO-8601)
-        is_auto : INTEGER (0/1)
-        rule_desc : TEXT
+        * diagnostician_name : TEXT / NVARCHAR(255)
+        * assigned_at : TEXT / NVARCHAR(50) (ISO-8601)
+        is_auto : INTEGER / BIT (0/1)
+        rule_desc : TEXT / NVARCHAR(500)
+        extracode : TEXT / NVARCHAR(50)
+        modality : TEXT / NVARCHAR(50)
     }
 
-    entity "assignment_log" as assign_log {
+    entity "df_assignment_log (central audit)" as assign_log {
         * **exammoreid** : INTEGER <<PK>>
         --
         * diagnostician_id : INTEGER
-        * assigned_at : TEXT (ISO-8601)
-        modality : TEXT
-        extracode : TEXT
+        * assigned_at : TEXT / NVARCHAR(50) (ISO-8601)
+        modality : TEXT / NVARCHAR(50)
+        extracode : TEXT / NVARCHAR(50)
     }
 
-    entity "pamakristos_schedule" as pam_sched {
+    entity "df_pamakristos_schedule" as pam_sched {
         * **weekday** : INTEGER <<PK>> (0–6)
         --
         * diagnostician_id : INTEGER <<FK>>
     }
 
-    entity "exam_routing_rules" as route_rules {
-        * **id** : INTEGER <<PK>>
+    entity "df_exam_routing_rules" as route_rules {
+        * **id** : INTEGER <<PK, IDENTITY>>
         --
         lab_id : INTEGER
-        is_pamakristos : INTEGER (0/1)
-        * exam_codes : TEXT
+        is_pamakristos : INTEGER / BIT (0/1)
+        * exam_codes : TEXT / NVARCHAR(500)
         * diagnostician_id : INTEGER <<FK>>
-        description : TEXT
-        issuing_doctor_id : INTEGER
-        issuing_doctor_name : TEXT
-        is_active : INTEGER (0/1)
+        description : TEXT / NVARCHAR(500)
+        issuing_doctor_id : TEXT / NVARCHAR(50)
+        issuing_doctor_name : TEXT / NVARCHAR(255)
+        is_active : INTEGER / BIT (0/1)
     }
 
-    entity "exclusive_lab_rules" as ex_labs {
-        * **id** : INTEGER <<PK>>
+    entity "df_exclusive_lab_rules" as ex_labs {
+        * **id** : INTEGER <<PK, IDENTITY>>
         --
         * diagnostician_id : INTEGER <<FK>>
         * lab_id : INTEGER
-        lab_name : TEXT
-        is_active : INTEGER (0/1)
+        lab_name : TEXT / NVARCHAR(255)
+        is_active : INTEGER / BIT (0/1)
     }
 
-    entity "modality_quotas" as mod_quotas {
-        * **id** : INTEGER <<PK>>
+    entity "df_modality_quotas" as mod_quotas {
+        * **id** : INTEGER <<PK, IDENTITY>>
         --
         * diagnostician_id : INTEGER <<FK>>
-        * modality : TEXT (CT/MRI)
+        * modality : TEXT / NVARCHAR(50) (CT/MRI)
         * max_count : INTEGER
-        is_active : INTEGER (0/1)
+        is_active : INTEGER / BIT (0/1)
     }
 
-    entity "system_settings" as sys_settings {
-        * **key** : TEXT <<PK>>
+    entity "df_system_settings" as sys_settings {
+        * **key** : TEXT / NVARCHAR(100) <<PK>>
         --
-        * value : TEXT
+        * value : TEXT / NVARCHAR(500)
     }
 
-    entity "exam_dictionary" as exam_dict {
-        * **code** : TEXT <<PK>>
+    entity "df_exam_dictionary" as exam_dict {
+        * **code** : TEXT / NVARCHAR(50) <<PK>>
         --
-        * name : TEXT
-        category : TEXT
+        * name : TEXT / NVARCHAR(255)
+        category : TEXT / NVARCHAR(50)
     }
 
-    entity "admin_users" as admin_users {
-        * **id** : INTEGER <<PK>>
+    entity "df_admin_users" as admin_users {
+        * **id** : INTEGER <<PK, IDENTITY>>
         --
-        * username : TEXT
-        * password_hash : TEXT
-        * role : TEXT
-        * is_active : INTEGER
+        * username : TEXT / NVARCHAR(100)
+        * password_hash : TEXT / NVARCHAR(255)
+        * role : TEXT / NVARCHAR(50)
+        * is_active : INTEGER / BIT
     }
 }
 

@@ -24,12 +24,15 @@ from pathlib import Path
 # Force UTF-8 encoding for standard output to prevent UnicodeEncodeError on Windows
 os.environ["PYTHONIOENCODING"] = "utf-8"
 
+from diagflow.config import settings
+
 # ── Port configuration ──
-APP_PORT = 8080
+APP_PORT = getattr(settings, "app_port", 8080) or 8080
 APP_URL = f"http://127.0.0.1:{APP_PORT}"
 
 # Global exception store for server thread
 _SERVER_EXCEPTION = None
+_UVICORN_SERVER = None
 
 
 def get_log_file_path() -> Path:
@@ -64,15 +67,10 @@ def show_error_dialog(title: str, message: str):
 
 
 def get_frontend_dir() -> str:
-    """
-    Resolve the path to the frontend directory.
-    Works both in development (source tree) and when packaged by PyInstaller.
-    """
+    """Resolve the path to the frontend directory."""
     if getattr(sys, "frozen", False):
-        # Running inside PyInstaller bundle
         base = Path(sys._MEIPASS)  # type: ignore[attr-defined]
     else:
-        # Running from source
         base = Path(__file__).resolve().parent.parent.parent
 
     return str(base / "frontend")
@@ -80,7 +78,7 @@ def get_frontend_dir() -> str:
 
 def start_server():
     """Start the uvicorn server in a background thread."""
-    global _SERVER_EXCEPTION
+    global _SERVER_EXCEPTION, _UVICORN_SERVER
     try:
         import uvicorn
 
@@ -100,13 +98,15 @@ def start_server():
         if Path(frontend_dir).exists():
             app.mount("/", StaticFiles(directory=frontend_dir, html=True), name="frontend")
 
-        uvicorn.run(
+        config = uvicorn.Config(
             app,
             host="127.0.0.1",
             port=APP_PORT,
             log_level="warning",
             access_log=False,
         )
+        _UVICORN_SERVER = uvicorn.Server(config)
+        _UVICORN_SERVER.run()
     except Exception as exc:
         _SERVER_EXCEPTION = exc
         log(f"Server thread error: {exc}\n{traceback.format_exc()}")
@@ -152,7 +152,7 @@ def main():
         
         log(f"LAUNCH ERROR: {err_msg}")
         show_error_dialog("DiagFlow Startup Error", err_msg)
-        sys.exit(1)
+        os._exit(1)
 
     log("Backend server started successfully.")
 
@@ -173,10 +173,16 @@ def main():
             err_details = f"Failed to open window or browser: {wv_exc} / {browser_exc}"
             log(err_details)
             show_error_dialog("DiagFlow Launch Error", err_details)
-            sys.exit(1)
+            os._exit(1)
+    finally:
+        if _UVICORN_SERVER:
+            try:
+                _UVICORN_SERVER.should_exit = True
+            except Exception:
+                pass
+        log("DiagFlow exiting completely.")
+        os._exit(0)
 
-    sys.exit(0)
 
 if __name__ == "__main__":
     main()
-

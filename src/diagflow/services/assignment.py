@@ -38,79 +38,82 @@ _MOCK_DB_PATH = _PROJECT_ROOT / settings.mock_slis_db_path
 
 def _get_mock_db() -> sqlite3.Connection:
     """Open a read-write SQLite connection to the mock Slis database."""
+    from diagflow.services.slis_sync import ensure_slis_exams_table
+    _MOCK_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     con = sqlite3.connect(str(_MOCK_DB_PATH))
     con.row_factory = sqlite3.Row
+    ensure_slis_exams_table(con)
     return con
 
 
-def _row_to_exam_dict(row: sqlite3.Row) -> dict:
+def _row_to_exam_dict(row: sqlite3.Row | dict) -> dict:
     """
-    Convert a slis_exams SQLite row into the exam dict format
+    Convert an exam row (sqlite3.Row or dict) into the standardized exam dict format
     that the API routes and engine expect.
     """
+    r = dict(row) if not isinstance(row, dict) else row
+    eid = r.get("exammoreid")
+    fname = r.get("fname") or ""
+    lname = r.get("lname") or ""
+    pat_name = f"{fname} {lname}".strip() or (r.get("patient_name") or "")
+
     return {
         # ── Identifiers ──
-        # exam_id is exammoreid (globally unique per exam instance).
-        # extracode is the order ID — one order can contain multiple exams.
-        "exam_id":        str(row["exammoreid"]),
-        "extracode":      row["extracode"],
-        "visitid":        row["visitid"],
-        "exammoreid":     row["exammoreid"],
+        "exam_id":        str(eid),
+        "extracode":      r.get("extracode"),
+        "visitid":        r.get("visitid"),
+        "exammoreid":     eid,
 
         # ── Patient ──
-        "patient_id":     str(row["demogid"]) if row["demogid"] else None,
-        "demogid":        row["demogid"],
-        "fname":          row["fname"] or "",
-        "lname":          row["lname"] or "",
-        "patient_name":   f"{row['fname'] or ''} {row['lname'] or ''}".strip(),
-        "age":            row["age"] if "age" in row.keys() else None,
+        "demogid":        r.get("demogid"),
+        "patient_id":     str(r.get("demogid") or r.get("patient_id") or ""),
+        "patient_name":   pat_name,
+        "fname":          fname,
+        "lname":          lname,
+        "age":            r.get("age"),
 
-        # ── Exam type ──
-        "examnumcode":    row["examnumcode"],
-        "examname":       row["examname"] or "",
-        "modality":       row["category"] or "MRI",   # CT | MRI | MRA → used by engine
-        "category":       row["category"] or "",
-        "body_part":      "",   # Not in Slis data; filled by engine if needed
+        # ── Exam details ──
+        "examid":         r.get("examid"),
+        "examnumcode":    r.get("examnumcode"),
+        "examname":       r.get("examname") or "",
+        "modality":       r.get("category") or "MRI",
+        "category":       r.get("category") or "MRI",
+        "body_part":      "",
+        "visitdate":      str(r.get("visitdate"))[:10] if r.get("visitdate") else "",
 
-        # ── Visit logistics ──
-        "visitdate":      row["visitdate"],
-        "request_date":   row["visitdate"],            # alias used by frontend
-
-        # ── Lab ──
-        "labcodeid":      row["labcodeid"],
-        "lab_id":         str(row["labcodeid"]) if row["labcodeid"] else None,
-        "lab_name":       (row["laboratoryname"] or "").strip(),
+        # ── Laboratory ──
+        "labcodeid":      r.get("labcodeid"),
+        "lab_id":         str(r.get("labcodeid")) if r.get("labcodeid") else None,
+        "lab_name":       (r.get("laboratoryname") or r.get("lab_name") or "").strip(),
 
         # ── Issuing doctor ──
-        "wcode":              row["wcode"],
-        "issuing_doctor_id":  str(row["wcode"]) if row["wcode"] else None,
-        "wname":              row["wname"] or "",
-        "issuing_doctor_name": row["wname"] or "",
+        "wcode":              r.get("wcode"),
+        "issuing_doctor_id":  str(r.get("wcode")) if r.get("wcode") else None,
+        "wname":              r.get("wname") or "",
+        "issuing_doctor_name": r.get("wname") or r.get("issuing_doctor_name") or "",
 
         # ── Assignment ──
-        "diagnostis":     row["diagnostis"],
-        "code":           row["code"] or "",
-        "diagnostician_name": row["code"] or "",       # last-name / code
-        "status":         "assigned" if row["diagnostis"] else "pending",
+        "diagnostis":     r.get("diagnostis"),
+        "code":           r.get("code") or "",
+        "diagnostician_name": r.get("code") or r.get("diagnostician_name") or "",
+        "status":         "assigned" if r.get("diagnostis") else "pending",
 
         # ── Notes ──
-        "notes":          row["notes"] or "",
-        "comments":       row["notes"] or "",          # alias used by engine
+        "notes":          r.get("notes") or "",
+        "comments":       r.get("notes") or r.get("comments") or "",
 
         # ── OLD (last same-exam-type visit) ──
-        "oldvisit":       row["oldvisit"] or 0,
-        "oldorder":       row["oldorder"] or "",
-        "olddiagnostis":  row["olddiagnostis"] or "",
-        "oldpers":        row["oldpers"],
+        "oldvisit":       r.get("oldvisit") or 0,
+        "oldorder":       str(r.get("oldorder")) if r.get("oldorder") else "",
+        "olddiagnostis":  str(r.get("olddiagnostis")) if r.get("olddiagnostis") else "",
+        "oldpers":        r.get("oldpers"),
 
         # ── Slis sync tracking ──
-        # None = assigned locally but NOT yet pushed to Slis
-        # value = ISO timestamp of the push (row will expire on next pull)
-        "slis_synced_at": row["slis_synced_at"] if "slis_synced_at" in row.keys() else None,
+        "slis_synced_at": r.get("slis_synced_at"),
 
         # ── Extras ──
         "suggestion":     None,
-        "is_pamakristos": False,
+        "is_pamakristos": "ΠΑΜΜΑΚΑΡΙΣΤΟΣ" in (r.get("wname") or "").upper(),
     }
 
 
@@ -161,47 +164,59 @@ class AssignmentService:
         self,
         exam_id: str,
         diagnostician_id: int,
-        suggestion: AssignmentSuggestion,
+        suggestion: AssignmentSuggestion | None = None,
+        diagnostician_name: str | None = None,
+        reason: str | None = None,
+        is_override: bool = False,
     ) -> dict:
         """
-        Confirm the suggested assignment (no override).
+        Confirm an assignment (manual or accepted suggestion).
 
-        TODO: Write back to Slis DB when real DB access is available.
+        Records the decision and stages it in df_local_assignments.
+        The assignment will only be pushed to Slis when the user clicks 'Push to Slis'.
         """
+        import diagflow.db.diagflow_db as cfg_db
+        if not diagnostician_name:
+            d = cfg_db.get_diagnostician(diagnostician_id)
+            diagnostician_name = d["name"] if d else (suggestion.suggested_diagnostician_name if suggestion else f"ID:{diagnostician_id}")
+
+        now_iso = datetime.now().isoformat()
         log_entry = {
             "exam_id": exam_id,
-            "suggested_diagnostician_id": suggestion.suggested_diagnostician_id,
+            "suggested_diagnostician_id": suggestion.suggested_diagnostician_id if suggestion else diagnostician_id,
             "final_diagnostician_id": diagnostician_id,
-            "was_overridden": False,
-            "rules_fired": json.dumps(suggestion.rules_fired, ensure_ascii=False),
-            "score_breakdown": json.dumps(suggestion.score_breakdown, ensure_ascii=False),
-            "decision_timestamp": datetime.now().isoformat(),
+            "diagnostician_id": diagnostician_id,
+            "diagnostician_name": diagnostician_name,
+            "was_overridden": is_override,
+            "is_override": is_override,
+            "override_reason": reason,
+            "rules_fired": json.dumps(suggestion.rules_fired, ensure_ascii=False) if suggestion else "[]",
+            "score_breakdown": json.dumps(suggestion.score_breakdown, ensure_ascii=False) if suggestion else "[]",
+            "decision_timestamp": now_iso,
+            "assigned_at": now_iso,
         }
 
         logger.info(
-            "assignment_confirmed",
+            "assignment_staged",
             exam_id=exam_id,
-            diagnostician_id=diagnostician_id,
+            diagnostician=diagnostician_name,
+            is_override=is_override,
         )
 
-        # Update the SQLite mock DB so the assignment persists
         try:
-            import diagflow.db.diagflow_db as cfg_db
-            d_info = cfg_db.get_diagnostician(diagnostician_id)
-            d_name = d_info["name"] if d_info else ""
-            
-            # Fetch modality and extracode from mock_slis.db
-            mod, ext = None, None
-            try:
-                con = _get_mock_db()
-                row = con.execute("SELECT category, extracode FROM slis_exams WHERE exammoreid = ?", (int(exam_id),)).fetchone()
-                if row:
-                    mod = row["category"]
-                    ext = str(row["extracode"]) if row["extracode"] else None
-            except Exception as db_e:
-                logger.warning("failed_to_fetch_exam_details", error=str(db_e))
-
-            cfg_db.upsert_local_assignment(int(exam_id), diagnostician_id, d_name, datetime.now().isoformat(), modality=mod, extracode=ext)
+            mod = None
+            ext = None
+            if settings.use_mock_slis_db:
+                try:
+                    con = _get_mock_db()
+                    row = con.execute("SELECT category, extracode FROM slis_exams WHERE exammoreid = ?", (int(exam_id),)).fetchone()
+                    if row:
+                        mod = row["category"] if "category" in row.keys() else None
+                        ext = str(row["extracode"]) if ("extracode" in row.keys() and row["extracode"]) else None
+                    con.close()
+                except Exception:
+                    pass
+            cfg_db.upsert_local_assignment(int(exam_id), diagnostician_id, diagnostician_name, now_iso, modality=mod, extracode=ext, is_auto=False)
         except Exception as e:
             logger.warning("local_assignment_update_failed", error=str(e))
 
@@ -210,80 +225,48 @@ class AssignmentService:
     async def override_assignment(
         self,
         exam_id: str,
-        original_diagnostician_id: int,
         override_diagnostician_id: int,
         reason: str,
+        original_diagnostician_id: int = 0,
         suggestion: AssignmentSuggestion | None = None,
     ) -> dict:
         """
-        Override the suggested assignment with a different diagnostician.
+        Override a suggested assignment with a different diagnostician.
 
-        This is the critical feedback signal — every override is logged
-        for weight tuning and rule refinement.
+        Convenience wrapper around confirm_assignment with is_override=True.
         """
-        log_entry = {
-            "exam_id": exam_id,
-            "suggested_diagnostician_id": original_diagnostician_id,
-            "final_diagnostician_id": override_diagnostician_id,
-            "was_overridden": True,
-            "override_reason": reason,
-            "rules_fired": json.dumps(suggestion.rules_fired, ensure_ascii=False) if suggestion else "[]",
-            "score_breakdown": json.dumps(suggestion.score_breakdown, ensure_ascii=False) if suggestion else "[]",
-            "decision_timestamp": datetime.now().isoformat(),
-        }
-
-        logger.warning(
-            "assignment_overridden",
+        return await self.confirm_assignment(
             exam_id=exam_id,
-            original=original_diagnostician_id,
-            override=override_diagnostician_id,
+            diagnostician_id=override_diagnostician_id,
+            suggestion=suggestion,
             reason=reason,
+            is_override=True,
         )
-
-        # Update the local assignments DB
-        try:
-            import diagflow.db.diagflow_db as cfg_db
-            d_info = cfg_db.get_diagnostician(override_diagnostician_id)
-            d_name = d_info["name"] if d_info else ""
-
-            # Fetch modality and extracode from mock_slis.db
-            mod, ext = None, None
-            try:
-                con = _get_mock_db()
-                row = con.execute("SELECT category, extracode FROM slis_exams WHERE exammoreid = ?", (int(exam_id),)).fetchone()
-                if row:
-                    mod = row["category"]
-                    ext = str(row["extracode"]) if row["extracode"] else None
-            except Exception as db_e:
-                logger.warning("failed_to_fetch_exam_details", error=str(db_e))
-
-            cfg_db.upsert_local_assignment(int(exam_id), override_diagnostician_id, d_name, datetime.now().isoformat(), modality=mod, extracode=ext)
-        except Exception as e:
-            logger.warning("local_assignment_update_failed", error=str(e))
-
-        return log_entry
 
 
 def _get_pending_exams_from_db() -> list[dict]:
-    """Fetch pending exams from the SQLite mock DB (past 3 days, no diagnostician).
+    """Fetch pending exams (unassigned in Slis and not yet staged in df_local_assignments).
 
-    Auto-assignments applied directly to local_assignments (bypassing filters):
+    In production: Direct MSSQL execution of getExamsListForPeriod_V1 for the last 3 days.
+    In mock mode: Reads from SQLite mock_slis.db.
+
+    Auto-assignments applied directly to df_local_assignments (bypassing filters):
     1. Exclusive partnerships: Exams issued by doctors with an active exclusive
        partnership are automatically assigned to that preferred diagnostician.
     2. Dynamic exam routing rules: Exams matching defined lab, doctor, or exam code
        routing rules are automatically assigned to the designated diagnostician.
     3. Παμμακάριστος general: Other Παμμακάριστος exams are automatically assigned
        to today's on-call diagnostician.
-
-    All auto-assigned exams appear directly in the assigned tab. Slis is NOT
-    updated automatically; the secretariat must push manually as usual.
     """
     try:
         from datetime import date, timedelta
         import diagflow.db.diagflow_db as cfg_db
+        from diagflow.services.slis_sync import normalize_modality
+
         local_assignments = cfg_db.get_all_local_assignments()
-        cutoff_date = (date.today() - timedelta(days=150)).isoformat()
         today = date.today().isoformat()
+        start_date = (date.today() - timedelta(days=3)).isoformat()
+        end_date = today
 
         # Fetch today's Παμμακάριστος on-call diagnostician once
         pam_oncall = cfg_db.get_oncall_diagnostician(today)
@@ -292,24 +275,66 @@ def _get_pending_exams_from_db() -> list[dict]:
         # Fetch dynamic routing rules
         routing_rules = cfg_db.get_all_exam_routing_rules()
 
-        con = _get_mock_db()
-        cur = con.execute(
-            """
-            SELECT * FROM slis_exams
-            WHERE diagnostis IS NULL
-              AND visitdate >= ?
-            ORDER BY visitdate DESC, extracode ASC
-            """,
-            (cutoff_date,)
-        )
+        raw_exam_rows = []
+
+        if not settings.use_mock_slis_db:
+            # ── PRODUCTION MODE: Query Central MSSQL Directly ──
+            from sqlalchemy import create_engine, text
+            engine = create_engine(settings.slis_db_connection_string, connect_args={"timeout": 10})
+            with engine.connect() as conn:
+                query = text(f"EXEC getExamsListForPeriod_V1 '{start_date}', '{end_date}'")
+                res = conn.execute(query)
+                keys = list(res.keys())
+                raw_pulled = [dict(zip(keys, r)) for r in res.fetchall()]
+
+            all_pulled = [{k.lower(): v for k, v in r.items()} for r in raw_pulled]
+
+            # Clean orphaned & already-synced local assignments in central DB
+            assigned_in_slis_ids = [
+                r.get("exammoreid") for r in all_pulled
+                if r.get("exammoreid") is not None and r.get("diagnostis") is not None
+                and str(r.get("diagnostis")).strip().lower() not in ("", "0", "none", "null")
+            ]
+            if assigned_in_slis_ids:
+                with cfg_db._conn() as local_con:
+                    tbl_local = cfg_db._tbl("local_assignments")
+                    placeholders_assigned = ",".join(["?"] * len(assigned_in_slis_ids))
+                    local_con.execute(f"DELETE FROM {tbl_local} WHERE exammoreid IN ({placeholders_assigned})", assigned_in_slis_ids)
+                local_assignments = cfg_db.get_all_local_assignments()
+
+            # Filter for exams with no diagnostician in Slis
+            unassigned_rows = [
+                r for r in all_pulled
+                if r.get("diagnostis") is None or str(r.get("diagnostis")).strip().lower() in ("", "0", "none", "null")
+            ]
+
+            for r in unassigned_rows:
+                r["category"] = normalize_modality(r.get("category"))
+                raw_exam_rows.append(r)
+        else:
+            # ── MOCK MODE: Query Local SQLite mock_slis.db ──
+            cutoff_date = (date.today() - timedelta(days=150)).isoformat()
+            con = _get_mock_db()
+            cur = con.execute(
+                """
+                SELECT * FROM slis_exams
+                WHERE (diagnostis IS NULL OR diagnostis = '' OR diagnostis = '0' OR LOWER(diagnostis) = 'none')
+                  AND visitdate >= ?
+                ORDER BY visitdate DESC, extracode ASC
+                """,
+                (cutoff_date,)
+            )
+            raw_exam_rows = [dict(r) for r in cur.fetchall()]
+            con.close()
+
         rows = []
         now_iso = datetime.now().isoformat()
-        for r in cur.fetchall():
+        for r in raw_exam_rows:
             exam_id = int(r["exammoreid"])
             if exam_id in local_assignments:
-                continue  # already handled (assigned locally)
+                continue  # already handled (staged in df_local_assignments)
 
-            doc_id = str(r["wcode"]) if r["wcode"] else ""
+            doc_id = str(r.get("wcode")) if r.get("wcode") else ""
 
             # Check 1: Exclusive partner auto-assignment (bypasses all filters)
             if doc_id and doc_id in exclusive_map:
@@ -319,8 +344,8 @@ def _get_pending_exams_from_db() -> list[dict]:
                     ex_part["preferred_diagnostician_id"],
                     ex_part["preferred_diagnostician_name"],
                     now_iso,
-                    modality=r["category"] if "category" in r.keys() else None,
-                    extracode=str(r["extracode"]) if ("extracode" in r.keys() and r["extracode"]) else None,
+                    modality=r.get("category"),
+                    extracode=str(r.get("extracode")) if r.get("extracode") else None,
                     is_auto=True,
                     rule_desc="Συνεργάτης (Αποκλειστικότητα)"
                 )
@@ -333,16 +358,15 @@ def _get_pending_exams_from_db() -> list[dict]:
                 continue
 
             # Check 2: Dynamic Exam Routing Rules (Replaces hardcoded lab & exam rules)
-            exam_code_str = str(r["examnumcode"]).strip() if ("examnumcode" in r.keys() and r["examnumcode"]) else ""
-            lab_id_val = r["labcodeid"] if "labcodeid" in r.keys() else None
-            is_pam = "ΠΑΜΜΑΚΑΡΙΣΤΟΣ" in (r.get("wname") or "").upper() if hasattr(r, "get") else "ΠΑΜΜΑΚΑΡΙΣΤΟΣ" in (r["wname"] or "").upper() if "wname" in r.keys() else False
+            exam_code_str = str(r.get("examnumcode") or "").strip()
+            lab_id_val = r.get("labcodeid")
+            is_pam = "ΠΑΜΜΑΚΑΡΙΣΤΟΣ" in (r.get("wname") or "").upper()
             
             routed = False
             for rule in routing_rules:
                 if not rule.get("is_active", True):
                     continue
                 
-                # Does the rule apply to this exam?
                 lab_match = (rule["lab_id"] is None) or (rule["lab_id"] == lab_id_val)
                 pam_match = (not rule["is_pamakristos"]) or is_pam
                 doc_match = (rule.get("issuing_doctor_id") is None) or (rule.get("issuing_doctor_id") == doc_id)
@@ -355,8 +379,8 @@ def _get_pending_exams_from_db() -> list[dict]:
                         d_name = d_info["name"] if d_info else rule["diagnostician_name"]
                         cfg_db.upsert_local_assignment(
                             exam_id, target_id, d_name, now_iso,
-                            modality=r["category"] if "category" in r.keys() else None,
-                            extracode=str(r["extracode"]) if ("extracode" in r.keys() and r["extracode"]) else None,
+                            modality=r.get("category"),
+                            extracode=str(r.get("extracode")) if r.get("extracode") else None,
                             is_auto=True,
                             rule_desc=rule["description"]
                         )
@@ -374,8 +398,8 @@ def _get_pending_exams_from_db() -> list[dict]:
                     pam_oncall["diagnostician_id"],
                     pam_oncall["diagnostician_name"],
                     now_iso,
-                    modality=r["category"] if "category" in r.keys() else None,
-                    extracode=str(r["extracode"]) if ("extracode" in r.keys() and r["extracode"]) else None,
+                    modality=r.get("category"),
+                    extracode=str(r.get("extracode")) if r.get("extracode") else None,
                     is_auto=True,
                     rule_desc="Παμμακάριστος Εφημερία"
                 )
@@ -389,51 +413,115 @@ def _get_pending_exams_from_db() -> list[dict]:
             # Normal pending exam
             rows.append(_row_to_exam_dict(r))
 
-        con.close()
-        logger.info("pending_exams_loaded_from_db", count=len(rows))
+        logger.info("pending_exams_loaded", count=len(rows))
         return rows
     except Exception as e:
-        logger.error("mock_db_read_failed", error=str(e))
+        logger.error("get_pending_exams_failed", error=str(e))
         return []
-
 
 
 def _get_assigned_exams_from_db() -> list[dict]:
     """
-    Fetch exams that have been locally assigned but NOT yet pushed to Slis.
+    Fetch exams that have been locally assigned in df_local_assignments (staged for Slis push).
+    In production: Resolves metadata directly from MSSQL.
+    In mock mode: Resolves from SQLite mock_slis.db.
     """
     try:
+        from datetime import date, timedelta
         import diagflow.db.diagflow_db as cfg_db
         local_assignments = cfg_db.get_all_local_assignments()
         if not local_assignments:
             return []
-            
-        con = _get_mock_db()
-        placeholders = ",".join("?" * len(local_assignments))
-        cur = con.execute(
-            f"""
-            SELECT * FROM slis_exams
-            WHERE exammoreid IN ({placeholders})
-            ORDER BY visitdate DESC, extracode ASC
-            """,
-            list(local_assignments.keys())
-        )
+
+        exam_metadata = {}
+        if not settings.use_mock_slis_db:
+            try:
+                from sqlalchemy import create_engine, text
+                engine = create_engine(settings.slis_db_connection_string, connect_args={"timeout": 10})
+                today = date.today().isoformat()
+                start_date = (date.today() - timedelta(days=7)).isoformat()
+                with engine.connect() as conn:
+                    query = text(f"EXEC getExamsListForPeriod_V1 '{start_date}', '{today}'")
+                    res = conn.execute(query)
+                    keys = list(res.keys())
+                    for r in res.fetchall():
+                        r_dict = {k.lower(): v for k, v in zip(keys, r)}
+                        if r_dict.get("exammoreid"):
+                            exam_metadata[int(r_dict["exammoreid"])] = r_dict
+            except Exception as e:
+                logger.warning("failed_to_fetch_mssql_assigned_metadata", error=str(e))
+        else:
+            try:
+                con = _get_mock_db()
+                placeholders = ",".join("?" * len(local_assignments))
+                cur = con.execute(
+                    f"""
+                    SELECT * FROM slis_exams
+                    WHERE exammoreid IN ({placeholders})
+                    ORDER BY visitdate DESC, extracode ASC
+                    """,
+                    list(local_assignments.keys())
+                )
+                for r in cur.fetchall():
+                    r_dict = dict(r)
+                    exam_metadata[int(r_dict["exammoreid"])] = r_dict
+                con.close()
+            except Exception as e:
+                logger.warning("mock_assigned_read_failed", error=str(e))
+
         rows = []
-        for r in cur.fetchall():
-            exam_dict = _row_to_exam_dict(r)
-            loc = local_assignments[int(exam_dict["exammoreid"])]
-            exam_dict["diagnostis"] = loc["diagnostician_id"]
-            exam_dict["code"] = loc["diagnostician_name"]
-            exam_dict["diagnostician_name"] = loc["diagnostician_name"]
-            exam_dict["status"] = "assigned"
-            exam_dict["is_auto_assigned"] = bool(loc.get("is_auto", False))
-            exam_dict["rule_desc"] = loc.get("rule_desc", "")
-            rows.append(exam_dict)
-        con.close()
-        logger.info("assigned_exams_loaded_from_db", count=len(rows))
+        for eid, loc in local_assignments.items():
+            meta = exam_metadata.get(eid, {})
+            fname = meta.get("fname") or ""
+            lname = meta.get("lname") or ""
+            pat_name = f"{fname} {lname}".strip() or (meta.get("patient_name") or "")
+
+            rows.append({
+                "exam_id": str(eid),
+                "exammoreid": eid,
+                "extracode": loc.get("extracode") or meta.get("extracode") or "",
+                "visitid": meta.get("visitid"),
+                "demogid": meta.get("demogid"),
+                "patient_id": str(meta.get("demogid") or meta.get("patient_id") or ""),
+                "patient_name": pat_name,
+                "fname": fname,
+                "lname": lname,
+                "age": meta.get("age"),
+                "examid": meta.get("examid"),
+                "examnumcode": meta.get("examnumcode") or "",
+                "examname": meta.get("examname") or "",
+                "modality": loc.get("modality") or meta.get("category") or "MRI",
+                "category": loc.get("modality") or meta.get("category") or "MRI",
+                "body_part": meta.get("body_part") or "",
+                "visitdate": str(meta.get("visitdate") or loc.get("assigned_at") or "")[:10],
+                "labcodeid": meta.get("labcodeid"),
+                "lab_id": str(meta["labcodeid"]) if meta.get("labcodeid") else None,
+                "lab_name": meta.get("laboratoryname") or meta.get("lab_name") or "",
+                "wcode": meta.get("wcode"),
+                "issuing_doctor_id": str(meta["wcode"]) if meta.get("wcode") else None,
+                "wname": meta.get("wname") or meta.get("issuing_doctor_name") or "",
+                "issuing_doctor_name": meta.get("wname") or meta.get("issuing_doctor_name") or "",
+                "diagnostis": loc["diagnostician_id"],
+                "code": loc["diagnostician_name"],
+                "diagnostician_name": loc["diagnostician_name"],
+                "status": "assigned",
+                "notes": meta.get("notes") or "",
+                "comments": meta.get("notes") or "",
+                "oldvisit": meta.get("oldvisit") or 0,
+                "oldorder": meta.get("oldorder") or "",
+                "olddiagnostis": meta.get("olddiagnostis") or "",
+                "oldpers": meta.get("oldpers"),
+                "slis_synced_at": None,
+                "suggestion": None,
+                "is_pamakristos": "ΠΑΜΜΑΚΑΡΙΣΤΟΣ" in (meta.get("wname") or "").upper(),
+                "is_auto_assigned": bool(loc.get("is_auto", False)),
+                "rule_desc": loc.get("rule_desc", ""),
+            })
+
+        logger.info("assigned_exams_loaded", count=len(rows))
         return rows
     except Exception as e:
-        logger.error("mock_db_read_failed", error=str(e))
+        logger.error("get_assigned_exams_failed", error=str(e))
         return []
 
 def _get_exam_categories_from_db() -> list[dict]:

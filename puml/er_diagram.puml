@@ -202,7 +202,7 @@ package "mock_slis.db" as db2 #FFF3E0 {
 }
 
 ' ─────────────────────────────────────────────
-'  Relationships — diagflow.db
+'  Relationships — Central DB / diagflow.db
 ' ─────────────────────────────────────────────
 diag ||--o{ skills : "1:N"
 diag ||--o{ avail : "1:N"
@@ -231,14 +231,15 @@ slis_docs ..> docs : "syncs doctors\n(id, name)"
 
 note bottom of db2
     In **production**, mock_slis.db is replaced
-    by the real Slis MSSQL database via pyodbc.
-    Only the connection string changes.
+    by the real Slis MSSQL database.
+    DiagFlow executes stored procedures directly.
 end note
 
 note bottom of db1
-    All tables use raw **sqlite3** (no ORM in production).
-    diagflow_db.py provides a CRUD layer with
-    context-managed connections.
+    In **production**, all DiagFlow tables are
+    prefixed with **df_*** (e.g. df_diagnosticians)
+    and reside within the central MSSQL server.
+    In **development**, local SQLite is used.
 end note
 
 @enduml

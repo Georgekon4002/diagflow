@@ -184,21 +184,39 @@ $$\text{Συνολική Βαθμολογία} = \sum (\text{Ακατέργασ�
 
 ---
 
-### 3. Αρχιτεκτονική Διπλής Βάσης Δεδομένων
+### 3. Αρχιτεκτονική Κεντρικής Βάσης Δεδομένων & Ταυτόχρονη Χρήση (Multi-User LAN)
+
+Σε περιβάλλον παραγωγής, το DiagFlow συνδέεται απευθείας στην **Κεντρική Βάση Δεδομένων MSSQL** μέσω του τοπικού δικτύου (LAN). Όλοι οι πίνακες του DiagFlow διατηρούνται στον ίδιο physical server με τους πίνακες του Slis, χρησιμοποιώντας το πρόθεμα `df_*` ώστε να αποκλείεται οποιαδήποτε σύγκρουση ονομάτων. Πολλαπλοί σταθμοί εργασίας γραμματείας και διαχειριστών εκτελούν το `DiagFlow.exe` ταυτόχρονα και παραμένουν πλήρως συγχρονισμένοι σε πραγματικό χρόνο.
 
 ```
-┌────────────────────────────────────────┐     ┌────────────────────────────────────────┐
-│  mock_slis.db / Slis MSSQL (Παραγωγή)  │     │         diagflow.db (SQLite)           │
-├────────────────────────────────────────┤     ├────────────────────────────────────────┤
-│ * slis_exams                           │     │ * diagnosticians & skills              │
-│ * exam_categories                      │     │ * partnerships & doctors               │
-│ * diagnosticians (Slis Personnel)      │     │ * availability calendar                │
-│ * doctors (Slis Doctors)               │     │ * local_assignments & assignment_log   │
-│                                        │     │ * pamakristos_schedule                 │
-│                                        │     │ * exam_routing_rules & exclusive_labs  │
-│                                        │     │ * modality_quotas & system_settings    │
-└────────────────────────────────────────┘     └────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────────────┐
+│             Κεντρικός Διακομιστής MSSQL (π.χ. server_hostname/SlisDB)       │
+├─────────────────────────────────────────────┬───────────────────────────────┤
+│          Σχήμα Slis (Εξετάσεις/Διαδικασίες) │    Σχήμα DiagFlow (Πρόθεμα df_)│
+├─────────────────────────────────────────────┼───────────────────────────────┤
+│ • exammore (ιατρικές εξετάσεις)             │ • df_diagnosticians & skills  │
+│ • SP: getExamsListForPeriod_V1              │ • df_partnerships & df_doctors│
+│ • SP: getWardDoctors                        │ • df_availability (άδειες)    │
+│ • SP: getdiagnosticsList                    │ • df_local_assignments       │
+│                                             │ • df_assignment_log (audit)   │
+│                                             │ • df_pamakristos_schedule     │
+│                                             │ • df_exam_routing_rules       │
+│                                             │ • df_exclusive_lab_rules      │
+│                                             │ • df_modality_quotas          │
+│                                             │ • df_system_settings & admin  │
+└─────────────────────────────────────────────┴───────────────────────────────┘
+                                ▲                      ▲
+                  LAN (pyodbc)  │                      │  LAN (pyodbc)
+            ┌───────────────────┴──┐                ┌──┴───────────────────┐
+            │  Υπολογιστής 1 (Admin)│                │ Υπολογιστής 2 (Γραμμ.)│
+            │     DiagFlow.exe     │                │     DiagFlow.exe     │
+            └──────────────────────┘                └──────────────────────┘
 ```
+
+#### Πλεονεκτήματα Ταυτόχρονης Χρήσης:
+- **Άμεση Ενημέρωση Ρυθμίσεων:** Αλλαγές σε άδειες, όρια ή συνεργασίες από το Admin Panel οποιουδήποτε υπολογιστή εφαρμόζονται άμεσα σε όλα τα τερματικά.
+- **Κοινόχρηστες Προσωρινές Αναθέσεις (`df_local_assignments`):** Όταν η Γραμματέας Α αναθέτει μια εξέταση, οι υπόλοιποι χρήστες βλέπουν άμεσα τους ενημερωμένους μετρητές και τις εκκρεμότητες.
+- **Scripts Δημιουργίας & Αρχικοποίησης:** `db/create_central_tables.sql` (DDL πινάκων) και `db/seed_central_tables.sql` (αρχικά δεδομένα).
 
 ---
 
@@ -303,7 +321,7 @@ copy .env.example .env    # Windows CMD / PowerShell
 # --- Database Configuration ---
 USE_MOCK_SLIS_DB=true
 MOCK_SLIS_DB_PATH=db/mock_slis.db
-SLIS_DB_CONNECTION_STRING=mssql+pyodbc://diagflow_user:SecurePassword123!@192.168.1.100/SlisDB?driver=ODBC+Driver+17+for+SQL+Server
+SLIS_DB_CONNECTION_STRING=mssql+pyodbc://diagflow_user:SecurePassword123!@server_hostname/SlisDB?driver=ODBC+Driver+17+for+SQL+Server
 CONFIG_DB_CONNECTION_STRING=sqlite:///db/diagflow.db
 
 # --- Rule Engine Weights ---

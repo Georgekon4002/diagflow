@@ -854,12 +854,14 @@ async def get_dashboard():
                     
                     local_extracodes = {}
                     with cfg_db._conn() as local_con:
-                        lrows = local_con.execute("SELECT exammoreid, extracode FROM local_assignments WHERE exammoreid IS NOT NULL").fetchall()
+                        tbl_local = cfg_db._tbl("local_assignments")
+                        tbl_log = cfg_db._tbl("assignment_log")
+                        lrows = local_con.execute(f"SELECT exammoreid, extracode FROM {tbl_local} WHERE exammoreid IS NOT NULL").fetchall()
                         for lr in lrows:
                             lr_dict = dict(lr)
                             if lr_dict.get("exammoreid") and lr_dict.get("extracode"):
                                 local_extracodes[str(lr_dict["exammoreid"])] = str(lr_dict["extracode"]).strip()
-                        logrows = local_con.execute("SELECT exammoreid, extracode FROM assignment_log WHERE exammoreid IS NOT NULL").fetchall()
+                        logrows = local_con.execute(f"SELECT exammoreid, extracode FROM {tbl_log} WHERE exammoreid IS NOT NULL").fetchall()
                         for lr in logrows:
                             lr_dict = dict(lr)
                             if lr_dict.get("exammoreid") and lr_dict.get("extracode"):

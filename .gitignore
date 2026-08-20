@@ -38,6 +38,7 @@ db/*.db
 *.sqlite3
 db/init_diagflow.sql
 db/init_mock_slis.sql
+db/seed_central_tables.sql
 *.db-shm
 *.db-wal
 db/prev

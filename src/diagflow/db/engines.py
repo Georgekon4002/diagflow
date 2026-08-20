@@ -9,6 +9,7 @@ Both can point to the same physical database (as your supervisor prefers)
 but the abstraction allows splitting to a separate DB later with a config change.
 """
 
+from typing import Generator
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, Session
 
@@ -55,11 +56,41 @@ def dispose_engines() -> None:
     global _slis_engine, _config_engine
     if _slis_engine:
         _slis_engine.dispose()
+        _slis_engine = None
     if _config_engine:
         _config_engine.dispose()
+        _config_engine = None
 
 
-def get_slis_session() -> Session:
+def get_config_engine():
+    """Get or lazily initialize the config database SQLAlchemy engine."""
+    global _config_engine
+    if _config_engine is None:
+        _config_engine = create_engine(
+            settings.config_db_connection_string,
+            echo=(settings.app_env == "development"),
+            pool_pre_ping=True,
+            pool_size=5,
+            max_overflow=10,
+        )
+    return _config_engine
+
+
+def get_slis_engine():
+    """Get or lazily initialize the Slis database SQLAlchemy engine."""
+    global _slis_engine
+    if _slis_engine is None:
+        _slis_engine = create_engine(
+            settings.slis_db_connection_string,
+            echo=(settings.app_env == "development"),
+            pool_pre_ping=True,
+            pool_size=5,
+            max_overflow=10,
+        )
+    return _slis_engine
+
+
+def get_slis_session() -> Generator[Session, None, None]:
     """
     Get a Slis database session (read-only).
 
@@ -78,7 +109,7 @@ def get_slis_session() -> Session:
         session.close()
 
 
-def get_config_session() -> Session:
+def get_config_session() -> Generator[Session, None, None]:
     """
     Get a Config database session (read-write).
 

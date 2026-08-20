@@ -188,23 +188,40 @@ Auto-assigned exams appear directly in the **Assigned** tab with an `AUTO` badge
 
 ---
 
-### 3. Dual-Database Architecture
+### 3. Central Database & Multi-Client Architecture
 
-DiagFlow isolates operational Slis exam data from application configuration using two separate databases:
+In production, DiagFlow connects directly to a **Central MSSQL Database** over the local hospital network (LAN), integrating seamlessly alongside native Slis tables without table collisions via the `df_*` table prefix. Multiple secretarial and administrative PCs run `DiagFlow.exe` simultaneously, completely synchronized in real time.
 
 ```
-┌────────────────────────────────────────┐     ┌────────────────────────────────────────┐
-│   mock_slis.db / Slis MSSQL (Production)│     │         diagflow.db (SQLite)           │
-├────────────────────────────────────────┤     ├────────────────────────────────────────┤
-│ • slis_exams                           │     │ • diagnosticians & skills              │
-│ • exam_categories                      │     │ • partnerships & doctors               │
-│ • diagnosticians (Slis Personnel)      │     │ • availability calendar                │
-│ • doctors (Slis Doctors)               │     │ • local_assignments & assignment_log   │
-│                                        │     │ • pamakristos_schedule                 │
-│                                        │     │ • exam_routing_rules & exclusive_labs  │
-│                                        │     │ • modality_quotas & system_settings    │
-└────────────────────────────────────────┘     └────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                 Central MSSQL Server (e.g. server_hostname/SlisDB)          │
+├─────────────────────────────────────────────┬───────────────────────────────┤
+│        Native Slis Schema (Operational)     │   DiagFlow Schema (df_* prefix)│
+├─────────────────────────────────────────────┼───────────────────────────────┤
+│ • exammore (medical exams)                  │ • df_diagnosticians & skills  │
+│ • SP: getExamsListForPeriod_V1              │ • df_partnerships & df_doctors│
+│ • SP: getWardDoctors                        │ • df_availability (leaves)    │
+│ • SP: getdiagnosticsList                    │ • df_local_assignments (staged│
+│                                             │ • df_assignment_log (audit)   │
+│                                             │ • df_pamakristos_schedule     │
+│                                             │ • df_exam_routing_rules       │
+│                                             │ • df_exclusive_lab_rules      │
+│                                             │ • df_modality_quotas          │
+│                                             │ • df_system_settings & admin  │
+└─────────────────────────────────────────────┴───────────────────────────────┘
+                                ▲                      ▲
+                  LAN (pyodbc)  │                      │  LAN (pyodbc)
+            ┌───────────────────┴──┐                ┌──┴───────────────────┐
+            │  Client PC 1 (Admin) │                │ Client PC 2 (Secr.)  │
+            │     DiagFlow.exe     │                │     DiagFlow.exe     │
+            └──────────────────────┘                └──────────────────────┘
 ```
+
+#### Multi-User Real-Time Sync Highlights:
+- **Zero Local Caching Overhead:** Direct queries against the central database eliminate out-of-sync local SQLite copies.
+- **Shared Staged Assignments (`df_local_assignments`):** When Operator A assigns an exam, all operators see the updated quotas and unassigned pools immediately.
+- **Instant Admin Propagation:** Quota, leave, and partnership updates in `admin.html` immediately take effect on all client PCs.
+- **Central DDL & Seeding Scripts:** `db/create_central_tables.sql` (schema DDL) and `db/seed_central_tables.sql` (data initializer).
 
 ---
 
@@ -309,7 +326,7 @@ Configure `.env` settings according to your environment:
 # --- Database Configuration ---
 USE_MOCK_SLIS_DB=true
 MOCK_SLIS_DB_PATH=db/mock_slis.db
-SLIS_DB_CONNECTION_STRING=mssql+pyodbc://diagflow_user:SecurePassword123!@192.168.1.100/SlisDB?driver=ODBC+Driver+17+for+SQL+Server
+SLIS_DB_CONNECTION_STRING=mssql+pyodbc://diagflow_user:SecurePassword123!@server_hostname/SlisDB?driver=ODBC+Driver+17+for+SQL+Server
 CONFIG_DB_CONNECTION_STRING=sqlite:///db/diagflow.db
 
 # --- Rule Engine Weights ---
