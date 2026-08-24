@@ -2982,10 +2982,21 @@ async function bulkAssignToProposed() {
     if (selectedExams.size === 0) return;
 
     const examIds = Array.from(selectedExams);
+    const items = examIds.map(eid => {
+        const exam = pendingExams.find(e => String(e.exam_id) === String(eid));
+        const diagId = exam && exam.suggestion ? exam.suggestion.suggested_diagnostician_id : null;
+        return {
+            exam_id: String(eid),
+            diagnostician_id: diagId
+        };
+    });
 
     showBackgroundWork(`⏳ Επιβεβαίωση ${examIds.length} προτάσεων...`);
     try {
-        const results = await apiCall('/assignments/bulk-confirm', 'POST', { exam_ids: examIds });
+        const results = await apiCall('/assignments/bulk-confirm', 'POST', {
+            exam_ids: examIds,
+            items: items
+        });
         showToast(`${results.length} εξετάσεις ανατέθηκαν επιτυχώς.`, 'success');
         clearSelection();
         await loadDiagnosticians();

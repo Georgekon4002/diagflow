@@ -806,26 +806,80 @@ async def bulk_eligible_diagnosticians(
 @router.post("/assignments/bulk-confirm", response_model=list[AssignmentConfirmation])
 async def bulk_confirm_assignments(
     request: BulkConfirmRequest,
-    svc: AssignmentService = Depends(get_assignment_service),
+    assign_svc: AssignmentService = Depends(get_assignment_service),
+    diag_svc: DiagnosticianService = Depends(get_diagnostician_service),
 ):
-    """Confirm suggested assignments for multiple exams."""
+    """Confirm suggested assignments for multiple exams with on-the-fly suggestion fallback."""
+    targets: list[tuple[str, int | None]] = []
+    if request.items:
+        for it in request.items:
+            targets.append((str(it.exam_id), it.diagnostician_id))
+    elif request.exam_ids:
+        for eid in request.exam_ids:
+            targets.append((str(eid), None))
+
+    if not targets:
+        return []
+
+    all_exams_list: list[dict] = []
+    all_exams_map: dict[str, dict] | None = None
+
     results = []
-    for exam_id in request.exam_ids:
-        suggestion = _suggestion_cache.get(exam_id)
-        if not suggestion:
+    for exam_id_str, explicit_diag_id in targets:
+        eid_lookup = int(exam_id_str) if exam_id_str.isdigit() else exam_id_str
+        suggestion = _suggestion_cache.get(exam_id_str) or _suggestion_cache.get(eid_lookup)
+
+        diag_id_to_use = None
+        if explicit_diag_id:
+            diag_id_to_use = explicit_diag_id
+        elif suggestion and suggestion.suggested_diagnostician_id:
+            diag_id_to_use = suggestion.suggested_diagnostician_id
+
+        if not diag_id_to_use:
+            if all_exams_map is None:
+                pending = assign_svc.get_pending_exams()
+                assigned = assign_svc.get_assigned_exams()
+                all_exams_list = pending + assigned
+                all_exams_map = {str(e["exam_id"]): e for e in all_exams_list}
+
+            exam_data = all_exams_map.get(exam_id_str)
+            if exam_data:
+                suggestion = await _generate_suggestion_for_exam(exam_data, all_exams_list, assign_svc, diag_svc)
+                if suggestion and suggestion.suggested_diagnostician_id:
+                    diag_id_to_use = suggestion.suggested_diagnostician_id
+
+        if not diag_id_to_use:
             continue
-            
-        result = await svc.confirm_assignment(
-            exam_id=exam_id,
-            diagnostician_id=suggestion.suggested_diagnostician_id,
+
+        if not suggestion:
+            from diagflow.engine.pipeline import AssignmentSuggestion
+            suggestion = AssignmentSuggestion(
+                exam_id=exam_id_str,
+                patient_id="",
+                exam_summary="",
+                suggested_diagnostician_id=diag_id_to_use,
+                suggested_diagnostician_name="",
+                confidence_score=1.0,
+                score_breakdown=[],
+                alternatives=[],
+                rules_fired=[],
+                filter_results={},
+                solver_status="fallback",
+                pipeline_timestamp=datetime.now().isoformat(),
+            )
+
+        result = await assign_svc.confirm_assignment(
+            exam_id=exam_id_str,
+            diagnostician_id=diag_id_to_use,
             suggestion=suggestion,
         )
-        _suggestion_cache.pop(exam_id, None)
-        
+        _suggestion_cache.pop(exam_id_str, None)
+        _suggestion_cache.pop(eid_lookup, None)
+
         results.append(
             AssignmentConfirmation(
-                exam_id=exam_id,
-                diagnostician_id=suggestion.suggested_diagnostician_id,
+                exam_id=exam_id_str,
+                diagnostician_id=diag_id_to_use,
                 was_overridden=False,
                 status="confirmed",
                 timestamp=result["decision_timestamp"],
@@ -842,21 +896,24 @@ async def bulk_override_assignments(
     """Override suggested assignments for multiple exams."""
     results = []
     for exam_id in request.exam_ids:
-        suggestion = _suggestion_cache.get(exam_id)
+        exam_id_str = str(exam_id)
+        eid_lookup = int(exam_id_str) if exam_id_str.isdigit() else exam_id_str
+        suggestion = _suggestion_cache.get(exam_id_str) or _suggestion_cache.get(eid_lookup)
         original_diagnostician_id = suggestion.suggested_diagnostician_id if suggestion else 0
 
         result = await svc.override_assignment(
-            exam_id=exam_id,
+            exam_id=exam_id_str,
             original_diagnostician_id=original_diagnostician_id,
             override_diagnostician_id=request.override_diagnostician_id,
             reason=request.reason,
             suggestion=suggestion,
         )
-        _suggestion_cache.pop(exam_id, None)
+        _suggestion_cache.pop(exam_id_str, None)
+        _suggestion_cache.pop(eid_lookup, None)
 
         results.append(
             AssignmentConfirmation(
-                exam_id=exam_id,
+                exam_id=exam_id_str,
                 diagnostician_id=request.override_diagnostician_id,
                 was_overridden=True,
                 status="overridden",

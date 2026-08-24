@@ -35,10 +35,18 @@ class OverrideAssignmentRequest(BaseModel):
     reason: str = Field(default="", description="Why the operator chose a different diagnostician")
 
 
+class BulkConfirmItem(BaseModel):
+    """Individual item for bulk confirming with optional pre-known diagnostician."""
+
+    exam_id: str
+    diagnostician_id: int | None = None
+
+
 class BulkConfirmRequest(BaseModel):
     """Request body for confirming suggested assignments for multiple exams."""
 
-    exam_ids: list[str]
+    exam_ids: list[str] = Field(default_factory=list)
+    items: list[BulkConfirmItem] | None = None
 
 
 class BulkOverrideRequest(BaseModel):
