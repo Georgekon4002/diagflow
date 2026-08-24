@@ -6,8 +6,8 @@
 
 [![Python](https://img.shields.io/badge/Python-3.11%2B-blue.svg)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.100%2B-009688.svg)](https://fastapi.tiangolo.com/)
-[![SQLite](https://img.shields.io/badge/Database-SQLite%20%2F%20MSSQL-003B57.svg)](https://www.sqlite.org/)
-[![OR-Tools](https://img.shields.io/badge/Optimization-Google%20OR--Tools-4285F4.svg)](https://developers.google.com/optimization)
+[![Database](https://img.shields.io/badge/Database-MSSQL%20%28Slis%29-003B57.svg)](https://learn.microsoft.com/en-us/sql/)
+[![Optimization](https://img.shields.io/badge/Optimization-Google%20OR--Tools-4285F4.svg)](https://developers.google.com/optimization)
 [![License](https://img.shields.io/badge/License-Proprietary-red.svg)](#license)
 
 **DiagFlow** is an intelligent diagnostic assignment and decision-support engine developed for **Kosmoiatriki**. It automates the complex process of assigning CT and MRI medical imaging reports from Infomed's Slis system to diagnosticians using a 4-stage rule engine, dynamic routing rules, weighted multi-factor scoring, near-tie load balancing, and Google OR-Tools CP-SAT batch optimization.
@@ -94,7 +94,7 @@ DiagFlow follows a decoupled, modular architecture connecting Infomed's Slis dat
                       │  │ Stage 4: CP-SAT / Greedy Solver  │  │
                       │  └──────────────────────────────────┘  │
                       │  ┌──────────────────────────────────┐  │
-                      │  │ diagflow.db (SQLite Config State)│  │
+                      │  │ df_* Tables (MSSQL) / SQLite(Dev)│  │
                       │  └──────────────────────────────────┘  │
                       └───────────────────┬────────────────────┘
                                           │ REST API (/api/*)
@@ -227,10 +227,10 @@ In production, DiagFlow connects directly to a **Central MSSQL Database** over t
 
 ### 4. Two-Way Slis Sync Service
 
-- **Pull (On-Demand / Startup):** When `USE_MOCK_SLIS_DB=false`, executes stored procedure `EXEC getExamsListForPeriod 'YYYY-MM-DD', 'YYYY-MM-DD'` on the Slis MSSQL DB to pull unassigned exams (`DIAGNOSTIS IS NULL`) for the last 3 days. In mock mode, reads from `mock_slis.db`. Runs Stage 0 auto-assignment rules, and populates the Secretariat pending table.
-- **Doctor Sync (Startup / Daily 3 AM Cron):** When `USE_MOCK_SLIS_DB=false`, executes stored procedure `EXEC getWardDoctors` on launch and via daily APScheduler cron to sync new issuing/ward doctors (`CODE`, `DOCNAME`) into `diagflow.db` (`doctors` table, inserting new IDs only).
-- **Diagnostician Sync (Admin Panel 'Refresh'):** When `USE_MOCK_SLIS_DB=false`, executes stored procedure `EXEC getdiagnosticsList` when the admin clicks "Refresh" to sync new diagnosticians (`PERSONELID`, `DOCNAME`) into `diagflow.db` (`diagnosticians` table, inserting new IDs only).
-- **Push (Manual Trigger):** Pushes confirmed local assignments (`POST /api/slis/push-all` or `/api/slis/push-selected`) directly to Slis (`UPDATE exammore SET diagnostisid=? WHERE exammoreid=?`), recording the sync timestamp.
+- **Pull (On-Demand / Startup):** When `USE_MOCK_SLIS_DB=false`, executes stored procedure `EXEC getExamsListForPeriod_V1 'YYYY-MM-DD', 'YYYY-MM-DD'` on the Slis MSSQL DB to pull unassigned exams (`DIAGNOSTIS IS NULL`) for the last 3 days directly in memory. In mock mode, reads from `mock_slis.db`. Runs Stage 0 auto-assignment rules, stages into `df_local_assignments`, and populates the Secretariat pending table.
+- **Doctor Sync (Startup / Daily 3 AM Cron):** When `USE_MOCK_SLIS_DB=false`, executes stored procedure `EXEC getWardDoctors` on launch and via daily APScheduler cron to sync new issuing/ward doctors (`CODE`, `DOCNAME`) into `df_doctors` (or local `doctors` table in dev, inserting new IDs only).
+- **Diagnostician Sync (Admin Panel 'Refresh'):** When `USE_MOCK_SLIS_DB=false`, executes stored procedure `EXEC getdiagnosticsList` when the admin clicks "Refresh" to sync new diagnosticians (`PERSONELID`, `DOCNAME`) into `df_diagnosticians` (or local `diagnosticians` table in dev, inserting new IDs only).
+- **Push (Manual Trigger):** Pushes confirmed local assignments (`POST /api/slis/push-all` or `/api/slis/push-selected`) directly to Slis (`UPDATE exammore SET diagnostisid=? WHERE exammoreid=?`), recording the audit log in `df_assignment_log` and clearing `df_local_assignments`.
 
 ---
 
@@ -259,10 +259,11 @@ In production, DiagFlow connects directly to a **Central MSSQL Database** over t
 ## 🛠️ Prerequisites
 
 - **Python 3.11+**
-- **SQLite 3** (embedded in Python, no separate installation required)
-- **ODBC Driver 17 for SQL Server** (required for production MSSQL Slis connection)
-- **Web Browser** (Chrome, Edge, Firefox, or Safari) for Web mode
-- **Windows 10/11** (for standalone `.exe` build)
+- **Microsoft ODBC Driver 17 for SQL Server** (required for production MSSQL Slis database connection)
+- **Microsoft Edge WebView2 Runtime** (pre-installed on Windows 11 / modern Windows 10, required for standalone desktop app)
+- **Web Browser** (Edge, Chrome, Firefox, or Safari) for web server mode
+- **SQLite 3** *(embedded in standard Python library; used strictly for local offline testing/development with mock data)*
+- **Windows 10/11** (for standalone `.exe` build & execution)
 
 ---
 
@@ -424,68 +425,88 @@ The app will automatically launch the FastAPI server on port `8080` in the backg
 
 ### 📦 Deploying to Another PC
 
-To deploy DiagFlow onto another machine:
+#### 1. Deploying Standalone EXE (Production / End-Users):
+1. **Download Executable:** Download `DiagFlow.exe` directly from the **[GitHub Releases](https://github.com/Georgekon4002/diagflow/releases)** page of the repository (or copy your built `dist/DiagFlow.exe`).
+2. **Configure `.env` File:** Create a `.env` file in the **same directory as `DiagFlow.exe`** with your central MSSQL connection:
+   ```ini
+   USE_MOCK_SLIS_DB=false
+   SLIS_DB_CONNECTION_STRING=mssql+pyodbc://diagflow_user:Password123!@server_hostname/SlisDB?driver=ODBC+Driver+17+for+SQL+Server
+   CONFIG_DB_CONNECTION_STRING=mssql+pyodbc://diagflow_user:Password123!@server_hostname/SlisDB?driver=ODBC+Driver+17+for+SQL+Server
+   ```
+3. **No `db/` Folder Needed in Production:** When connected to the Central MSSQL server, DiagFlow connects directly to the central `df_*` tables and Slis tables over the LAN. **You do NOT need to copy or provide a `db/` folder.**
+4. **Launch:** Double-click `DiagFlow.exe`. The application opens immediately in a native full-screen desktop window.
 
-#### Deploying Standalone EXE (Easiest for End-Users):
-1. Copy the `dist/DiagFlow.exe` file to the target machine.
-2. Ensure the `db/` folder containing `diagflow.db` and `mock_slis.db` (or `.env` for production MSSQL) is located in the same directory as `DiagFlow.exe`.
-3. Double-click `DiagFlow.exe` to run.
+#### 2. Offline / Testing Mode with Mock Data:
+* **Automatic `db/` Generation:** When running in mock test mode (`USE_MOCK_SLIS_DB=true` or without an MSSQL connection), **the `db/` folder is automatically created on startup**. The application auto-initializes `mock_slis.db` and `diagflow.db` from embedded, sanitized templates in `db/templates/`.
+* **Customizing / Re-seeding Mock Data:** If you want to populate or customize mock exam records for testing, you can execute the seeder scripts:
+  ```powershell
+  python db/create_diagflow_db.py   # Populates mock diagnosticians, skills, rules
+  python db/seed_mock_db.py         # Populates sample pending/assigned CT & MRI exams
+  ```
 
-#### Deploying Web Server (For Network Access):
-1. Copy the full `diagflow` directory to the target PC.
-2. Install Python 3.11 and run `pip install -r requirements.txt`.
-3. Set `APP_HOST=0.0.0.0` in `.env`.
-4. Run `uvicorn src.diagflow.main:app --host 0.0.0.0 --port 8000`.
-5. Other PCs on the local network can access the dashboard via `http://<TARGET_PC_IP>:8000`.
+#### 3. Deploying Web Server (For Browser Network Access):
+1. Copy the repository source code to the target host PC.
+2. Install Python 3.11+ and run `pip install -r requirements.txt`.
+3. Set `APP_HOST=0.0.0.0` and `APP_PORT=8000` in `.env`.
+4. Run `uvicorn diagflow.main:app --host 0.0.0.0 --port 8000`.
+5. Other PCs on the local network can access the dashboard directly via `http://<HOST_PC_IP>:8000`.
 
 ---
 
 ## 📊 Database Architecture & Schemas
 
-### `diagflow.db` (Application Config & State)
+### 1. Central MSSQL Database Schema (`df_*` Tables)
+
+In production, all DiagFlow configuration, business rules, staging state, and audit logs are hosted in the **Central MSSQL Database** under the `df_` table prefix, coexisting seamlessly with native Slis tables without naming conflicts:
 
 | Table | Description | Primary Key | Key Columns |
 |-------|-------------|-------------|-------------|
-| `diagnosticians` | Personnel master list | `id` (INT) | `name`, `active`, `can_ct`, `can_mri`, `quota_monday..sunday`, `preferred_lab_id` |
-| `diagnostician_skills` | Exam code proficiencies | `id` (INT) | `diagnostician_id`, `exam_code`, `is_preferred` |
-| `partnerships` | Doctor-diagnostician pairings | `id` (INT) | `issuing_doctor_id`, `preferred_diagnostician_id`, `exclusive`, `is_active` |
-| `availability` | Daily leave & status calendar | `id` (INT) | `diagnostician_id`, `date`, `status`, `is_pamakristos_oncall` |
-| `doctors` | Doctor catalogue | `id` (TEXT) | `name` |
-| `local_assignments` | Local un-pushed assignments | `exammoreid` (INT) | `diagnostician_id`, `diagnostician_name`, `assigned_at`, `is_auto`, `rule_desc` |
-| `assignment_log` | Audit trail history | `exammoreid` (INT) | `diagnostician_id`, `assigned_at`, `modality`, `extracode` |
-| `pamakristos_schedule` | Weekly on-call rotation | `weekday` (INT) | `diagnostician_id` (0=Mon .. 6=Sun) |
-| `exam_routing_rules` | Dynamic exam auto-assign rules | `id` (INT) | `lab_id`, `is_pamakristos`, `exam_codes`, `diagnostician_id`, `description`, `is_active` |
-| `exclusive_lab_rules` | Strict lab bindings | `id` (INT) | `diagnostician_id`, `lab_id`, `lab_name`, `is_active` |
-| `modality_quotas` | CT/MRI specific daily limits | `id` (INT) | `diagnostician_id`, `modality`, `max_count`, `is_active` |
-| `system_settings` | Dynamic scoring factor weights | `key` (TEXT) | `value` (e.g. `pts_partnership`, `pts_history`, `pts_lab_pref`) |
+| `df_diagnosticians` | Diagnosticians master list | `id` (INT) | `name`, `active`, `can_ct`, `can_mri`, `quota_monday..sunday`, `preferred_lab_id` |
+| `df_diagnostician_skills` | Exam code proficiencies | `id` (INT) | `diagnostician_id`, `exam_code`, `is_preferred` |
+| `df_partnerships` | Doctor-diagnostician pairings | `id` (INT) | `issuing_doctor_id`, `preferred_diagnostician_id`, `priority`, `exclusive`, `is_active` |
+| `df_availability` | Daily leave & status calendar | `id` (INT) | `diagnostician_id`, `date`, `status`, `is_pamakristos_oncall` |
+| `df_doctors` | Doctor catalogue cache | `id` (NVARCHAR) | `name` |
+| `df_local_assignments` | Shared staged un-pushed assignments | `exammoreid` (INT) | `diagnostician_id`, `diagnostician_name`, `assigned_at`, `is_auto`, `rule_desc` |
+| `df_assignment_log` | Central audit trail history | `exammoreid` (INT) | `diagnostician_id`, `assigned_at`, `modality`, `extracode` |
+| `df_pamakristos_schedule` | Standard weekly on-call rotation | `weekday` (INT) | `diagnostician_id` (0=Mon .. 6=Sun) |
+| `df_exam_routing_rules` | Dynamic exam auto-assign rules | `id` (INT) | `lab_id`, `is_pamakristos`, `exam_codes`, `diagnostician_id`, `description`, `is_active` |
+| `df_exclusive_lab_rules` | Strict lab bindings | `id` (INT) | `diagnostician_id`, `lab_id`, `lab_name`, `is_active` |
+| `df_modality_quotas` | CT/MRI specific daily limits | `id` (INT) | `diagnostician_id`, `modality`, `max_count`, `is_active` |
+| `df_system_settings` | Dynamic scoring factor weights | `key` (NVARCHAR) | `value` (e.g. `pts_partnership`, `pts_history`, `pts_skills_pref`, `pts_lab_pref`, `pts_capacity`) |
+| `df_admin_users` | Authenticated admin & IT users | `id` (INT) | `username`, `password_hash` (bcrypt), `role` (`admin`/`it_support`), `is_active` |
+| `df_exam_dictionary` | Exam catalog & categories | `code` (NVARCHAR) | `name`, `category` (`CT`/`MRI`/`MRA`) |
 
-### `mock_slis.db` / Slis MSSQL (Exam Data Mirror)
+### 2. Native Slis Tables & Stored Procedures (MSSQL)
 
-| Table | Description | Primary Key | Key Columns |
-|-------|-------------|-------------|-------------|
-| `slis_exams` | Pending & assigned exams | `exammoreid` (INT) | `extracode`, `visitid`, `demogid`, `examnumcode`, `visitdate`, `labcodeid`, `wcode`, `diagnostis`, `slis_synced_at` |
-| `exam_categories` | Exam code lookup catalogue | `examnumcode` (INT) | `name`, `category` (`CT`, `MRI`, `MRA`) |
-| `diagnosticians` | Slis personnel reference | `PERSONELID` (INT) | `DOCNAME` |
-| `doctors` | Slis doctor reference | `CODE` (INT) | `DOCNAME` |
+| Object | Type | Description | Key Columns / Parameters |
+|--------|------|-------------|--------------------------|
+| `exammore` | Table | Operational medical exams | `exammoreid` (PK), `extracode`, `visitid`, `demogid`, `examnumcode`, `visitdate`, `labcodeid`, `wcode`, `diagnostisid` |
+| `getExamsListForPeriod_V1` | Stored Proc | Pulls unassigned exams | `@DateFrom`, `@DateTo` (returns unassigned exams for the period) |
+| `getWardDoctors` | Stored Proc | Syncs doctors | Returns `CODE`, `DOCNAME` from Slis |
+| `getdiagnosticsList` | Stored Proc | Syncs diagnosticians | Returns `PERSONELID`, `DOCNAME` from Slis |
+
+### 3. Mock Test Database (Offline Development Harness)
+
+When running locally with `USE_MOCK_SLIS_DB=true`, DiagFlow uses an auto-generated SQLite test harness mirroring the schema above (`mock_slis.db` for exams and `diagflow.db` for config) to allow offline testing without connecting to the hospital network.
 
 ---
 
 ## ⚙️ Configuration & Environment Settings
 
-System settings are managed via `.env` file and `system_settings` table in `diagflow.db`:
+System settings are managed via the `.env` configuration file:
 
-### `.env` File Environment Variables
+### `.env` Environment Variables
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `USE_MOCK_SLIS_DB` | `true` | When `true`, reads/writes to local SQLite `mock_slis.db`. Set to `false` for MSSQL production. |
-| `MOCK_SLIS_DB_PATH` | `db/mock_slis.db` | Relative path to SQLite mock database. |
-| `SLIS_DB_CONNECTION_STRING` | — | MSSQL ODBC connection string for production Slis access. |
-| `CONFIG_DB_CONNECTION_STRING` | — | MSSQL ODBC connection string for DiagFlow config tables (if hosted in MSSQL). |
+| `USE_MOCK_SLIS_DB` | `false` | When `false`, connects to production Central MSSQL server. Set to `true` for offline testing with mock data. |
+| `SLIS_DB_CONNECTION_STRING` | — | MSSQL ODBC connection string for operational Slis database. |
+| `CONFIG_DB_CONNECTION_STRING` | — | MSSQL ODBC connection string for DiagFlow `df_*` tables. |
+| `MOCK_SLIS_DB_PATH` | `db/mock_slis.db` | Relative path to local SQLite mock database (used only when `USE_MOCK_SLIS_DB=true`). |
 | `SCORE_TIE_TOLERANCE` | `0.05` | Score tolerance threshold (5%) for near-tie load balancing. |
 | `APP_HOST` | `0.0.0.0` | Host IP interface to bind server. |
-| `APP_PORT` | `8000` | Port number for Web application server. |
-| `LOG_LEVEL` | `DEBUG` | Application logging level (`DEBUG`, `INFO`, `WARNING`, `ERROR`). |
+| `APP_PORT` | `8080` | Port number for web server. |
+| `LOG_LEVEL` | `INFO` | Application logging level (`DEBUG`, `INFO`, `WARNING`, `ERROR`). |
 
 ---
 
@@ -493,43 +514,68 @@ System settings are managed via `.env` file and `system_settings` table in `diag
 
 All REST API endpoints are prefixed with `/api`. Interactive Swagger documentation is available at `/docs`.
 
+### 🩺 System & Health
+- `GET /api/health` — Application health check and environment status.
+
 ### 📋 Exams
-- `GET /api/exams/pending` — Fetch pending (unassigned) exams from Slis / mock DB.
-- `GET /api/exams/assigned` — Fetch locally assigned exams awaiting Slis push.
+- `GET /api/exams/pending` — Fetch pending (unassigned) exams from Slis (or mock DB) processed in memory.
+- `GET /api/exams/assigned` — Fetch staged local assignments awaiting Slis push (`df_local_assignments`).
 
 ### ⚙️ Assignment Engine
-- `POST /api/assignments/suggest` — Run 4-stage pipeline and generate assignment suggestion for an exam.
-- `POST /api/assignments/confirm` — Confirm suggested assignment and save to local assignments.
+- `POST /api/assignments/suggest` — Run 4-stage pipeline and generate assignment suggestion for a single exam.
+- `POST /api/assignments/suggest-batch` — High-performance in-memory batch suggestions for all pending exams.
+- `POST /api/assignments/confirm` — Confirm suggested assignment and stage to local assignments.
 - `POST /api/assignments/override` — Override suggestion with a different diagnostician and log reason.
-- `POST /api/assignments/bulk-confirm` — Confirm suggestions for multiple exams in bulk.
-- `POST /api/assignments/bulk-override` — Override multiple exams to a single diagnostician.
+- `POST /api/assignments/bulk-confirm` — Confirm suggestions for multiple selected exams in bulk.
+- `POST /api/assignments/bulk-override` — Override multiple selected exams to a single diagnostician.
+- `POST /api/assignments/bulk-eligible-diagnosticians` — Get intersection of available diagnosticians for selected exams.
+- `DELETE /api/assignments/{exam_id}` — Remove a locally staged assignment by exam ID (unassign).
+- `POST /api/assignments/unassign` — Unassign a single staged assignment and return exam to pending list.
+- `POST /api/assignments/bulk-unassign` — Unassign multiple staged assignments in bulk.
+- `GET /api/assignments/weights` — Fetch active dynamic scoring factor weights.
+- `PUT /api/assignments/weights` — Update scoring factor weights dynamically in runtime and database.
 
-### 🔄 Slis Sync
-- `POST /api/slis/pull` — Refresh pending exam data from Slis / mock DB.
-- `POST /api/slis/push-all` — Push ALL confirmed local assignments back to Slis.
+### 🔄 Slis Sync & Search
+- `POST /api/slis/pull` — Refresh pending exam data from Slis via `EXEC getExamsListForPeriod_V1` directly in memory.
+- `GET /api/slis/status` — Check Slis database connection status and pending push count.
+- `POST /api/slis/push-all` — Push ALL confirmed local assignments back to Slis (`UPDATE exammore`), log to `df_assignment_log`, and clear `df_local_assignments`.
 - `POST /api/slis/push-selected` — Push selected list of `exammoreid`s back to Slis.
+- `POST /api/slis/search` — Search live Slis database by date range, Order ID (`extracode`), Patient Name, Doctor, Diagnostician.
+- `POST /api/slis/reassign` — Reassign an already-synced exam directly in Slis (`exammore`) with audit logging.
 
-### 👨‍⚕️ Diagnosticians & Schedule
-- `GET /api/diagnosticians` — List active diagnosticians with current daily workloads.
-- `GET /api/pamakristos/oncall` — Get today's Παμμακάριστος on-call diagnostician.
-- `GET /api/pamakristos/schedule` — Get weekly Παμμακάριστος on-call rotation schedule.
+### 👨‍⚕️ Diagnosticians, Doctors & Dashboard
+- `GET /api/diagnosticians` — List active diagnosticians with daily quota progress and CT/MRI modality breakdown.
+- `GET /api/doctors` — Search and list doctors with pagination.
+- `GET /api/dashboard` — Summary metrics and daily analytics for the secretariat dashboard.
+- `GET /api/pamakristos/oncall` — Get today's designated Παμμακάριστος on-call diagnostician.
+- `GET /api/pamakristos/schedule` — Get standard weekly Παμμακάριστος on-call rotation schedule.
 - `POST /api/pamakristos/oncall` — Set manual on-call diagnostician for a specific date.
 
-### 🔐 Admin Panel (Requires `X-Admin-Token` Header)
-- `POST /api/admin/auth/login` — Authenticate admin credentials (`admin` / `admin1234`).
-- `POST /api/admin/auth/change-credentials` — Update admin username and/or password (stored as bcrypt hash).
-- `GET/POST /api/admin/diagnosticians` — List / create diagnosticians.
-- `PUT/DELETE /api/admin/diagnosticians/{id}` — Update / delete diagnostician record.
-- `GET/POST/DELETE /api/admin/partnerships` — CRUD doctor partnerships.
+### 🔐 Admin Panel (Requires `X-Admin-Token` Header & Active Session)
+- `POST /api/admin/auth/login` — Authenticate admin credentials with bcrypt hashing and rate limiting.
+- `POST /api/admin/auth/change-credentials` — Update personal admin username and/or password.
+- `GET/POST /api/admin/users` — CRUD admin users (with roles `admin` / `it_support`, password reset, active toggle).
+- `PUT/DELETE /api/admin/users/{user_id}` — Update user username, password, role, active status or delete user (`it_support`).
+- `POST /api/admin/users/{user_id}/reset` — Reset user credentials to default `admin / admin1234` (`it_support`).
+- `POST /api/admin/users/{user_id}/toggle` — Toggle active/inactive status of an admin user (`it_support`).
+- `GET/POST /api/admin/diagnosticians` — List / create diagnosticians and weekly quotas.
+- `PUT/DELETE /api/admin/diagnosticians/{diag_id}` — Update / delete diagnostician record.
+- `POST /api/admin/diagnosticians/sync` & `POST /api/admin/sync-diagnosticians` — Trigger manual personnel sync from Slis (`EXEC getdiagnosticsList`).
+- `GET/POST/DELETE /api/admin/skills` — CRUD diagnostician exam code specialization and proficiency mappings.
+- `PUT/DELETE /api/admin/skills/{skill_id}` — Update / delete diagnostician skill mapping.
+- `GET /api/admin/exam-categories` — Fetch all exam dictionary categories and exams for bulk skill assignment.
+- `GET/POST/DELETE /api/admin/partnerships` — CRUD doctor partnerships with priority and exclusivity flags.
+- `PATCH/DELETE /api/admin/partnerships/{part_id}` — Update / delete doctor partnership.
 - `GET/POST/DELETE /api/admin/doctors` — CRUD doctor master records.
-- `GET/POST /api/admin/availability` — List / set daily availability and leave.
-- `GET/POST/DELETE /api/admin/skills` — CRUD diagnostician skill proficiencies.
-- `GET/POST/DELETE /api/admin/exam-routing-rules` — CRUD dynamic exam auto-routing rules.
-- `GET/POST/DELETE /api/admin/exclusive-lab-rules` — CRUD exclusive lab constraints.
-- `GET/POST/DELETE /api/admin/modality-quotas` — CRUD specific CT/MRI daily limits.
-- `GET/POST /api/admin/system-settings` — Fetch / update scoring factor weights.
-- `POST /api/admin/sync-diagnosticians` — Trigger manual personnel sync from Slis.
-- `POST /api/admin/sync-doctors` — Trigger manual doctor sync from Slis.
+- `POST /api/admin/doctors/sync` & `POST /api/admin/sync-doctors` — Trigger manual doctor sync from Slis (`EXEC getWardDoctors`).
+- `GET/POST /api/admin/availability` — List / upsert daily availability records and leaves.
+- `DELETE /api/admin/availability/{diagnostician_id}/{date}` — Delete daily availability override or leave.
+- `GET/POST /api/admin/oncall` — Get / set on-call diagnostician override for a specific date.
+- `GET/POST /api/admin/pamakristos/weekly-schedule` — Manage standard weekly on-call schedule.
+- `GET/DELETE /api/admin/pamakristos/overrides` & `DELETE /api/admin/pamakristos/overrides/{avail_id}` — Manage manual on-call calendar overrides.
+- `GET/POST/PUT/DELETE /api/admin/advanced/exam-routing-rules` — CRUD dynamic exam auto-routing rules.
+- `GET/POST/PUT/DELETE /api/admin/exclusive-lab-rules` — CRUD strict lab constraints.
+- `GET/POST/PUT/DELETE /api/admin/modality-quotas` — CRUD specific CT/MRI daily limits.
 
 ---
 
@@ -537,90 +583,104 @@ All REST API endpoints are prefixed with `/api`. Interactive Swagger documentati
 
 ```
 diagflow/
-├── README.md                          # Comprehensive project documentation
-├── pyproject.toml                     # Python build configuration & dependencies
-├── requirements.txt                   # Production dependencies
-├── .env.example                       # Environment variable template
-├── DiagFlow.spec                      # PyInstaller specification for EXE build
+├── README.md                          # Comprehensive project documentation (English)
+├── README.el.md                       # Comprehensive project documentation (Greek)
+├── USER_GUIDE.md                      # Comprehensive Secretariat & Admin User Guide
+├── pyproject.toml                     # Python build configuration & pytest setup
+├── requirements.txt                   # Production Python package dependencies
+├── .env.example                       # Environment configuration template
+├── DiagFlow.spec                      # PyInstaller specification for standalone EXE
 │
-├── db/                                # Database schemas, initialization & seeds
-│   ├── diagflow.db                    # DiagFlow config & state database (SQLite)
-│   ├── mock_slis.db                   # Mock Slis exam database (SQLite)
-│   ├── init.sql                       # Base schema for mock_slis.db
-│   ├── init_diagflow.sql              # Schema & seed data for diagflow.db
-│   ├── init_mock_slis.sql             # Comprehensive seed data for mock_slis.db
-│   ├── create_diagflow_db.py          # Database creation utility script
-│   └── seed_mock_db.py                # Database seeding utility script
+├── db/                                # Central database schemas & template seeders
+│   ├── create_central_tables.sql      # T-SQL DDL script for Central MSSQL df_* tables
+│   ├── create_diagflow_db.py          # Seeder script for mock config database
+│   ├── seed_mock_db.py                # Seeder script for mock SLIS exams database
+│   ├── seed_templates.py              # Template database generator script
+│   ├── init.sql                       # Base schema DDL for mock testing
+│   ├── table.sql                      # Reference table schema
+│   ├── update_slis.sql                # Stored procedure reference scripts
+│   └── templates/                     # Embedded sanitized SQLite template databases
+│       ├── diagflow.db                # Sanitized config DB template
+│       ├── mock_slis.db               # Sanitized mock exam DB template
+│       ├── init_diagflow.sql          # Sanitized config SQL seed template
+│       └── init_mock_slis.sql         # Sanitized mock exam SQL seed template
 │
-├── src/diagflow/                      # Core Python application package
+├── frontend/                          # Clean Vanilla HTML5 / CSS3 / JS UI Layer
+│   ├── index.html                     # Secretariat review dashboard (4 tabs)
+│   ├── admin.html                     # Admin control panel
+│   ├── css/
+│   │   └── styles.css                 # Unified stylesheet & design system
+│   ├── js/
+│   │   ├── app.js                     # Secretariat dashboard logic & keyboard engine
+│   │   └── admin.js                   # Admin panel interactive management logic
+│   └── media/
+│       └── logos/                     # Application logos and iconography
+│
+├── guides/                            # Standalone HTML Guide Exports
+│   └── *.html                         # Self-contained offline HTML documentation
+│
+├── src/diagflow/                      # Core Python Application Package
 │   ├── __init__.py                    # Package metadata & version
-│   ├── main.py                        # FastAPI application entrypoint & lifespan
-│   ├── config.py                      # Application settings & environment loader
-│   ├── launcher.py                    # Standalone EXE launcher (pywebview)
+│   ├── main.py                        # FastAPI entrypoint, router mounts & lifespan
+│   ├── config.py                      # Pydantic Settings & environment loader
+│   ├── launcher.py                    # Standalone desktop window launcher (pywebview)
 │   │
-│   ├── api/                           # REST API layer
+│   ├── api/                           # REST API Layer
 │   │   ├── routes.py                  # API endpoints definition
 │   │   ├── schemas.py                 # Pydantic request & response models
 │   │   └── dependencies.py            # FastAPI dependency injection providers
 │   │
-│   ├── db/                            # Data access layer
-│   │   ├── diagflow_db.py             # Raw SQLite CRUD operations for diagflow.db
-│   │   ├── engines.py                 # Dual SQLAlchemy engine factory (production MSSQL)
-│   │   ├── models.py                  # Config ORM reference models
-│   │   └── slis_models.py             # Slis ORM reference models
+│   ├── db/                            # Data Access Layer
+│   │   ├── diagflow_db.py             # Database adapter & CRUD operations (MSSQL / SQLite)
+│   │   ├── engines.py                 # SQLAlchemy engine & session factory
+│   │   ├── models.py                  # Config ORM models
+│   │   └── slis_models.py             # Slis ORM models
 │   │
-│   ├── engine/                        # Rule engine pipeline
-│   │   ├── pipeline.py                # Pipeline orchestrator (Stages 0–4)
-│   │   ├── filters.py                 # Hard filter implementations & dynamic rules
-│   │   ├── scoring.py                 # Multi-factor weighted scoring & load balancing
-│   │   ├── solver.py                  # OR-Tools CP-SAT batch solver & greedy fallback
+│   ├── engine/                        # Rule Engine & Optimization Core
+│   │   ├── pipeline.py                # 4-stage pipeline orchestrator
+│   │   ├── filters.py                 # Hard constraints & eligibility filters
+│   │   ├── scoring.py                 # Weighted multi-factor scoring & near-tie balancer
+│   │   ├── solver.py                  # Google OR-Tools CP-SAT solver & greedy fallback
 │   │   └── rules.py                   # Rule definitions & registry
 │   │
-│   ├── services/                      # Core business logic services
+│   ├── services/                      # Business Logic Services
 │   │   ├── assignment.py              # Assignment lifecycle, auto-assign & audit log
-│   │   ├── diagnostician.py           # Candidate enrichment & loading
+│   │   ├── diagnostician.py           # Candidate loading, batch caching & enrichment
 │   │   ├── pamakristos.py             # Παμμακάριστος on-call rotation manager
 │   │   └── slis_sync.py               # Slis pull/push sync & APScheduler daily cron
 │   │
 │   └── utils/                         # Utilities
-│       └── logging.py                 # Structlog configuration
+│       └── logging.py                 # Structured logging configuration
 │
-├── frontend/                          # Web User Interfaces
-│   ├── index.html                     # Secretariat review dashboard
-│   ├── admin.html                     # Admin control panel
-│   ├── css/                           # Stylesheets
-│   │   └── styles.css                 # Shared styling
-│   ├── js/                            # Client-side JavaScript
-│   │   ├── app.js                     # Dashboard interactive logic
-│   │   └── admin.js                   # Admin panel interactive logic
-│   └── media/                         # Icons & graphic assets
-│       └── logos/                     # Brand logos & icons
-│
-├── puml/                              # PlantUML Architecture Diagrams
+├── puml/                              # PlantUML Architecture & Design Diagrams
 │   ├── architecture.puml              # High-level system architecture diagram
 │   ├── assignment_sequence.puml       # End-to-end suggest → push sequence diagram
 │   ├── class_api.puml                 # API & Launcher class diagram
 │   ├── data_api.puml                  # Data access & engine layer class diagram
 │   ├── data_model.puml                # Data model overview diagram
-│   ├── er_diagram.puml                # Entity-Relationship diagram (both DBs)
+│   ├── er_diagram.puml                # Entity-Relationship diagram
 │   └── rule_engine_flow.puml          # 4-Stage Rule Engine activity flow diagram
 │
-├── scripts/                           # Utility scripts
+├── scripts/                           # Build & Maintenance Scripts
 │   ├── build_exe.py                   # Automated PyInstaller Windows EXE builder
+│   ├── convert_md_to_html.py          # Markdown to standalone HTML converter
 │   └── data_quality_audit.py          # Data quality analysis script
 │
-├── tests/                             # Test suite
-│   ├── conftest.py                    # Pytest fixtures & setup
-│   ├── test_admin_auth.py             # Admin auth, bcrypt security, & SQL whitelisting tests
+├── tests/                             # Automated Test Suite (Pytest)
+│   ├── conftest.py                    # Test fixtures & database harness
+│   ├── test_admin_auth.py             # Admin auth, bcrypt security & rate limit tests
+│   ├── test_auto_init_db.py           # Auto-initialization test suite
+│   ├── test_autoassign.py             # Auto-assignment logic unit tests
 │   ├── test_filters.py                # Hard filter unit tests
-│   ├── test_scoring.py                # Weighted scoring unit tests
+│   ├── test_multi_exam_order.py       # Multi-exam order consistency lock tests
+│   ├── test_optimistic_locking.py     # Optimistic locking & concurrent update tests
 │   ├── test_pipeline.py               # Pipeline integration tests
-│   └── test_autoassign.py             # Auto-assignment logic unit tests
+│   ├── test_scoring.py                # Weighted scoring & near-tie balance tests
+│   └── test_skills_fix.py             # Skill preference & elimination tests
 │
-└── docs/                              # Project reference documentation & exports
-    ├── db.xlsx                        # Production database export
-    ├── exam_codes.xlsx                # Exam catalogue export
-    └── *.sql                          # Reference SQL scripts
+└── media/                             # Application Media & Screenshots
+    ├── logos/                         # Application logos and brand assets
+    └── screenshots/                   # Application screenshots
 ```
 
 ---
@@ -647,21 +707,21 @@ All PlantUML diagram source files are maintained in the [`puml/`](puml/) directo
 
 <div align="center">
 
-| Homescreen (Pending Tab) | Homescreen (Pending Tab — cont.) |
+| Homescreen (Pending Tab - Bright Mode) | Homescreen (Pending Tab - Dark Mode) |
 |:---:|:---:|
 | ![Homescreen 1](media/screenshots/homescreen1.png) | ![Homescreen 2](media/screenshots/homescreen2.png) |
 
-| Dashboard Overview | Auto-Assignment (Assigned Tab) |
+| Dashboard Overview & Modality Distribution | Auto-Assignment (Assigned Tab) |
 |:---:|:---:|
 | ![Dashboard](media/screenshots/dashboard_blurred.png) | ![Auto-Assign](media/screenshots/auto-assign.png) |
 
-| Filtering & Search | Multiple Selection |
+| Search & Dynamic Filtering | Multiple Row Selection & Floating Action Bar |
 |:---:|:---:|
 | ![Filtering](media/screenshots/filtering.png) | ![Multiple Select](media/screenshots/multipleselect.png) |
 
-| Slis Search & Reassignment (4th Tab) |  |
+| Slis Direct Search & Reassignment (4th Tab) | Slis Reassignment Confirmation |
 |:---:|:---:|
-| ![Slis Search & Reassign](media/screenshots/changediagnostician.png) |  |
+| ![Slis Search & Reassign](media/screenshots/changediagnostician.png) | ![Slis Reassignment Success](media/screenshots/changeddiagnostician.png) |
 
 </div>
 
@@ -671,17 +731,13 @@ All PlantUML diagram source files are maintained in the [`puml/`](puml/) directo
 
 <div align="center">
 
-| Alternatives Modal | Scoring System Breakdown |
+| Alternatives & Eligibility Modal | Scoring System Breakdown |
 |:---:|:---:|
 | ![Alternatives](media/screenshots/alternatives_blurred.png) | ![Scoring System](media/screenshots/scoring-system.png) |
 
-| Score Detail | Assignment Flow Diagram |
+| Detailed Score Factor Breakdown | Assignment Decision Flow Diagram |
 |:---:|:---:|
 | ![Scoring](media/screenshots/scoring.png) | ![Flow](media/screenshots/flow.png) |
-
-| Auto-Assign Rule Tag |  |
-|:---:|:---:|
-| ![Auto-Assign Tag](media/screenshots/red-comment_auto-assign.png) |  |
 
 </div>
 
@@ -691,29 +747,29 @@ All PlantUML diagram source files are maintained in the [`puml/`](puml/) directo
 
 <div align="center">
 
-| Diagnosticians Management | Availability Calendar |
+| Diagnosticians Management & Quotas | Availability Calendar & Leaves |
 |:---:|:---:|
 | ![Admin Diagnosticians](media/screenshots/admin_diagnosticians.png) | ![Admin Availability](media/screenshots/admin_availability.png) |
 
-| Capacity Matrix | Skills Matrix |
+| Capacity & Modality Specialization Matrix | Skills Preferences & Exclusions Matrix |
 |:---:|:---:|
 | ![Admin Skills 1](media/screenshots/admin_skills1_blurred.png) | ![Admin Skills 2](media/screenshots/admin_skills2.png) |
 
-| Partnerships | Παμμακάριστος Schedule |
+| Skills Matrix Management & Category Filtering | Doctor Partnerships & Exclusivities |
 |:---:|:---:|
-| ![Admin Partners](media/screenshots/admin_partners.png) | ![Admin Pammakaristos](media/screenshots/admin_pammakaristos.png) |
+| ![Admin Skills 3](media/screenshots/admin_skills3.png) | ![Admin Partners](media/screenshots/admin_partners.png) |
 
-| Exam Catalog & Anatomical Groups | Bulk Skill Assignment |
+| Παμμακάριστος Schedule & Overrides | Exam Catalog & Anatomical Groups |
 |:---:|:---:|
-| ![Admin Exams 1](media/screenshots/admin_exams1.png) | ![Admin Exams 2](media/screenshots/admin_exams2.png) |
+| ![Admin Pammakaristos](media/screenshots/admin_pammakaristos.png) | ![Admin Exams 1](media/screenshots/admin_exams1.png) |
 
-| Rules Editor | Exclusive Labs & Capacity per Modality |
+| Dynamic Exam Auto-Routing Rules | Exclusive Labs & Modality Quotas |
 |:---:|:---:|
 | ![Admin Advanced 1](media/screenshots/admin_advanced1.png) | ![Admin Advanced 2](media/screenshots/admin_advanced2.png) |
 
-| Scoring Weights Editor |  |
+| Dynamic Scoring Factor Weights Editor | |
 |:---:|:---:|
-| ![Admin Advanced 3](media/screenshots/admin_advanced3.png) |  |
+| ![Admin Advanced 3](media/screenshots/admin_advanced3.png) | |
 
 </div>
 

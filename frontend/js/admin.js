@@ -208,6 +208,7 @@ let totalDiags = 0;
 let diagSearchQuery = '';
 
 let EXAM_CODE_MAP = {};
+let EXAM_CATEGORY_MAP = {};
 let RAW_EXAM_CATEGORIES = [];
 
 function cleanExamName(raw) {
@@ -230,6 +231,26 @@ function formatSimplifiedExamName(name, category, code) {
     return (cleaned || name || code).trim();
 }
 
+function getExamModality(code, rawName = '', category = '') {
+    let cat = (category || EXAM_CATEGORY_MAP[code] || '').toUpperCase().trim();
+    if (!cat) {
+        const full = (rawName || EXAM_CODE_MAP[code] || '').toUpperCase();
+        if (full.includes('(MRA)') || full.includes('MRA') || full.includes('ΑΓΓΕΙΟ')) cat = 'MRA';
+        else if (full.includes('(CT)') || full.includes('CT') || full.includes('ΑΞΟΝ')) cat = 'CT';
+        else if (full.includes('(MRI)') || full.includes('MRI') || full.includes('ΜΑΓΝΗΤ')) cat = 'MRI';
+    }
+    if (!cat) {
+        const c = String(code).trim();
+        if (c.startsWith('21')) cat = 'CT';
+        else if (c.startsWith('22')) cat = 'MRI';
+    }
+    const s = cat.toUpperCase();
+    if (s.includes('MRA') || s.includes('ΑΓΓΕΙΟ')) return 'MRA';
+    if (s.includes('CT') || s.includes('ΑΞΟΝ')) return 'CT';
+    if (s.includes('MRI') || s.includes('ΜΑΓΝΗΤ')) return 'MRI';
+    return s || 'OTHER';
+}
+
 function escapeHtml(str) {
     if (str === null || str === undefined) return '';
     return String(str)
@@ -249,6 +270,9 @@ async function loadExamCategories() {
                 const codeKey = String(ex.code || ex.examnumcode || ex.exam_code || '').trim();
                 if (codeKey) {
                     EXAM_CODE_MAP[codeKey] = ex.name;
+                    if (ex.category) {
+                        EXAM_CATEGORY_MAP[codeKey] = ex.category;
+                    }
                 }
             });
         }
@@ -331,13 +355,7 @@ function renderExamSearchDropdown(type) {
         const shortName = typeof cleanExamName === 'function' 
             ? cleanExamName(rawName) 
             : rawName.replace(/^(ΑΞΟΝΙΚΗ|ΜΑΓΝΗΤΙΚΗ)\s+(ΤΟΜΟΓΡΑΦΙΑ|ΑΓΓΕΙΟΓΡΑΦΙΑ)\s*/i, '').trim();
-        let cat = (ex.category || '').toUpperCase().trim();
-        if (!cat) {
-            if (/CT|ΑΞΟΝ/i.test(rawName)) cat = 'CT';
-            else if (/MRA|ΑΓΓΕΙΟ/i.test(rawName)) cat = 'MRA';
-            else if (/MRI|ΜΑΓΝΗΤ/i.test(rawName)) cat = 'MRI';
-            else cat = 'OTHER';
-        }
+        const cat = getExamModality(code, rawName, ex.category);
         const isChecked = selectedSet.has(code);
 
         return `
@@ -345,7 +363,7 @@ function renderExamSearchDropdown(type) {
                 <input type="checkbox" value="${code}" ${isChecked ? 'checked' : ''} onchange="toggleExamCodeSelection('${type}', '${code}', event)" style="accent-color:var(--accent-primary); width:16px; height:16px; cursor:pointer; flex-shrink:0;">
                 <span style="font-weight:700; color:var(--accent-primary); font-family:monospace; font-size:13px; min-width:48px;">${code}</span>
                 <span style="color:var(--text-primary); flex:1; font-weight:500;" title="${escapeHtml(rawName)}">${escapeHtml(shortName || rawName)}</span>
-                <span class="modality-badge ${cat.toLowerCase()}" style="font-size:10px; padding:2px 6px; flex-shrink:0;">${cat}</span>
+                <span class="modality-badge ${cat.toLowerCase()}" style="font-size:10px; padding:2px 6px; flex-shrink:0;">${escapeHtml(cat)}</span>
             </label>
         `;
     }).join('');
@@ -384,8 +402,14 @@ function renderExamCodeTags(type) {
     tagsContainer.innerHTML = Array.from(selectedSet).map(code => {
         const examObj = (RAW_EXAM_CATEGORIES || []).find(ex => String(ex.code || ex.examnumcode || '').trim() === code);
         const fullName = examObj ? examObj.name : (EXAM_CODE_MAP[code] || '');
+        const modality = getExamModality(code, fullName, examObj?.category);
+        const catClass = modality.toLowerCase();
         const tooltip = fullName ? `${code} — ${fullName}` : code;
-        return `<span title="${escapeHtml(tooltip)}" style="background:rgba(99,102,241,0.15); border:1px solid rgba(99,102,241,0.35); padding:3px 8px 3px 9px; border-radius:20px; font-size:12px; color:var(--accent-primary); font-family:monospace; font-weight:700; display:inline-flex; align-items:center; gap:4px; white-space:nowrap; cursor:default;">${escapeHtml(code)}<button type="button" onclick="removeExamCodeSelection('${type}', '${code}')" title="Αφαίρεση" style="background:none; border:none; color:rgba(99,102,241,0.6); font-size:13px; font-weight:bold; cursor:pointer; line-height:1; padding:0; margin-left:1px;">&times;</button></span>`;
+        return `<span title="${escapeHtml(tooltip)}" style="background:rgba(99,102,241,0.15); border:1px solid rgba(99,102,241,0.35); padding:3px 8px 3px 9px; border-radius:20px; font-size:12px; color:var(--accent-primary); font-family:monospace; font-weight:700; display:inline-flex; align-items:center; gap:6px; white-space:nowrap; cursor:default;">
+            <span class="modality-badge ${catClass}" style="font-size:9px; padding:1px 5px; border-radius:4px;">${escapeHtml(modality)}</span>
+            <span>${escapeHtml(code)}</span>
+            <button type="button" onclick="removeExamCodeSelection('${type}', '${code}')" title="Αφαίρεση" style="background:none; border:none; color:rgba(99,102,241,0.6); font-size:13px; font-weight:bold; cursor:pointer; line-height:1; padding:0; margin-left:1px;">&times;</button>
+        </span>`;
     }).join('');
 }
 
@@ -1267,7 +1291,8 @@ function renderSkills() {
             const eCode = String(s.exam_code || '').toLowerCase();
             const eTitle = (s.exam_title || s.exam_name || s.body_part || '').toLowerCase();
             const normETitle = typeof normalizeGreek === 'function' ? normalizeGreek(eTitle) : eTitle;
-            return dName.includes(rawQuery) || normDName.includes(normQuery) || dId.includes(rawQuery) || eCode.includes(rawQuery) || eTitle.includes(rawQuery) || normETitle.includes(normQuery);
+            const modality = getExamModality(s.exam_code, s.exam_title || s.exam_name, s.category).toLowerCase();
+            return dName.includes(rawQuery) || normDName.includes(normQuery) || dId.includes(rawQuery) || eCode.includes(rawQuery) || eTitle.includes(rawQuery) || normETitle.includes(normQuery) || modality.includes(rawQuery);
         });
     }
 
@@ -1315,15 +1340,22 @@ function renderSkills() {
             const examCode = s.exam_code || '—';
             const rawTitle = s.exam_name || s.exam_title || EXAM_CODE_MAP[examCode] || s.body_part || examCode || '—';
             const examTitle = formatSimplifiedExamName(rawTitle, s.category, examCode);
+            const modality = getExamModality(examCode, rawTitle, s.category);
+            const catClass = modality.toLowerCase();
             const isChecked = selectedSkillItemIds.has(String(s.id));
             const rowClass = isChecked ? 'selected-row' : '';
             
-            html += `<tr class="skills-row-${diagIdForCollapse} ${rowClass}" style="display:${displayStyle}; background:#fafafa;">
+            html += `<tr class="skills-row-${diagIdForCollapse} ${rowClass}" style="display:${displayStyle}; background:var(--bg-secondary);">
                 <td style="width:40px; text-align:center; padding:8px 12px;">
                     <input type="checkbox" class="row-checkbox skill-chk-item skill-chk-diag-${diagIdForCollapse}" value="${s.id}" ${isChecked ? 'checked' : ''} onchange="toggleSelectSkillItem('${s.id}')">
                 </td>
-                <td style="font-family:monospace;font-size:var(--font-size-sm);">${examCode}</td>
-                <td style="font-size:var(--font-size-sm);">${examTitle}</td>
+                <td style="font-family:monospace;font-size:var(--font-size-sm);">${escapeHtml(examCode)}</td>
+                <td style="font-size:var(--font-size-sm);">
+                    <div style="display:inline-flex; align-items:center; gap:8px;">
+                        <span class="modality-badge ${catClass}">${escapeHtml(modality)}</span>
+                        <span>${escapeHtml(examTitle)}</span>
+                    </div>
+                </td>
                 <td>
                     <button class="btn btn-sm ${isPreferred ? 'btn-primary' : 'btn-secondary'}" onclick="toggleSkillPreference(${s.id}, ${!isPreferred})" style="padding:4px 8px; font-size:12px;">
                         ${isPreferred ? '★ Προτιμά' : 'Προτίμηση'}
@@ -2989,10 +3021,10 @@ function getMockDoctors() {
 
 function getMockSkills() {
     return [
-        { id: 1, diagnostician_id: 1, diagnostician_name: 'Νάτσικα Α.', exam_code: '21100', exam_title: 'MRI Κοιλίας', is_preferred: true },
-        { id: 2, diagnostician_id: 1, diagnostician_name: 'Νάτσικα Α.', exam_code: '22140', exam_title: 'CT Θώρακα', is_preferred: false },
-        { id: 3, diagnostician_id: 2, diagnostician_name: 'Κωνσταντίνου Β.', exam_code: '22140', exam_title: 'CT Θώρακα', is_preferred: true },
-        { id: 4, diagnostician_id: 3, diagnostician_name: 'Παπαδόπουλος Γ.', exam_code: '21063', exam_title: 'MRI Εγκεφάλου', is_preferred: true },
+        { id: 1, diagnostician_id: 1, diagnostician_name: 'Νάτσικα Α.', exam_code: '21100', exam_title: 'MRI Κοιλίας', category: 'MRI', is_preferred: true },
+        { id: 2, diagnostician_id: 1, diagnostician_name: 'Νάτσικα Α.', exam_code: '22140', exam_title: 'CT Θώρακα', category: 'CT', is_preferred: false },
+        { id: 3, diagnostician_id: 2, diagnostician_name: 'Κωνσταντίνου Β.', exam_code: '22140', exam_title: 'CT Θώρακα', category: 'CT', is_preferred: true },
+        { id: 4, diagnostician_id: 3, diagnostician_name: 'Παπαδόπουλος Γ.', exam_code: '21063', exam_title: 'MRI Εγκεφάλου', category: 'MRI', is_preferred: true },
     ];
 }
 

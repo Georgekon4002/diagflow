@@ -14,12 +14,12 @@ from pathlib import Path
 
 SCRIPT_DIR  = Path(__file__).parent
 DIAGFLOW_DB = SCRIPT_DIR / "diagflow.db"
-INIT_SQL    = SCRIPT_DIR / "init_diagflow.sql"
+INIT_SQL    = SCRIPT_DIR / "templates" / "init_diagflow.sql"
 
 def seed():
     sql_file = INIT_SQL
     if not sql_file.exists():
-        fallback_sql = SCRIPT_DIR / "templates" / "init_diagflow.sql"
+        fallback_sql = SCRIPT_DIR / "init_diagflow.sql"
         if fallback_sql.exists():
             sql_file = fallback_sql
         else:

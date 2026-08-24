@@ -280,6 +280,19 @@ BEGIN
 END
 GO
 
+-- -----------------------------------------------------------------------------
+-- 15. df_dismissed_auto_assignments
+-- -----------------------------------------------------------------------------
+IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'df_dismissed_auto_assignments')
+BEGIN
+    CREATE TABLE df_dismissed_auto_assignments (
+        exammoreid   INT          PRIMARY KEY,
+        dismissed_at NVARCHAR(50) NOT NULL
+    );
+    PRINT 'Created table df_dismissed_auto_assignments';
+END
+GO
+
 PRINT '=======================================================';
 PRINT 'DiagFlow tables creation script completed successfully.';
 PRINT '=======================================================';

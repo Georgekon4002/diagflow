@@ -6,8 +6,8 @@
 
 [![Python](https://img.shields.io/badge/Python-3.11%2B-blue.svg)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.100%2B-009688.svg)](https://fastapi.tiangolo.com/)
-[![SQLite](https://img.shields.io/badge/Database-SQLite%20%2F%20MSSQL-003B57.svg)](https://www.sqlite.org/)
-[![OR-Tools](https://img.shields.io/badge/Optimization-Google%20OR--Tools-4285F4.svg)](https://developers.google.com/optimization)
+[![Database](https://img.shields.io/badge/Database-MSSQL%20%28Slis%29-003B57.svg)](https://learn.microsoft.com/en-us/sql/)
+[![Optimization](https://img.shields.io/badge/Optimization-Google%20OR--Tools-4285F4.svg)](https://developers.google.com/optimization)
 [![License](https://img.shields.io/badge/License-Proprietary-red.svg)](#-άδεια-χρήσης)
 
 Το **DiagFlow** είναι μια ευφυής μηχανή ανάθεσης διαγνωστικών εξετάσεων και υποστήριξης αποφάσεων, αναπτυγμένη για την **Κοσμοϊατρική**. Αυτοματοποιεί την πολύπλοκη διαδικασία ανάθεσης αναφορών απεικόνισης CT και MRI από το σύστημα Slis της Infomed σε διαγνωστές, χρησιμοποιώντας μια 4-σταδιακή μηχανή κανόνων, δυναμικές δρομολογήσεις, σταθμισμένη πολυπαραγοντική βαθμολόγηση, εξισορρόπηση φορτίου για ισοπαλίες και τον solver CP-SAT της Google OR-Tools για ομαδική βελτιστοποίηση.
@@ -94,7 +94,7 @@
                       │  │ Στάδιο 4: CP-SAT / Greedy Solver │  │
                       │  └──────────────────────────────────┘  │
                       │  ┌──────────────────────────────────┐  │
-                      │  │ diagflow.db (SQLite Config)       │  │
+                      │  │ Πίνακες df_* (MSSQL) / SQLite(Dev)│ │
                       │  └──────────────────────────────────┘  │
                       └───────────────────┬────────────────────┘
                                           │ REST API (/api/*)
@@ -222,10 +222,10 @@ $$\text{Συνολική Βαθμολογία} = \sum (\text{Ακατέργασ�
 
 ### 4. Υπηρεσία Αμφίδρομης Συγχρονισμού Slis
 
-- **Άντληση (On-Demand / Εκκίνηση):** Όταν `USE_MOCK_SLIS_DB=false`, εκτελεί τη stored procedure `EXEC getExamsListForPeriod 'YYYY-MM-DD', 'YYYY-MM-DD'` στη βάση Slis MSSQL για άντληση μη ανατεθέντων εξετάσεων (`DIAGNOSTIS IS NULL`) των τελευταίων 3 ημερών.
-- **Συγχρονισμός Γιατρών (Εκκίνηση / Ημερήσιο 3 ΠΜ Cron):** Όταν `USE_MOCK_SLIS_DB=false`, εκτελεί τη stored procedure `EXEC getWardDoctors` για συγχρονισμό νέων γιατρών (`CODE`, `DOCNAME`) στον πίνακα `doctors` της βάσης `diagflow.db`.
-- **Συγχρονισμός Διαγνωστών (Ανανέωση Admin Panel):** Όταν `USE_MOCK_SLIS_DB=false`, εκτελεί τη stored procedure `EXEC getdiagnosticsList` όταν ο admin πατάει "Ανανέωση" για συγχρονισμό νέων διαγνωστών (`PERSONELID`, `DOCNAME`) στον πίνακα `diagnosticians`.
-- **Ώθηση (Χειροκίνητη):** Επιβεβαιωμένες τοπικές αναθέσεις ωθούνται άμεσα στο Slis (`UPDATE exammore SET diagnostisid=? WHERE exammoreid=?`).
+- **Άντληση (On-Demand / Εκκίνηση):** Όταν `USE_MOCK_SLIS_DB=false`, εκτελεί τη stored procedure `EXEC getExamsListForPeriod_V1 'YYYY-MM-DD', 'YYYY-MM-DD'` στη βάση Slis MSSQL για άντληση μη ανατεθέντων εξετάσεων (`DIAGNOSTIS IS NULL`) των τελευταίων 3 ημερών απευθείας στη μνήμη.
+- **Συγχρονισμός Γιατρών (Εκκίνηση / Ημερήσιο 3 ΠΜ Cron):** Όταν `USE_MOCK_SLIS_DB=false`, εκτελεί τη stored procedure `EXEC getWardDoctors` για συγχρονισμό νέων γιατρών (`CODE`, `DOCNAME`) στον πίνακα `df_doctors` (ή τοπικό `doctors` σε dev).
+- **Συγχρονισμός Διαγνωστών (Ανανέωση Admin Panel):** Όταν `USE_MOCK_SLIS_DB=false`, εκτελεί τη stored procedure `EXEC getdiagnosticsList` όταν ο admin πατάει "Ανανέωση" για συγχρονισμό νέων διαγνωστών (`PERSONELID`, `DOCNAME`) στον πίνακα `df_diagnosticians` (ή τοπικό `diagnosticians` σε dev).
+- **Ώθηση (Χειροκίνητη):** Επιβεβαιωμένες τοπικές αναθέσεις ωθούνται άμεσα στο Slis (`UPDATE exammore SET diagnostisid=? WHERE exammoreid=?`), καταγράφοντας το ιστορικό στο `df_assignment_log` και διαγράφοντας την προσωρινή εγγραφή από το `df_local_assignments`.
 
 ---
 
@@ -254,10 +254,11 @@ $$\text{Συνολική Βαθμολογία} = \sum (\text{Ακατέργασ�
 ## 🛠️ Προαπαιτούμενα
 
 - **Python 3.11+**
-- **SQLite 3** (ενσωματωμένο στην Python, χωρίς ξεχωριστή εγκατάσταση)
-- **ODBC Driver 17 για SQL Server** (για σύνδεση παραγωγής MSSQL Slis)
-- **Web Browser** (Chrome, Edge, Firefox ή Safari) για Web mode
-- **Windows 10/11** (για αυτόνομη κατασκευή `.exe`)
+- **Microsoft ODBC Driver 17 για SQL Server** (απαιτείται για τη σύνδεση παραγωγής με τη βάση MSSQL Slis)
+- **Microsoft Edge WebView2 Runtime** (προεγκατεστημένο σε Windows 11 / σύγχρονα Windows 10, απαραίτητο για το αυτόνομο desktop app)
+- **Web Browser** (Edge, Chrome, Firefox ή Safari) για λειτουργία Web Server
+- **SQLite 3** *(ενσωματωμένο στην πρότυπη βιβλιοθήκη της Python, χρησιμοποιείται αποκλειστικά για τοπικές δοκιμές/ανάπτυξη εκτός δικτύου με mock δεδομένα)*
+- **Windows 10/11** (για τη δημιουργία και εκτέλεση του αυτόνομου `.exe` αρχείου)
 
 ---
 
@@ -413,62 +414,88 @@ python scripts/build_exe.py
 
 ### 📦 Ανάπτυξη σε Άλλο PC
 
-#### Αυτόνομο EXE (Ευκολότερο για Τελικούς Χρήστες):
-1. Αντιγράψτε το `dist/DiagFlow.exe` στο νέο μηχάνημα.
-2. Βεβαιωθείτε ότι ο φάκελος `db/` (με `diagflow.db` και `mock_slis.db`) βρίσκεται στον ίδιο κατάλογο.
-3. Διπλό κλικ για εκτέλεση.
+#### 1. Ανάπτυξη Αυτόνομου EXE (Παραγωγή / Τελικοί Χρήστες):
+1. **Λήψη Εκτελέσιμου:** Κατεβάστε το `DiagFlow.exe` απευθείας από τη σελίδα **[GitHub Releases](https://github.com/Georgekon4002/diagflow/releases)** του αποθετηρίου (ή αντιγράψτε το αρχείο `dist/DiagFlow.exe` που δημιουργήσατε).
+2. **Ρύθμιση Αρχείου `.env`:** Δημιουργήστε ένα αρχείο `.env` στον **ίδιο κατάλογο με το `DiagFlow.exe`** με τα στοιχεία σύνδεσης του κεντρικού MSSQL Server:
+   ```ini
+   USE_MOCK_SLIS_DB=false
+   SLIS_DB_CONNECTION_STRING=mssql+pyodbc://diagflow_user:Password123!@server_hostname/SlisDB?driver=ODBC+Driver+17+for+SQL+Server
+   CONFIG_DB_CONNECTION_STRING=mssql+pyodbc://diagflow_user:Password123!@server_hostname/SlisDB?driver=ODBC+Driver+17+for+SQL+Server
+   ```
+3. **Δεν Χρειάζεται Φάκελος `db/` στην Παραγωγή:** Όταν το DiagFlow συνδέεται στον Κεντρικό MSSQL Server, επικοινωνεί απευθείας με τους πίνακες `df_*` και τους πίνακες του Slis μέσω του δικτύου LAN. **ΔΕΝ χρειάζεται να αντιγράψετε ή να συμπεριλάβετε φάκελο `db/`.**
+4. **Εκτέλεση:** Κάντε διπλό κλικ στο `DiagFlow.exe`. Η εφαρμογή εκκινεί άμεσα σε αυτόνομο παράθυρο desktop πλήρους οθόνης.
 
-#### Web Server (Για Πρόσβαση Δικτύου):
-1. Αντιγράψτε ολόκληρο τον κατάλογο `diagflow`.
-2. Εγκαταστήστε Python 3.11 και `pip install -r requirements.txt`.
-3. Ορίστε `APP_HOST=0.0.0.0` στο `.env`.
-4. Εκτελέστε `uvicorn src.diagflow.main:app --host 0.0.0.0 --port 8000`.
-5. Πρόσβαση από άλλα PC μέσω `http://<IP_ΣΤΟΧΟΥ>:8000`.
+#### 2. Λειτουργία Δοκιμών Εκτός Δικτύου (Mock Data Mode):
+* **Αυτόματη Δημιουργία Φακέλου `db/`:** Όταν η εφαρμογή εκτελείται σε δοκιμαστική λειτουργία (`USE_MOCK_SLIS_DB=true` ή χωρίς ενεργή σύνδεση MSSQL), **ο φάκελος `db/` δημιουργείται αυτόματα κατά την εκκίνηση**. Το σύστημα αρχικοποιεί αυτόματα τις βάσεις `mock_slis.db` και `diagflow.db` από τα ενσωματωμένα ανώνυμα πρότυπα του φακέλου `db/templates/`.
+* **Προσαρμογή / Επανατροφοδότηση Δοκιμαστικών Δεδομένων:** Εάν θέλετε να εισάγετε ή να προσαρμόσετε mock εξετάσεις για δοκιμές, μπορείτε να εκτελέσετε τα scripts:
+  ```powershell
+  python db/create_diagflow_db.py   # Αρχικοποιεί δοκιμαστικούς διαγνωστές, δεξιότητες, κανόνες
+  python db/seed_mock_db.py         # Αρχικοποιεί δείγματα εκκρεμών/ανατεθειμένων εξετάσεων CT & MRI
+  ```
+
+#### 3. Ανάπτυξη Web Server (Για Πρόσβαση μέσω Browser στο Δίκτυο):
+1. Αντιγράψτε τον πηγαίο κώδικα του έργου στον υπολογιστή-διακομιστή.
+2. Εγκαταστήστε Python 3.11+ και εκτελέστε `pip install -r requirements.txt`.
+3. Ορίστε `APP_HOST=0.0.0.0` και `APP_PORT=8000` στο `.env`.
+4. Εκτελέστε `uvicorn diagflow.main:app --host 0.0.0.0 --port 8000`.
+5. Άλλοι υπολογιστές στο τοπικό δίκτυο μπορούν να συνδεθούν στο dashboard μέσω `http://<IP_ΔΙΑΚΟΜΙΣΤΗ>:8000`.
 
 ---
 
-## 📊 Αρχιτεκτονική Βάσης Δεδομένων και Σχήματα
+## 📊 Αρχιτεκτονική Βάσης Δεδομένων & Σχήματα
 
-### `diagflow.db` (Διαμόρφωση και Κατάσταση Εφαρμογής)
+### 1. Σχήμα Κεντρικής Βάσης MSSQL (Πίνακες `df_*`)
 
-| Πίνακας | Περιγραφή | Κύριο Κλειδί | Βασικές Στήλες |
-|---------|-----------|--------------|----------------|
-| `diagnosticians` | Κύρια λίστα προσωπικού | `id` (INT) | `name`, `active`, `can_ct`, `can_mri`, `quota_monday..sunday`, `preferred_lab_id` |
-| `diagnostician_skills` | Εξειδικεύσεις κωδικών εξετάσεων | `id` (INT) | `diagnostician_id`, `exam_code`, `is_preferred` |
-| `partnerships` | Ζεύγη γιατρού-διαγνωστή | `id` (INT) | `issuing_doctor_id`, `preferred_diagnostician_id`, `exclusive`, `is_active` |
-| `availability` | Ημερολόγιο αδειών και κατάστασης | `id` (INT) | `diagnostician_id`, `date`, `status`, `is_pamakristos_oncall` |
-| `doctors` | Κατάλογος γιατρών | `id` (TEXT) | `name` |
-| `local_assignments` | Τοπικές μη ωθημένες αναθέσεις | `exammoreid` (INT) | `diagnostician_id`, `diagnostician_name`, `assigned_at`, `is_auto`, `rule_desc` |
-| `assignment_log` | Ίχνος ελέγχου | `exammoreid` (INT) | `diagnostician_id`, `assigned_at`, `modality`, `extracode` |
-| `pamakristos_schedule` | Εβδομαδιαία εναλλαγή on-call | `weekday` (INT) | `diagnostician_id` (0=Δευτ .. 6=Κυρ) |
-| `exam_routing_rules` | Δυναμικοί κανόνες αυτόματης ανάθεσης | `id` (INT) | `lab_id`, `exam_codes`, `diagnostician_id`, `description`, `is_active` |
-| `exclusive_lab_rules` | Αυστηρές δεσμεύσεις εργαστηρίου | `id` (INT) | `diagnostician_id`, `lab_id`, `lab_name`, `is_active` |
-| `modality_quotas` | Ειδικά ημερήσια όρια CT/MRI | `id` (INT) | `diagnostician_id`, `modality`, `max_count`, `is_active` |
-| `system_settings` | Δυναμικά βάρη παραγόντων βαθμολόγησης | `key` (TEXT) | `value` |
-
-### `mock_slis.db` / Slis MSSQL (Καθρέφτης Δεδομένων Εξετάσεων)
+Στην παραγωγή, όλη η διαμόρφωση του DiagFlow, οι επιχειρησιακοί κανόνες, η προσωρινή κατάσταση αναθέσεων και τα ίχνη ελέγχου φιλοξενούνται στον **Κεντρικό Διακομιστή MSSQL** υπό το πρόθεμα `df_`, συνυπάρχοντας αρμονικά με τους πίνακες του Slis:
 
 | Πίνακας | Περιγραφή | Κύριο Κλειδί | Βασικές Στήλες |
 |---------|-----------|--------------|----------------|
-| `slis_exams` | Εκκρεμείς και ανατεθείσες εξετάσεις | `exammoreid` (INT) | `extracode`, `visitdate`, `labcodeid`, `wcode`, `diagnostis`, `slis_synced_at` |
-| `exam_categories` | Κατάλογος κωδικών εξετάσεων | `examnumcode` (INT) | `name`, `category` |
-| `diagnosticians` | Αναφορά προσωπικού Slis | `PERSONELID` (INT) | `DOCNAME` |
-| `doctors` | Αναφορά γιατρών Slis | `CODE` (INT) | `DOCNAME` |
+| `df_diagnosticians` | Κύρια λίστα διαγνωστών | `id` (INT) | `name`, `active`, `can_ct`, `can_mri`, `quota_monday..sunday`, `preferred_lab_id` |
+| `df_diagnostician_skills` | Εξειδικεύσεις κωδικών εξετάσεων | `id` (INT) | `diagnostician_id`, `exam_code`, `is_preferred` |
+| `df_partnerships` | Ζεύγη γιατρού-διαγνωστή | `id` (INT) | `issuing_doctor_id`, `preferred_diagnostician_id`, `priority`, `exclusive`, `is_active` |
+| `df_availability` | Ημερολόγιο αδειών και κατάστασης | `id` (INT) | `diagnostician_id`, `date`, `status`, `is_pamakristos_oncall` |
+| `df_doctors` | Κατάλογος γιατρών | `id` (NVARCHAR) | `name` |
+| `df_local_assignments` | Κοινόχρηστες προσωρινές αναθέσεις | `exammoreid` (INT) | `diagnostician_id`, `diagnostician_name`, `assigned_at`, `is_auto`, `rule_desc` |
+| `df_assignment_log` | Κεντρικό ίχνος ελέγχου | `exammoreid` (INT) | `diagnostician_id`, `assigned_at`, `modality`, `extracode` |
+| `df_pamakristos_schedule` | Εβδομαδιαίο πρόγραμμα on-call | `weekday` (INT) | `diagnostician_id` (0=Δευτ .. 6=Κυρ) |
+| `df_exam_routing_rules` | Δυναμικοί κανόνες αυτόματης ανάθεσης | `id` (INT) | `lab_id`, `is_pamakristos`, `exam_codes`, `diagnostician_id`, `description`, `is_active` |
+| `df_exclusive_lab_rules` | Αυστηρές δεσμεύσεις εργαστηρίου | `id` (INT) | `diagnostician_id`, `lab_id`, `lab_name`, `is_active` |
+| `df_modality_quotas` | Ειδικά ημερήσια όρια CT/MRI | `id` (INT) | `diagnostician_id`, `modality`, `max_count`, `is_active` |
+| `df_system_settings` | Δυναμικά βάρη παραγόντων βαθμολόγησης | `key` (NVARCHAR) | `value` (π.χ. `pts_partnership`, `pts_history`, `pts_skills_pref`, `pts_lab_pref`, `pts_capacity`) |
+| `df_admin_users` | Πιστοποιημένοι διαχειριστές & IT | `id` (INT) | `username`, `password_hash` (bcrypt), `role` (`admin`/`it_support`), `is_active` |
+| `df_exam_dictionary` | Κατάλογος & κατηγοριοποίηση εξετάσεων | `code` (NVARCHAR) | `name`, `category` (`CT`/`MRI`/`MRA`) |
+
+### 2. Πίνακες & Stored Procedures του Slis (MSSQL)
+
+| Αντικείμενο | Τύπος | Περιγραφή | Βασικές Στήλες / Παράμετροι |
+|-------------|-------|-----------|-----------------------------|
+| `exammore` | Πίνακας | Ιατρικές εξετάσεις Slis | `exammoreid` (PK), `extracode`, `visitid`, `demogid`, `examnumcode`, `visitdate`, `labcodeid`, `wcode`, `diagnostisid` |
+| `getExamsListForPeriod_V1` | Stored Proc | Άντληση μη ανατεθειμένων εξετάσεων | `@DateFrom`, `@DateTo` (επιστρέφει εκκρεμείς εξετάσεις περιόδου) |
+| `getWardDoctors` | Stored Proc | Συγχρονισμός γιατρών | Επιστρέφει `CODE`, `DOCNAME` από το Slis |
+| `getdiagnosticsList` | Stored Proc | Συγχρονισμός διαγνωστών | Επιστρέφει `PERSONELID`, `DOCNAME` από το Slis |
+
+### 3. Δοκιμαστική Βάση Mock (Περιβάλλον Ανάπτυξης Εκτός Δικτύου)
+
+Όταν εκτελείται τοπικά με `USE_MOCK_SLIS_DB=true`, το DiagFlow χρησιμοποιεί αυτόματα δημιουργούμενες βάσεις SQLite (`mock_slis.db` για εξετάσεις και `diagflow.db` για ρυθμίσεις) που αντικατοπτρίζουν το παραπάνω σχήμα για δοκιμές χωρίς σύνδεση στο δίκτυο του νοσοκομείου.
 
 ---
 
 ## ⚙️ Ρύθμιση και Περιβαλλοντικές Παράμετροι
 
+Οι ρυθμίσεις του συστήματος διαχειρίζονται μέσω του αρχείου παραμέτρων `.env`:
+
+### Μεταβλητές Περιβάλλοντος `.env`
+
 | Μεταβλητή | Προεπιλογή | Περιγραφή |
 |-----------|------------|-----------|
-| `USE_MOCK_SLIS_DB` | `true` | Χρήση τοπικής SQLite. Ορίστε `false` για MSSQL παραγωγής. |
-| `MOCK_SLIS_DB_PATH` | `db/mock_slis.db` | Σχετική διαδρομή βάσης mock. |
-| `SLIS_DB_CONNECTION_STRING` | — | MSSQL ODBC connection string για παραγωγή Slis. |
-| `CONFIG_DB_CONNECTION_STRING` | — | MSSQL connection string για ρύθμιση DiagFlow. |
-| `SCORE_TIE_TOLERANCE` | `0.05` | Κατώφλι ανοχής βαθμολογίας (5%). |
+| `USE_MOCK_SLIS_DB` | `false` | Όταν είναι `false`, συνδέεται στον Κεντρικό MSSQL Server παραγωγής. Ορίστε `true` για δοκιμές εκτός δικτύου με mock δεδομένα. |
+| `SLIS_DB_CONNECTION_STRING` | — | MSSQL ODBC connection string για την επιχειρησιακή βάση Slis. |
+| `CONFIG_DB_CONNECTION_STRING` | — | MSSQL ODBC connection string για τους πίνακες `df_*` του DiagFlow. |
+| `MOCK_SLIS_DB_PATH` | `db/mock_slis.db` | Σχετική διαδρομή τοπικής βάσης mock (χρησιμοποιείται μόνο όταν `USE_MOCK_SLIS_DB=true`). |
+| `SCORE_TIE_TOLERANCE` | `0.05` | Κατώφλι ανοχής βαθμολογίας (5%) για εξισορρόπηση ισοπαλιών. |
 | `APP_HOST` | `0.0.0.0` | Διεπαφή IP host για δέσμευση server. |
-| `APP_PORT` | `8000` | Αριθμός θύρας server. |
-| `LOG_LEVEL` | `DEBUG` | Επίπεδο logging (`DEBUG`, `INFO`, `WARNING`, `ERROR`). |
+| `APP_PORT` | `8080` | Αριθμός θύρας server. |
+| `LOG_LEVEL` | `INFO` | Επίπεδο καταγραφής (`DEBUG`, `INFO`, `WARNING`, `ERROR`). |
 
 ---
 
@@ -476,43 +503,68 @@ python scripts/build_exe.py
 
 Όλα τα REST API endpoints έχουν πρόθεμα `/api`. Διαδραστική τεκμηρίωση Swagger στο `/docs`.
 
+### 🩺 Έλεγχος Κατάστασης Συστήματος
+- `GET /api/health` — Έλεγχος κατάστασης και υγείας του διακομιστή (health check).
+
 ### 📋 Εξετάσεις
-- `GET /api/exams/pending` — Ανάκτηση εκκρεμών εξετάσεων.
-- `GET /api/exams/assigned` — Ανάκτηση ανατεθέντων εξετάσεων.
+- `GET /api/exams/pending` — Ανάκτηση εκκρεμών εξετάσεων (με in-memory επεξεργασία).
+- `GET /api/exams/assigned` — Ανάκτηση προσωρινά ανατεθειμένων εξετάσεων (`df_local_assignments`).
 
 ### ⚙️ Μηχανή Ανάθεσης
-- `POST /api/assignments/suggest` — Δημιουργία πρότασης ανάθεσης.
-- `POST /api/assignments/confirm` — Επιβεβαίωση πρότασης.
-- `POST /api/assignments/override` — Παράκαμψη πρότασης.
-- `POST /api/assignments/bulk-confirm` — Ομαδική επιβεβαίωση.
-- `POST /api/assignments/bulk-override` — Ομαδική παράκαμψη.
+- `POST /api/assignments/suggest` — Παραγωγή πρότασης ανάθεσης μέσω της 4-σταδιακής μηχανής.
+- `POST /api/assignments/suggest-batch` — Μαζική παραγωγή προτάσεων στη μνήμη για όλες τις εκκρεμείς εξετάσεις.
+- `POST /api/assignments/confirm` — Επιβεβαίωση πρότασης και καταχώρηση στο `df_local_assignments`.
+- `POST /api/assignments/override` — Παράκαμψη πρότασης με άλλον διαγνώστη και καταγραφή αιτιολογίας.
+- `POST /api/assignments/bulk-confirm` — Ομαδική επιβεβαίωση επιλεγμένων εξετάσεων.
+- `POST /api/assignments/bulk-override` — Ομαδική ανάθεση επιλεγμένων εξετάσεων σε έναν διαγνώστη.
+- `POST /api/assignments/bulk-eligible-diagnosticians` — Τομή διαθέσιμων διαγνωστών για πολλαπλές επιλεγμένες εξετάσεις.
+- `DELETE /api/assignments/{exam_id}` — Ακύρωση προσωρινής ανάθεσης βάσει ID εξέτασης.
+- `POST /api/assignments/unassign` — Ακύρωση ανάθεσης μεμονωμένης εξέτασης και επιστροφή στις εκκρεμείς.
+- `POST /api/assignments/bulk-unassign` — Μαζική ακύρωση προσωρινών αναθέσεων επιλεγμένων εξετάσεων.
+- `GET /api/assignments/weights` — Ανάκτηση ενεργών δυναμικών βαρών βαθμολόγησης.
+- `PUT /api/assignments/weights` — Δυναμική ενημέρωση βαρών βαθμολόγησης σε πραγματικό χρόνο και στη βάση.
 
-### 🔄 Συγχρονισμός Slis
-- `POST /api/slis/pull` — Ανανέωση εκκρεμών εξετάσεων.
-- `POST /api/slis/push-all` — Ώθηση όλων των αναθέσεων στο Slis.
-- `POST /api/slis/push-selected` — Ώθηση επιλεγμένων αναθέσεων.
+### 🔄 Συγχρονισμός Slis & Αναζήτηση
+- `POST /api/slis/pull` — Ανανέωση εκκρεμών εξετάσεων μέσω `EXEC getExamsListForPeriod_V1` απευθείας στη μνήμη.
+- `GET /api/slis/status` — Έλεγχος κατάστασης σύνδεσης με το Slis και λεπτομέρειες σφαλμάτων.
+- `POST /api/slis/push-all` — Ώθηση όλων των επιβεβαιωμένων αναθέσεων στο Slis (`UPDATE exammore`), καταγραφή στο `df_assignment_log` και εκκαθάριση του `df_local_assignments`.
+- `POST /api/slis/push-selected` — Ώθηση επιλεγμένων εξετάσεων στο Slis.
+- `POST /api/slis/search` — Ζωντανή αναζήτηση στη βάση Slis ανά εύρος ημερομηνιών, Εντολή (`extracode`), Ασθενή, Γιατρό, Διαγνώστη.
+- `POST /api/slis/reassign` — Επανάθεση ήδη συγχρονισμένης εξέτασης απευθείας στο Slis (`exammore`) με καταγραφή ελέγχου.
 
-### 👨‍⚕️ Διαγνωστές και Πρόγραμμα
-- `GET /api/diagnosticians` — Λίστα ενεργών διαγνωστών.
-- `GET /api/pamakristos/oncall` — Σημερινός εφημερεύων Παμμακαρίστου.
-- `GET /api/pamakristos/schedule` — Εβδομαδιαίο πρόγραμμα on-call.
-- `POST /api/pamakristos/oncall` — Ορισμός χειροκίνητου on-call.
+### 👨‍⚕️ Διαγνωστές, Γιατροί & Dashboard
+- `GET /api/diagnosticians` — Λίστα ενεργών διαγνωστών με πρόοδο ημερήσιων ορίων και στατιστικά CT/MRI.
+- `GET /api/doctors` — Αναζήτηση και λίστα γιατρών με σελιδοποίηση.
+- `GET /api/dashboard` — Συνοπτικά στατιστικά και αναλυτικά δεδομένα για το dashboard γραμματείας.
+- `GET /api/pamakristos/oncall` — Σημερινός εφημερεύων διαγνώστης Παμμακαρίστου.
+- `GET /api/pamakristos/schedule` — Εβδομαδιαίο πρόγραμμα εφημεριών Παμμακαρίστου.
+- `POST /api/pamakristos/oncall` — Ορισμός χειροκίνητου εφημερεύοντος για συγκεκριμένη ημερομηνία.
 
-### 🔐 Admin Panel (Απαιτεί `X-Admin-Token`)
-- `POST /api/admin/auth/login` — Πιστοποίηση admin.
-- `POST /api/admin/auth/change-credentials` — Αλλαγή διαπιστευτηρίων.
-- `GET/POST /api/admin/diagnosticians` — Λίστα / δημιουργία διαγνωστών.
-- `PUT/DELETE /api/admin/diagnosticians/{id}` — Ενημέρωση / διαγραφή.
-- `GET/POST/DELETE /api/admin/partnerships` — CRUD συνεργασιών.
-- `GET/POST/DELETE /api/admin/doctors` — CRUD γιατρών.
-- `GET/POST /api/admin/availability` — Διαθεσιμότητα και άδειες.
-- `GET/POST/DELETE /api/admin/skills` — CRUD εξειδικεύσεων.
-- `GET/POST/DELETE /api/admin/exam-routing-rules` — CRUD κανόνων δρομολόγησης.
-- `GET/POST/DELETE /api/admin/exclusive-lab-rules` — CRUD αποκλειστικών εργαστηρίων.
-- `GET/POST/DELETE /api/admin/modality-quotas` — CRUD ορίων CT/MRI.
-- `GET/POST /api/admin/system-settings` — Βάρη βαθμολόγησης.
-- `POST /api/admin/sync-diagnosticians` — Χειροκίνητος συγχρονισμός προσωπικού.
-- `POST /api/admin/sync-doctors` — Χειροκίνητος συγχρονισμός γιατρών.
+### 🔐 Admin Panel (Απαιτεί `X-Admin-Token` & Ενεργή Συνεδρία)
+- `POST /api/admin/auth/login` — Πιστοποίηση διαχειριστή με κρυπτογράφηση bcrypt και rate limiting.
+- `POST /api/admin/auth/change-credentials` — Αλλαγή προσωπικού ονόματος χρήστη / κωδικού πρόσβασης.
+- `GET/POST /api/admin/users` — CRUD χρηστών διαχείρισης (με ρόλους `admin` / `it_support`, επαναφορά κωδικού, ενεργοποίηση/απενεργοποίηση).
+- `PUT/DELETE /api/admin/users/{user_id}` — Ενημέρωση στοιχείων χρήστη, ρόλου, ενεργής κατάστασης ή διαγραφή χρήστη (`it_support`).
+- `POST /api/admin/users/{user_id}/reset` — Επαναφορά κωδικού χρήστη στις αρχικές τιμές `admin / admin1234` (`it_support`).
+- `POST /api/admin/users/{user_id}/toggle` — Εναλλαγή ενεργής/ανενεργής κατάστασης χρήστη (`it_support`).
+- `GET/POST /api/admin/diagnosticians` — Λίστα / δημιουργία διαγνωστών και ημερήσιων ορίων.
+- `PUT/DELETE /api/admin/diagnosticians/{diag_id}` — Ενημέρωση / διαγραφή διαγνώστη.
+- `POST /api/admin/diagnosticians/sync` & `POST /api/admin/sync-diagnosticians` — Χειροκίνητος συγχρονισμός προσωπικού από το Slis (`EXEC getdiagnosticsList`).
+- `GET/POST/DELETE /api/admin/skills` — CRUD εξειδικεύσεων και δεξιοτήτων διαγνωστών.
+- `PUT/DELETE /api/admin/skills/{skill_id}` — Ενημέρωση / διαγραφή δεξιότητας διαγνώστη.
+- `GET /api/admin/exam-categories` — Ανάκτηση καταλόγου και ανατομικών ομάδων εξετάσεων για ομαδική ανάθεση δεξιοτήτων.
+- `GET/POST/DELETE /api/admin/partnerships` — CRUD συνεργασιών γιατρού-διαγνωστή με προτεραιότητα και αποκλειστικότητα.
+- `PATCH/DELETE /api/admin/partnerships/{part_id}` — Ενημέρωση / διαγραφή συνεργασίας γιατρού-διαγνώστη.
+- `GET/POST/DELETE /api/admin/doctors` — CRUD μητρώου γιατρών.
+- `POST /api/admin/doctors/sync` & `POST /api/admin/sync-doctors` — Χειροκίνητος συγχρονισμός γιατρών από το Slis (`EXEC getWardDoctors`).
+- `GET/POST /api/admin/availability` — Λίστα / καταχώρηση ημερήσιας διαθεσιμότητας και αδειών.
+- `DELETE /api/admin/availability/{diagnostician_id}/{date}` — Διαγραφή εγγραφής διαθεσιμότητας / άδειας για συγκεκριμένη ημερομηνία.
+- `GET/POST /api/admin/oncall` — Ανάκτηση / ορισμός εφημερεύοντος Παμμακαρίστου για συγκεκριμένη ημερομηνία.
+- `GET/POST /api/admin/pamakristos/weekly-schedule` — Διαχείριση εβδομαδιαίου προγράμματος Παμμακαρίστου.
+- `GET/DELETE /api/admin/pamakristos/overrides` & `DELETE /api/admin/pamakristos/overrides/{avail_id}` — Διαχείριση χειροκίνητων αντικαταστάσεων ημερολογίου εφημεριών.
+- `GET/POST/PUT/DELETE /api/admin/advanced/exam-routing-rules` — CRUD δυναμικών κανόνων δρομολόγησης εξετάσεων.
+- `GET/POST/PUT/DELETE /api/admin/exclusive-lab-rules` — CRUD αποκλειστικών δεσμεύσεων εργαστηρίου.
+- `GET/POST/PUT/DELETE /api/admin/modality-quotas` — CRUD ειδικών ημερήσιων ορίων CT/MRI.
 
 ---
 
@@ -520,60 +572,104 @@ python scripts/build_exe.py
 
 ```
 diagflow/
-├── README.md
-├── README.el.md                       # Ελληνική μετάφραση τεκμηρίωσης
-├── USER_GUIDE.md                      # Οδηγός για μη τεχνικούς χρήστες
-├── pyproject.toml
-├── requirements.txt
-├── .env.example
-├── DiagFlow.spec
-├── db/
-│   ├── diagflow.db
-│   ├── mock_slis.db
-│   ├── init.sql
-│   ├── init_diagflow.sql
-│   ├── init_mock_slis.sql
-│   ├── create_diagflow_db.py
-│   └── seed_mock_db.py
-├── src/diagflow/
-│   ├── main.py
-│   ├── config.py
-│   ├── launcher.py
-│   ├── api/
-│   │   ├── routes.py
-│   │   ├── schemas.py
-│   │   └── dependencies.py
-│   ├── db/
-│   │   ├── diagflow_db.py
-│   │   ├── engines.py
-│   │   ├── models.py
-│   │   └── slis_models.py
-│   ├── engine/
-│   │   ├── pipeline.py
-│   │   ├── filters.py
-│   │   ├── scoring.py
-│   │   ├── solver.py
-│   │   └── rules.py
-│   ├── services/
-│   │   ├── assignment.py
-│   │   ├── diagnostician.py
-│   │   ├── pamakristos.py
-│   │   └── slis_sync.py
-│   └── utils/
-│       └── logging.py
-├── frontend/
-│   ├── index.html
-│   ├── admin.html
-│   ├── css/styles.css
+├── README.md                          # Πλήρης τεκμηρίωση έργου (Αγγλικά)
+├── README.el.md                       # Πλήρης τεκμηρίωση έργου (Ελληνικά)
+├── USER_GUIDE.md                      # Πλήρης Οδηγός Χρήστη για Γραμματεία & Admin
+├── pyproject.toml                     # Ρυθμίσεις build & παραμετροποίηση pytest
+├── requirements.txt                   # Εξαρτήσεις πακέτων Python
+├── .env.example                       # Πρότυπο αρχείο ρυθμίσεων περιβάλλοντος
+├── DiagFlow.spec                      # Προδιαγραφές PyInstaller για κατασκευή EXE
+│
+├── db/                                # Σχήματα κεντρικής βάσης & αρχικοποιητές
+│   ├── create_central_tables.sql      # T-SQL DDL script πινάκων df_* για MSSQL
+│   ├── create_diagflow_db.py          # Script αρχικοποίησης mock βάσης ρυθμίσεων
+│   ├── seed_mock_db.py                # Script αρχικοποίησης mock βάσης εξετάσεων
+│   ├── seed_templates.py              # Script δημιουργίας ανώνυμων προτύπων βάσεων
+│   ├── init.sql                       # Βασικό DDL σχήμα για δοκιμές
+│   ├── table.sql                      # Σχήμα πινάκων αναφοράς
+│   ├── update_slis.sql                # Stored procedures αναφοράς
+│   └── templates/                     # Ενσωματωμένα ανώνυμα πρότυπα SQLite
+│       ├── diagflow.db                # Ανώνυμο πρότυπο βάσης ρυθμίσεων
+│       ├── mock_slis.db               # Ανώνυμο πρότυπο βάσης εξετάσεων
+│       ├── init_diagflow.sql          # Ανώνυμο SQL seed πρότυπο ρυθμίσεων
+│       └── init_mock_slis.sql         # Ανώνυμο SQL seed πρότυπο εξετάσεων
+│
+├── frontend/                          # Επίπεδο Διεπαφής Χρήστη (HTML5 / CSS3 / JS)
+│   ├── index.html                     # Dashboard αναθεώρησης γραμματείας (4 καρτέλες)
+│   ├── admin.html                     # Control panel διαχειριστή
+│   ├── css/
+│   │   └── styles.css                 # Ενιαίο stylesheet & design system
 │   ├── js/
-│   │   ├── app.js
-│   │   └── admin.js
+│   │   ├── app.js                     # Λογική dashboard & keyboard engine
+│   │   └── admin.js                   # Διαδραστική λογική admin panel
 │   └── media/
-│       └── logos/
-├── puml/
-├── scripts/
-├── tests/
-└── docs/
+│       └── logos/                     # Λογότυπα και εικονίδια εφαρμογής
+│
+├── guides/                            # Αυτόνομες HTML Εκδόσεις Οδηγών
+│   └── *.html                         # Αυτόνομη τεκμηρίωση HTML εκτός σύνδεσης
+│
+├── src/diagflow/                      # Κύριο Πακέτο Εφαρμογής Python
+│   ├── __init__.py                    # Μεταδεδομένα πακέτου & έκδοση
+│   ├── main.py                        # FastAPI entrypoint, δρομολογήσεις & lifespan
+│   ├── config.py                      # Ρυθμίσεις Pydantic & φόρτωση περιβάλλοντος
+│   ├── launcher.py                    # Launcher εφαρμογής desktop (pywebview)
+│   │
+│   ├── api/                           # Επίπεδο REST API
+│   │   ├── routes.py                  # Ορισμοί διαδρομών API
+│   │   ├── schemas.py                 # Μοντέλα αιτημάτων & αποκρίσεων Pydantic
+│   │   └── dependencies.py            # Πάροχοι dependency injection FastAPI
+│   │
+│   ├── db/                            # Επίπεδο Πρόσβασης Δεδομένων
+│   │   ├── diagflow_db.py             # Προσαρμογέας βάσης & CRUD (MSSQL / SQLite)
+│   │   ├── engines.py                 # SQLAlchemy engine & session factory
+│   │   ├── models.py                  # Μοντέλα ORM ρυθμίσεων
+│   │   └── slis_models.py             # Μοντέλα ORM Slis
+│   │
+│   ├── engine/                        # Μηχανή Κανόνων & Βελτιστοποίησης
+│   │   ├── pipeline.py                # Ενορχηστρωτής αγωγού 4 σταδίων
+│   │   ├── filters.py                 # Σκληροί περιορισμοί & φίλτρα επιλεξιμότητας
+│   │   ├── scoring.py                 # Σταθμισμένη βαθμολόγηση & balancer ισοπαλιών
+│   │   ├── solver.py                  # Solver Google OR-Tools CP-SAT & greedy fallback
+│   │   └── rules.py                   # Ορισμοί κανόνων & registry
+│   │
+│   ├── services/                      # Επιχειρησιακές Υπηρεσίες
+│   │   ├── assignment.py              # Κύκλος ζωής αναθέσεων & καταγραφή ελέγχου
+│   │   ├── diagnostician.py           # Φόρτωση, batch caching & εμπλουτισμός υποψηφίων
+│   │   ├── pamakristos.py             # Διαχειριστής εφημεριών Παμμακαρίστου
+│   │   └── slis_sync.py               # Συγχρονισμός Slis & ημερήσιο cron APScheduler
+│   │
+│   └── utils/                         # Βοηθητικά Εργαλεία
+│       └── logging.py                 # Δομημένη καταγραφή (structlog)
+│
+├── puml/                              # Διαγράμματα Αρχιτεκτονικής PlantUML
+│   ├── architecture.puml              # Διάγραμμα αρχιτεκτονικής συστήματος
+│   ├── assignment_sequence.puml       # Διάγραμμα ακολουθίας suggest → push
+│   ├── class_api.puml                 # Διάγραμμα κλάσεων API & Launcher
+│   ├── data_api.puml                  # Διάγραμμα κλάσεων πρόσβασης δεδομένων & μηχανής
+│   ├── data_model.puml                # Διάγραμμα μοντέλου δεδομένων
+│   ├── er_diagram.puml                # Διάγραμμα οντοτήτων-συσχετίσεων (ER)
+│   └── rule_engine_flow.puml          # Διάγραμμα ροής 4 σταδίων μηχανής κανόνων
+│
+├── scripts/                           # Scripts Κατασκευής & Συντήρησης
+│   ├── build_exe.py                   # Αυτοματοποιημένος builder PyInstaller για EXE
+│   ├── convert_md_to_html.py          # Μετατροπέας Markdown σε αυτόνομο HTML
+│   └── data_quality_audit.py          # Script ελέγχου ποιότητας δεδομένων
+│
+├── tests/                             # Σουίτα Αυτοματοποιημένων Δοκιμών (Pytest)
+│   ├── conftest.py                    # Fixtures δοκιμών & βάση ελέγχου
+│   ├── test_admin_auth.py             # Δοκιμές πιστοποίησης admin & bcrypt security
+│   ├── test_auto_init_db.py           # Δοκιμές αυτόματης αρχικοποίησης βάσης
+│   ├── test_autoassign.py             # Δοκιμές λογικής αυτόματων αναθέσεων
+│   ├── test_filters.py                # Δοκιμές σκληρών φίλτρων
+│   ├── test_multi_exam_order.py       # Δοκιμές κλειδώματος εντολών πολλαπλών εξετάσεων
+│   ├── test_optimistic_locking.py     # Δοκιμές αισιόδοξου κλειδώματος
+│   ├── test_pipeline.py               # Δοκιμές ολοκλήρωσης αγωγού
+│   ├── test_scoring.py                # Δοκιμές σταθμισμένης βαθμολόγησης & ισοπαλιών
+│   └── test_skills_fix.py             # Δοκιμές προτιμήσεων δεξιοτήτων & αποκλεισμών
+│
+└── media/                             # Πολυμέσα & Στιγμιότυπα Εφαρμογής
+    ├── logos/                         # Λογότυπα εφαρμογής & brand assets
+    └── screenshots/                   # Στιγμιότυπα διεπαφής χρήστη
 ```
 
 ---
@@ -598,21 +694,21 @@ diagflow/
 
 <div align="center">
 
-| Αρχική Οθόνη (Καρτέλα Εκκρεμών) | Αρχική Οθόνη (Καρτέλα Εκκρεμών — συν.) |
+| Αρχική Οθόνη (Καρτέλα Εκκρεμών — Bright Mode) | Αρχική Οθόνη (Καρτέλα Εκκρεμών — Dark Mode) |
 |:---:|:---:|
 | ![Αρχική 1](media/screenshots/homescreen1.png) | ![Αρχική 2](media/screenshots/homescreen2.png) |
 
-| Επισκόπηση Dashboard | Αυτόματες Αναθέσεις (Καρτέλα Ανατεθέντων) |
+| Επισκόπηση Dashboard & Κατανομή Modality | Αυτόματες Αναθέσεις (Καρτέλα Ανατεθέντων) |
 |:---:|:---:|
 | ![Dashboard](media/screenshots/dashboard_blurred.png) | ![Αυτόματη Ανάθεση](media/screenshots/auto-assign.png) |
 
-| Φιλτράρισμα και Αναζήτηση | Πολλαπλή Επιλογή |
+| Φιλτράρισμα και Αναζήτηση | Πολλαπλή Επιλογή & Μπάρα Ενεργειών |
 |:---:|:---:|
 | ![Φιλτράρισμα](media/screenshots/filtering.png) | ![Πολλαπλή Επιλογή](media/screenshots/multipleselect.png) |
 
-| Αναζήτηση Slis & Επανάθεση Διαγνώστη (4η Καρτέλα) |  |
+| Αναζήτηση Slis & Επανάθεση Διαγνώστη (4η Καρτέλα) | Επιβεβαίωση Επανάθεσης στο Slis |
 |:---:|:---:|
-| ![Αναζήτηση Slis](media/screenshots/changediagnostician.png) |  |
+| ![Αναζήτηση Slis](media/screenshots/changediagnostician.png) | ![Επιβεβαίωση Αλλαγής](media/screenshots/changeddiagnostician.png) |
 
 </div>
 
@@ -622,17 +718,13 @@ diagflow/
 
 <div align="center">
 
-| Παράθυρο Εναλλακτικών | Ανάλυση Συστήματος Βαθμολόγησης |
+| Παράθυρο Εναλλακτικών & Επιλεξιμότητας | Ανάλυση Συστήματος Βαθμολόγησης |
 |:---:|:---:|
 | ![Εναλλακτικές](media/screenshots/alternatives_blurred.png) | ![Σύστημα Βαθμολόγησης](media/screenshots/scoring-system.png) |
 
-| Λεπτομέρεια Βαθμολογίας | Διάγραμμα Ροής Ανάθεσης |
+| Λεπτομέρεια Βαθμολογίας ανά Παράγοντα | Διάγραμμα Ροής Λήψης Απόφασης Ανάθεσης |
 |:---:|:---:|
 | ![Βαθμολόγηση](media/screenshots/scoring.png) | ![Ροή](media/screenshots/flow.png) |
-
-| Ετικέτα Κανόνα Αυτόματης Ανάθεσης |  |
-|:---:|:---:|
-| ![Ετικέτα](media/screenshots/red-comment_auto-assign.png) |  |
 
 </div>
 
@@ -642,29 +734,29 @@ diagflow/
 
 <div align="center">
 
-| Διαχείριση Διαγνωστών | Ημερολόγιο Διαθεσιμότητας |
+| Διαχείριση Διαγνωστών & Ημερήσια Όρια | Ημερολόγιο Διαθεσιμότητας & Άδειες |
 |:---:|:---:|
 | ![Admin Διαγνωστές](media/screenshots/admin_diagnosticians.png) | ![Admin Διαθεσιμότητα](media/screenshots/admin_availability.png) |
 
-| Μήτρα Εξειδικεύσεων (Θολή) | Μήτρα Εξειδικεύσεων |
+| Μήτρα Χωρητικότητας & Εξειδικεύσεων (Θολή) | Μήτρα Εξειδικεύσεων (Προτιμήσεις & Αποκλεισμοί) |
 |:---:|:---:|
 | ![Admin Εξειδικεύσεις 1](media/screenshots/admin_skills1_blurred.png) | ![Admin Εξειδικεύσεις 2](media/screenshots/admin_skills2.png) |
 
-| Συνεργασίες | Πρόγραμμα Παμμακαρίστου |
+| Διαχείριση Μήτρας Εξειδικεύσεων & Φίλτρα | Συνεργασίες & Αποκλειστικότητες Γιατρών |
 |:---:|:---:|
-| ![Admin Συνεργασίες](media/screenshots/admin_partners.png) | ![Admin Παμμακάριστος](media/screenshots/admin_pammakaristos.png) |
+| ![Admin Εξειδικεύσεις 3](media/screenshots/admin_skills3.png) | ![Admin Συνεργασίες](media/screenshots/admin_partners.png) |
 
-| Κατάλογος Εξετάσεων & Ανατομικές Ομάδες | Ομαδική Επιλογή & Ανάθεση Δεξιοτήτων |
+| Πρόγραμμα & Εφημερίες Παμμακαρίστου | Κατάλογος Εξετάσεων & Ανατομικές Ομάδες |
 |:---:|:---:|
-| ![Admin Εξετάσεις 1](media/screenshots/admin_exams1.png) | ![Admin Εξετάσεις 2](media/screenshots/admin_exams2.png) |
+| ![Admin Παμμακάριστος](media/screenshots/admin_pammakaristos.png) | ![Admin Εξετάσεις 1](media/screenshots/admin_exams1.png) |
 
-| Επεξεργαστής Κανόνων | Αποκλειστικά Εργαστήρια & Χωρητικότητα ανά Modality |
+| Επεξεργαστής Δυναμικών Κανόνων Δρομολόγησης | Αποκλειστικά Εργαστήρια & Όρια Modality |
 |:---:|:---:|
 | ![Admin Προχωρημένα 1](media/screenshots/admin_advanced1.png) | ![Admin Προχωρημένα 2](media/screenshots/admin_advanced2.png) |
 
-| Επεξεργαστής Βαρών Βαθμολόγησης |  |
+| Επεξεργαστής Βαρών Βαθμολόγησης | |
 |:---:|:---:|
-| ![Admin Προχωρημένα 3](media/screenshots/admin_advanced3.png) |  |
+| ![Admin Προχωρημένα 3](media/screenshots/admin_advanced3.png) | |
 
 </div>
 

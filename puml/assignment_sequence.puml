@@ -1,4 +1,4 @@
-@startuml
+@startuml assignment_sequence
 
 title DiagFlow — Assignment Sequence
 
@@ -13,25 +13,25 @@ participant "FastAPI\nBackend" as api #E3F2FD
 participant "Assignment\nService" as assign #B3E5FC
 participant "Diagnostician\nService" as diag_svc #B3E5FC
 participant "Rule\nEngine" as engine #BBDEFB
-database "mock_slis.db" as mockdb #FFE0B2
-database "diagflow.db" as configdb #B2EBF2
+database "Central MSSQL DB\n(Slis & df_* tables)" as centraldb #E1F5FE
+database "mock_slis.db & diagflow.db\n(Local SQLite Dev)" as mockdb #FFE0B2
 
 == Startup: Slis Pull + Auto-Assignments ==
 
 api -> assign : pull_from_slis()
 alt USE_MOCK_SLIS_DB = false
-    assign -> slisdb : EXEC getExamsListForPeriod (last 3 days)
-    slisdb --> assign : Filter unassigned exams (DIAGNOSTIS IS NULL)
-    assign -> mockdb : Cache unassigned exams into slis_exams
+    assign -> centraldb : EXEC getExamsListForPeriod_V1 (last 3 days)
+    centraldb --> assign : Filter unassigned exams (DIAGNOSTIS IS NULL)
+    note right : Direct in-memory processing\n(Zero local disk SQLite caching)
 else USE_MOCK_SLIS_DB = true
     assign -> mockdb : SELECT pending exams (last 3 days, no diagnostician)
     mockdb --> assign : Raw exam rows
 end
-assign -> configdb : Get exclusive partnerships
-assign -> configdb : Get exam_routing_rules
-assign -> configdb : Get Παμμακάριστος on-call
+assign -> centraldb : Get exclusive partnerships
+assign -> centraldb : Get exam_routing_rules
+assign -> centraldb : Get Παμμακάριστος on-call
 assign -> assign : Auto-assign:\n1. Exclusive doctor partnerships\n2. Dynamic exam routing rules\n   (e.g., Arthrografies, TMJ, Spectroscopies)\n3. Παμμακάριστος general → on-call
-assign -> configdb : upsert_local_assignment()\n(is_auto=True, rule_desc)
+assign -> centraldb : upsert_local_assignment()\n(is_auto=True, rule_desc into df_local_assignments)
 assign --> api : Remaining pending exams
 
 == Fetch Pending Exams ==
@@ -39,20 +39,23 @@ assign --> api : Remaining pending exams
 operator -> ui : Open dashboard
 ui -> api : GET /api/exams/pending
 api -> assign : get_pending_exams()
-assign -> mockdb : Query unassigned exams
-assign -> configdb : Check local_assignments\n(exclude already assigned)
+alt USE_MOCK_SLIS_DB = false
+    assign -> centraldb : Query unassigned via SP & df_local_assignments
+else USE_MOCK_SLIS_DB = true
+    assign -> mockdb : Query unassigned exams
+end
 assign --> api : Filtered pending list
 api --> ui : Pending exams table
 ui --> operator : Display pending exams
 
 == Generate Suggestion ==
 
-operator -> ui : Click row → Suggest
+operator -> ui : Click row → Suggest (or Auto-Suggest)
 ui -> api : POST /api/assignments/suggest\n{ exam_id: "12345" }
 
 api -> diag_svc : get_candidates_for_exam()
-diag_svc -> configdb : Batch load:\n• All diagnosticians\n• All skills (grouped)\n• Absent IDs for today\n• Partnerships for doctor\n• Daily assignment counts
-configdb --> diag_svc : Enriched candidate list
+diag_svc -> centraldb : Batch load (with 3s RAM cache):\n• All diagnosticians\n• All skills (grouped)\n• Absent IDs for today\n• Partnerships for doctor\n• Daily assignment counts
+centraldb --> diag_svc : Enriched candidate list
 diag_svc --> api : List<CandidateDiagnostician>
 
 note over api
@@ -60,8 +63,8 @@ note over api
     as virtual workload offset for sequential load-balancing
 end note
 
-api -> configdb : get_system_weights()
-configdb --> api : Dynamic weights dict
+api -> centraldb : get_system_weights()
+centraldb --> api : Dynamic weights dict
 
 api -> engine : pipeline.run(exam, candidates)
 
@@ -95,10 +98,10 @@ group Stage 2: Weighted Scoring
     engine -> engine : Composite score per candidate\n(clamped to 0.0–1.0)
 end
 
-group Stage 3: Near-Tie Load Balancing
+group Stage 3: Near-Tie Load Balancing & Fair Distribution
     engine -> engine : Find top_score
     engine -> engine : Identify near-tie group:\n|top_score − candidate_score| ≤ 5%
-    engine -> engine : Sort near-tie group:\nfewest exams today → quota → random
+    engine -> engine : Sort near-tie group:\nfewest exams today (+ session offset) → quota → fair jitter
 end
 
 group Stage 4: Solver
@@ -115,16 +118,16 @@ ui --> operator : Display suggestion:\n"ΠΑΠΑΔΟΠΟΥΛΟΣ (87%)\n✓ Συ
 == Operator Decision ==
 
 alt Confirm suggestion
-    operator -> ui : Click "Confirm"
+    operator -> ui : Click "Confirm" (or Enter key)
     ui -> api : POST /api/assignments/confirm\n{ exam_id, diagnostician_id }
-    api -> configdb : upsert_local_assignment()
+    api -> centraldb : upsert_local_assignment()
     api --> ui : AssignmentConfirmation
     ui --> operator : ✅ Ανατέθηκε
 
 else Override suggestion
-    operator -> ui : Select different diagnostician\n(from alternatives or eliminated)
+    operator -> ui : Select different diagnostician\n(from alternatives or eliminated, or 'O' key)
     ui -> api : POST /api/assignments/override\n{ exam_id, override_id, reason }
-    api -> configdb : upsert_local_assignment()
+    api -> centraldb : upsert_local_assignment()
     api --> ui : AssignmentConfirmation\n(was_overridden=true)
     ui --> operator : ⚠️ Αντικαταστάθηκε
 end
@@ -134,8 +137,15 @@ end
 operator -> ui : Click "Αποστολή στο Slis"
 ui -> api : POST /api/slis/push-all (or push-selected)
 api -> assign : push_all_to_slis()
-assign -> mockdb : UPDATE slis_exams\nSET slis_synced_at, diagnostis
-assign -> configdb : DELETE from local_assignments
+alt USE_MOCK_SLIS_DB = false
+    assign -> centraldb : Optimistic Locking Check (SELECT diagnostis FROM exammore)
+    assign -> centraldb : UPDATE exammore SET diagnostisid=? WHERE exammoreid=?
+    assign -> centraldb : INSERT INTO df_assignment_log (central audit)
+    assign -> centraldb : DELETE FROM df_local_assignments
+else USE_MOCK_SLIS_DB = true
+    assign -> mockdb : UPDATE slis_exams SET slis_synced_at, diagnostis
+    assign -> mockdb : INSERT INTO assignment_log & DELETE local_assignments
+end
 assign --> api : { succeeded, failed, queries }
 api --> ui : Push result
 ui --> operator : ✅ Pushed N exams to Slis

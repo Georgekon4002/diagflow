@@ -151,6 +151,7 @@ package "mock_slis.db — Exam Data" as slis_db #FFF3E0 {
         demogid : INTEGER
         fname : TEXT
         lname : TEXT
+        age : INTEGER
         examnumcode : INTEGER <<FK>>
         examname : TEXT
         visitdate : TEXT
@@ -162,6 +163,7 @@ package "mock_slis.db — Exam Data" as slis_db #FFF3E0 {
         code : TEXT
         notes : TEXT
         category : TEXT
+        oldpers : INTEGER
         slis_synced_at : TEXT
     }
 

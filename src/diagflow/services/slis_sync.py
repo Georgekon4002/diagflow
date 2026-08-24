@@ -26,6 +26,7 @@ import sqlite3
 import sys
 from datetime import date, datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 import structlog
 
@@ -35,13 +36,7 @@ logger = structlog.get_logger(__name__)
 
 # ── Resolve project root and mock DB path ──────────────────────────
 if getattr(sys, "frozen", False):
-    _exe_dir = Path(sys.executable).parent
-    if (_exe_dir / "db").exists():
-        _PROJECT_ROOT = _exe_dir
-    elif (_exe_dir.parent / "db").exists():
-        _PROJECT_ROOT = _exe_dir.parent
-    else:
-        _PROJECT_ROOT = _exe_dir
+    _PROJECT_ROOT = Path(sys.executable).parent
 else:
     _PROJECT_ROOT = Path(__file__).parent.parent.parent.parent
 _MOCK_DB_PATH = _PROJECT_ROOT / settings.mock_slis_db_path
@@ -54,8 +49,48 @@ def _get_templates_dir() -> Path:
     return Path(__file__).resolve().parent.parent.parent.parent / "db" / "templates"
 
 
+def cleanup_mock_data() -> dict[str, Any]:
+    """
+    Purge and delete any local mock SLIS database files and in-memory mock caches
+    when running in or switching to real central SLIS MSSQL mode.
+    """
+    deleted_files = []
+    try:
+        # Delete mock_slis.db and WAL/SHM companion files if they exist
+        for target in [_MOCK_DB_PATH, _MOCK_DB_PATH.with_name(_MOCK_DB_PATH.name + "-wal"), _MOCK_DB_PATH.with_name(_MOCK_DB_PATH.name + "-shm")]:
+            if target.exists():
+                try:
+                    target.unlink()
+                    deleted_files.append(str(target))
+                except Exception as ex:
+                    logger.warning("mock_db_cleanup_file_failed", file=str(target), error=str(ex))
+
+        # Clear in-memory caches
+        try:
+            from diagflow.services.assignment import _exam_details_cache
+            _exam_details_cache.clear()
+        except Exception:
+            pass
+
+        try:
+            from diagflow.api.routes import _suggestion_cache, _session_suggestion_counts
+            _suggestion_cache.clear()
+            _session_suggestion_counts.clear()
+        except Exception:
+            pass
+
+        logger.info("mock_slis_data_purged", deleted_files=deleted_files)
+        return {"status": "ok", "deleted_files": deleted_files}
+    except Exception as exc:
+        logger.error("mock_slis_cleanup_error", error=str(exc))
+        return {"status": "error", "error": str(exc)}
+
+
 def ensure_mock_slis_db_initialized() -> None:
     """If mock_slis.db is missing or empty in mock mode, seed it from templates."""
+    if not settings.use_mock_slis_db:
+        return
+
     if not _MOCK_DB_PATH.exists() or _MOCK_DB_PATH.stat().st_size == 0:
         _MOCK_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
         tmpl_dir = _get_templates_dir()
@@ -298,16 +333,31 @@ def push_exam_to_slis(exammoreid: int, diagnostician_id: int, diagnostician_name
                 )
                 conn.commit()
                 if result.rowcount == 0:
-                    # Concurrency conflict detected! Another user already updated Slis
+                    # Concurrency conflict or exam cancelled/deleted in Slis
                     curr = conn.execute(
-                        text("SELECT e.diagnostisid, d.docname FROM exammore e LEFT JOIN diagnosticians d ON d.personelid = e.diagnostisid WHERE e.exammoreid = :id"),
+                        text("SELECT diagnostisid FROM exammore WHERE exammoreid = :id"),
                         {"id": exammoreid}
                     ).fetchone()
-                    assigned_name = curr[1] if (curr and curr[1]) else (f"ID {curr[0]}" if (curr and curr[0]) else "άλλον χρήστη")
+                    if curr is None:
+                        # Exam does not exist in Slis (cancelled or deleted in central DB)
+                        logger.warning("exam_not_found_in_slis_auto_purging", exammoreid=exammoreid)
+                        cfg_db.delete_local_assignment(exammoreid)
+                        return {
+                            "success": False,
+                            "conflict": False,
+                            "cancelled_in_slis": True,
+                            "exammoreid": exammoreid,
+                            "error": f"Η εξέταση #{exammoreid} δεν βρέθηκε στο Slis (έχει ακυρωθεί/διαγραφεί) και αφαιρέθηκε αυτόματα από τις αναθέσεις.",
+                        }
+
+                    curr_diag_id = curr[0]
+                    diag_info = cfg_db.get_diagnostician(curr_diag_id) if curr_diag_id else None
+                    assigned_name = diag_info["name"] if diag_info else (f"ID {curr_diag_id}" if curr_diag_id else "άλλον χρήστη")
                     logger.warning("optimistic_lock_conflict_detected", exammoreid=exammoreid, current_diag=assigned_name)
                     return {
                         "success": False,
                         "conflict": True,
+                        "cancelled_in_slis": False,
                         "exammoreid": exammoreid,
                         "current_diagnostician": assigned_name,
                         "error": f"Η εξέταση #{exammoreid} έχει ήδη ανατεθεί στον/στην {assigned_name} στο Slis από άλλον χρήστη.",
@@ -338,10 +388,22 @@ def push_exam_to_slis(exammoreid: int, diagnostician_id: int, diagnostician_name
                     return {
                         "success": False,
                         "conflict": True,
+                        "cancelled_in_slis": False,
                         "exammoreid": exammoreid,
                         "current_diagnostician": current_name,
                         "error": f"Η εξέταση #{exammoreid} έχει ήδη ανατεθεί στον/στην {current_name} στο Slis από άλλον χρήστη.",
                     }
+            elif settings.use_mock_slis_db:
+                con.close()
+                logger.warning("exam_not_found_in_mock_slis_auto_purging", exammoreid=exammoreid)
+                cfg_db.delete_local_assignment(exammoreid)
+                return {
+                    "success": False,
+                    "conflict": False,
+                    "cancelled_in_slis": True,
+                    "exammoreid": exammoreid,
+                    "error": f"Η εξέταση #{exammoreid} δεν βρέθηκε στο Slis (έχει ακυρωθεί/διαγραφεί) και αφαιρέθηκε αυτόματα από τις αναθέσεις.",
+                }
 
             con.execute(
                 "UPDATE slis_exams SET diagnostis = ?, code = ?, slis_synced_at = ? WHERE exammoreid = ?",
@@ -562,6 +624,7 @@ def push_all_to_slis() -> dict:
             failed.append({
                 "exammoreid": exammoreid,
                 "conflict": result.get("conflict", False),
+                "cancelled_in_slis": result.get("cancelled_in_slis", False),
                 "error": result.get("error", "Failed to update")
             })
 
@@ -616,6 +679,7 @@ def push_selected_to_slis(exammoreid_list: list[int]) -> dict:
             failed.append({
                 "exammoreid": exammoreid,
                 "conflict": result.get("conflict", False),
+                "cancelled_in_slis": result.get("cancelled_in_slis", False),
                 "error": result.get("error", "Failed to update")
             })
 

@@ -1,4 +1,4 @@
-@startuml
+@startuml class_api
 
 title DiagFlow — Class Diagram: API & Launcher Layer
 skinparam backgroundColor #FEFEFE
@@ -43,25 +43,31 @@ package "diagflow.api" as api_pkg #BBDEFB {
         + GET  /exams/assigned
         __ Assignment Engine __
         + POST /assignments/suggest
+        + POST /assignments/suggest-batch
         + POST /assignments/confirm
         + POST /assignments/override
         + POST /assignments/bulk-confirm
         + POST /assignments/bulk-override
         + POST /assignments/bulk-eligible-diagnosticians
+        + GET/PUT /assignments/weights
         __ Slis Sync & Search __
         + POST /slis/pull
         + POST /slis/push-all
         + POST /slis/push-selected
         + POST /slis/search
+        + POST /slis/reassign
         + GET  /slis/status
         __ Diagnosticians & Schedule __
         + GET  /diagnosticians
+        + GET  /doctors
+        + GET  /dashboard
         + GET  /pamakristos/oncall
         + GET  /pamakristos/schedule
         + POST /pamakristos/oncall
         __ Admin & Dynamic Rules (auth required) __
         + POST /admin/auth/login
         + POST /admin/auth/change-credentials
+        + CRUD /admin/users (with reset & toggle)
         + CRUD /admin/diagnosticians
         + CRUD /admin/partnerships
         + CRUD /admin/doctors
@@ -77,8 +83,9 @@ package "diagflow.api" as api_pkg #BBDEFB {
         --
         - _suggestion_cache: dict
         - _session_suggestion_counts: dict[int, int]
-        - _admin_sessions: set[str]
+        - _admin_sessions: dict[str, dict]
         - _require_admin(token): str
+        - _require_it_support(session): dict
     }
 
     ' ─── Request Schemas ───
@@ -112,6 +119,21 @@ package "diagflow.api" as api_pkg #BBDEFB {
     class "SetOncallRequest" as req_oncall {
         + date: str
         + diagnostician_id: int
+    }
+
+    class "SlisSearchRequest" as req_slis_search {
+        + date_from: str | None
+        + date_to: str | None
+        + extracode: str | None
+        + patient_name: str | None
+        + doctor_name: str | None
+        + diagnostis_name: str | None
+    }
+
+    class "SlisReassignRequest" as req_slis_reassign {
+        + exammoreid: int
+        + new_diagnostician_id: int
+        + new_diagnostician_name: str
     }
 
     ' ─── Response & Data Schemas ───
@@ -181,6 +203,7 @@ package "diagflow.services" as svc_pkg #B3E5FC {
         - pipeline: AssignmentPipeline
         --
         + suggest_assignment(exam, candidates): AssignmentSuggestion
+        + suggest_assignments_batch(exams): list[AssignmentSuggestion]
         + confirm_assignment(exam_id, diag_id, suggestion): dict
         + override_assignment(exam_id, orig_id, override_id, reason): dict
         + get_pending_exams(): list[dict]
@@ -189,7 +212,9 @@ package "diagflow.services" as svc_pkg #B3E5FC {
     }
 
     class "DiagnosticianService" as diag_svc {
+        + {static} clear_cache(): void
         + get_candidates_for_exam(...): list[CandidateDiagnostician]
+        + get_candidates_for_exams_batch(exams): dict[str, list[CandidateDiagnostician]]
         + get_all_diagnosticians(): list[dict]
     }
 
@@ -247,6 +272,8 @@ router ..> req_override : request body
 router ..> req_bulk_confirm : request body
 router ..> req_bulk_override : request body
 router ..> req_oncall : request body
+router ..> req_slis_search : request body
+router ..> req_slis_reassign : request body
 
 router ..> resp_suggest : response
 router ..> resp_confirm : response

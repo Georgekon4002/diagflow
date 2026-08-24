@@ -19,6 +19,7 @@ import structlog
 from diagflow.config import settings
 from diagflow.engine.filters import CandidateDiagnostician, ExamContext
 from diagflow.engine.pipeline import AssignmentPipeline, AssignmentSuggestion
+from diagflow.services.slis_sync import normalize_modality
 
 logger = structlog.get_logger(__name__)
 
@@ -30,13 +31,7 @@ _pending_exams_cache_time: float = 0.0
 
 # ── Resolve mock DB path relative to the project root ─────────────
 if getattr(sys, "frozen", False):
-    _exe_dir = Path(sys.executable).parent
-    if (_exe_dir / "db").exists():
-        _PROJECT_ROOT = _exe_dir
-    elif (_exe_dir.parent / "db").exists():
-        _PROJECT_ROOT = _exe_dir.parent
-    else:
-        _PROJECT_ROOT = _exe_dir
+    _PROJECT_ROOT = Path(sys.executable).parent
 else:
     _PROJECT_ROOT = Path(__file__).parent.parent.parent.parent
 _MOCK_DB_PATH = _PROJECT_ROOT / settings.mock_slis_db_path
@@ -45,7 +40,8 @@ _MOCK_DB_PATH = _PROJECT_ROOT / settings.mock_slis_db_path
 def _get_mock_db() -> sqlite3.Connection:
     """Open a read-write SQLite connection to the mock Slis database."""
     from diagflow.services.slis_sync import ensure_slis_exams_table, ensure_mock_slis_db_initialized
-    ensure_mock_slis_db_initialized()
+    if settings.use_mock_slis_db:
+        ensure_mock_slis_db_initialized()
     _MOCK_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     con = sqlite3.connect(str(_MOCK_DB_PATH))
     con.row_factory = sqlite3.Row
@@ -218,7 +214,19 @@ class AssignmentService:
             ename = exam_info.get("examname") or exam_info.get("exam_name") or exam_info.get("exam_title")
             
             if not mod or not ext or not ename:
-                if settings.use_mock_slis_db:
+                if not settings.use_mock_slis_db:
+                    try:
+                        from sqlalchemy import create_engine, text
+                        engine = create_engine(settings.slis_db_connection_string, connect_args={"timeout": 5})
+                        with engine.connect() as conn:
+                            res = conn.execute(text("SELECT category, extracode, examname FROM exammore e LEFT JOIN exams ex ON ex.examid = e.examid WHERE e.exammoreid = :id"), {"id": eid_int}).fetchone()
+                            if res:
+                                if not mod and res[0]: mod = normalize_modality(res[0])
+                                if not ext and res[1]: ext = str(res[1])
+                                if not ename and res[2]: ename = str(res[2])
+                    except Exception:
+                        pass
+                else:
                     try:
                         con = _get_mock_db()
                         row = con.execute("SELECT category, extracode, examname FROM slis_exams WHERE exammoreid = ?", (eid_int,)).fetchone()
@@ -229,6 +237,9 @@ class AssignmentService:
                         con.close()
                     except Exception:
                         pass
+
+            if mod:
+                mod = normalize_modality(mod)
 
             cfg_db.upsert_local_assignment(eid_int, diagnostician_id, diagnostician_name, now_iso, modality=mod, extracode=ext, is_auto=False)
         except Exception as e:
@@ -288,11 +299,14 @@ def _get_pending_exams_from_db() -> list[dict]:
         exclusive_map = cfg_db.get_exclusive_partnerships()
         # Fetch dynamic routing rules
         routing_rules = cfg_db.get_all_exam_routing_rules()
+        # Fetch exams that were explicitly unassigned/dismissed by user
+        dismissed_auto_assignments = cfg_db.get_dismissed_auto_assignments()
 
         raw_exam_rows = []
 
         if not settings.use_mock_slis_db:
             # ── PRODUCTION MODE: Query Central MSSQL Directly ──
+            _exam_details_cache.clear()
             from sqlalchemy import create_engine, text
             engine = create_engine(settings.slis_db_connection_string, connect_args={"timeout": 10})
             with engine.connect() as conn:
@@ -302,6 +316,7 @@ def _get_pending_exams_from_db() -> list[dict]:
                 raw_pulled = [dict(zip(keys, r)) for r in res.fetchall()]
 
             all_pulled = [{k.lower(): v for k, v in r.items()} for r in raw_pulled]
+            all_pulled_eids = {r.get("exammoreid") for r in all_pulled if r.get("exammoreid") is not None}
 
             # Clean orphaned & already-synced local assignments in central DB
             assigned_in_slis_ids = [
@@ -309,11 +324,18 @@ def _get_pending_exams_from_db() -> list[dict]:
                 if r.get("exammoreid") is not None and r.get("diagnostis") is not None
                 and str(r.get("diagnostis")).strip().lower() not in ("", "0", "none", "null")
             ]
-            if assigned_in_slis_ids:
+            # Also clean local assignments for exams no longer existing in the real period
+            stale_or_mock_ids = [
+                eid for eid in local_assignments
+                if eid not in all_pulled_eids
+            ]
+            to_delete_local = list(set(assigned_in_slis_ids + stale_or_mock_ids))
+
+            if to_delete_local:
                 with cfg_db._conn() as local_con:
                     tbl_local = cfg_db._tbl("local_assignments")
-                    placeholders_assigned = ",".join(["?"] * len(assigned_in_slis_ids))
-                    local_con.execute(f"DELETE FROM {tbl_local} WHERE exammoreid IN ({placeholders_assigned})", assigned_in_slis_ids)
+                    placeholders_assigned = ",".join(["?"] * len(to_delete_local))
+                    local_con.execute(f"DELETE FROM {tbl_local} WHERE exammoreid IN ({placeholders_assigned})", to_delete_local)
                 local_assignments = cfg_db.get_all_local_assignments()
 
             # Filter for exams with no diagnostician in Slis
@@ -327,7 +349,7 @@ def _get_pending_exams_from_db() -> list[dict]:
                 raw_exam_rows.append(r)
         else:
             # ── MOCK MODE: Query Local SQLite mock_slis.db ──
-            cutoff_date = (date.today() - timedelta(days=150)).isoformat()
+            cutoff_date = (date.today() - timedelta(days=3)).isoformat()
             con = _get_mock_db()
             cur = con.execute(
                 """
@@ -356,6 +378,11 @@ def _get_pending_exams_from_db() -> list[dict]:
             }
             if exam_id in local_assignments:
                 continue  # already handled (staged in df_local_assignments)
+
+            if exam_id in dismissed_auto_assignments:
+                # User explicitly unassigned/dismissed this auto-assignment — keep as normal pending exam
+                rows.append(_row_to_exam_dict(r))
+                continue
 
             doc_id = str(r.get("wcode")) if r.get("wcode") else ""
 
@@ -452,6 +479,7 @@ def _get_assigned_exams_from_db() -> list[dict]:
     try:
         from datetime import date, timedelta
         import diagflow.db.diagflow_db as cfg_db
+        from diagflow.services.slis_sync import normalize_modality
         local_assignments = cfg_db.get_all_local_assignments()
         if not local_assignments:
             return []
@@ -475,8 +503,8 @@ def _get_assigned_exams_from_db() -> list[dict]:
                             _exam_details_cache[eid] = {
                                 "exammoreid": eid,
                                 "extracode": r_dict.get("extracode"),
-                                "category": r_dict.get("category"),
-                                "modality": r_dict.get("category"),
+                                "category": normalize_modality(r_dict.get("category")),
+                                "modality": normalize_modality(r_dict.get("category")),
                                 "examname": r_dict.get("examname") or r_dict.get("exam_name") or "",
                                 "examnumcode": r_dict.get("examnumcode"),
                             }
@@ -503,10 +531,19 @@ def _get_assigned_exams_from_db() -> list[dict]:
 
         rows = []
         for eid, loc in local_assignments.items():
+            if not settings.use_mock_slis_db and eid not in exam_metadata:
+                # In production, skip and purge orphaned mock or out-of-window staged assignments
+                try:
+                    cfg_db.delete_local_assignment(eid)
+                except Exception:
+                    pass
+                continue
+
             meta = exam_metadata.get(eid, {})
             fname = meta.get("fname") or ""
             lname = meta.get("lname") or ""
             pat_name = f"{fname} {lname}".strip() or (meta.get("patient_name") or "")
+            norm_mod = normalize_modality(loc.get("modality") or meta.get("category"))
 
             rows.append({
                 "exam_id": str(eid),
@@ -522,8 +559,8 @@ def _get_assigned_exams_from_db() -> list[dict]:
                 "examid": meta.get("examid"),
                 "examnumcode": meta.get("examnumcode") or "",
                 "examname": meta.get("examname") or "",
-                "modality": loc.get("modality") or meta.get("category") or "MRI",
-                "category": loc.get("modality") or meta.get("category") or "MRI",
+                "modality": norm_mod,
+                "category": norm_mod,
                 "body_part": meta.get("body_part") or "",
                 "visitdate": str(meta.get("visitdate") or loc.get("assigned_at") or "")[:10],
                 "labcodeid": meta.get("labcodeid"),

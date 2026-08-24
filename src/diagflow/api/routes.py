@@ -57,6 +57,8 @@ from diagflow.api.schemas import (
     SlisSearchRequest,
     SuggestAssignmentRequest,
     SuggestionResponse,
+    UnassignRequest,
+    BulkUnassignRequest,
 )
 from diagflow.engine.filters import ExamContext
 from diagflow.engine.pipeline import AssignmentSuggestion
@@ -71,6 +73,9 @@ import hashlib
 import hmac
 import time
 import bcrypt
+import structlog
+
+logger = structlog.get_logger()
 
 router = APIRouter()
 
@@ -702,7 +707,7 @@ async def bulk_eligible_diagnosticians(
     found_eids = {str(e.get("exam_id")) for e in selected_exams} | {str(e.get("exammoreid")) for e in selected_exams if e.get("exammoreid")}
     missing_ids = list(req_ids - found_eids)
 
-    if missing_ids:
+    if missing_ids and settings.use_mock_slis_db:
         try:
             from diagflow.services.assignment import _get_mock_db
             con = _get_mock_db()
@@ -861,6 +866,45 @@ async def bulk_override_assignments(
     return results
 
 
+@router.delete("/assignments/{exam_id}")
+async def unassign_exam_by_id(exam_id: str):
+    """Remove an exam from local staged assignments without affecting Slis."""
+    try:
+        eid_int = int(exam_id)
+        success = cfg_db.delete_local_assignment(eid_int)
+        return {"success": success, "exam_id": exam_id}
+    except Exception as e:
+        logger.error("unassign_exam_by_id_error", exam_id=exam_id, error=str(e))
+        return {"success": False, "exam_id": exam_id, "error": str(e)}
+
+
+@router.post("/assignments/unassign")
+async def unassign_exam(request: UnassignRequest):
+    """Remove an exam from local staged assignments without affecting Slis."""
+    try:
+        eid_int = int(request.exam_id)
+        success = cfg_db.delete_local_assignment(eid_int)
+        return {"success": success, "exam_id": str(request.exam_id)}
+    except Exception as e:
+        logger.error("unassign_exam_error", exam_id=request.exam_id, error=str(e))
+        return {"success": False, "exam_id": str(request.exam_id), "error": str(e)}
+
+
+@router.post("/assignments/bulk-unassign")
+async def bulk_unassign_exams(request: BulkUnassignRequest):
+    """Remove multiple exams from local staged assignments without affecting Slis."""
+    unassigned = []
+    for eid in request.exam_ids:
+        try:
+            eid_int = int(eid)
+            if cfg_db.delete_local_assignment(eid_int):
+                unassigned.append(eid_int)
+        except Exception as e:
+            logger.warning("bulk_unassign_item_failed", exam_id=eid, error=str(e))
+            continue
+    return {"success": True, "unassigned_count": len(unassigned), "unassigned_ids": unassigned}
+
+
 # ─────────────────────────────────────────────────────
 #  Diagnosticians (public read)
 # ─────────────────────────────────────────────────────
@@ -1002,7 +1046,7 @@ async def admin_update_weekly_schedule(
 @router.get("/admin/exam-categories")
 async def admin_get_exam_categories(_=Depends(_require_admin)):
     items = cfg_db.get_exam_dictionary()
-    if not items:
+    if not items and settings.use_mock_slis_db:
         slis_db_path = Path(settings.mock_slis_db_path)
         if slis_db_path.exists():
             import sqlite3
@@ -1418,9 +1462,12 @@ async def slis_pull():
     'Ανανέωση' button on the frontend.
     """
     from diagflow.services.slis_sync import pull_from_slis
-    # Reset the session suggestion counter so load-balancing starts fresh
-    # with the new batch of exams.
+    from diagflow.services.assignment import _exam_details_cache
+    # Reset the session suggestion and exam caches
     _session_suggestion_counts.clear()
+    _suggestion_cache.clear()
+    if not settings.use_mock_slis_db:
+        _exam_details_cache.clear()
     result = pull_from_slis()
     return {
         "status": "ok",

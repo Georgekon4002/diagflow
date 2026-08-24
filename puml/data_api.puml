@@ -1,4 +1,4 @@
-@startuml
+@startuml data_api
 
 title DiagFlow — Class Diagram: Data Access & Engine Layer
 skinparam backgroundColor #FEFEFE
@@ -12,37 +12,50 @@ package "diagflow.db" as db_pkg #B2EBF2 {
 
     class "diagflow_db.py" as cfg_db <<module>> {
         - _DB_PATH: Path
-        - _conn(): ContextManager[Connection]
+        - _conn(): Generator[DBAdapter, None, None]
         - _row_to_dict(row): dict
         __ Diagnosticians __
         + get_all_diagnosticians(): list[dict]
         + get_diagnostician(id): dict | None
         + create_diagnostician(...): dict
+        + upsert_diagnostician(...): void
         + update_diagnostician(...): dict | None
         + delete_diagnostician(id): bool
-        __ Skills __
+        __ Skills & Exam Dictionary __
         + get_skills(diag_id): list[dict]
         + upsert_skill(diag_id, exam_code, preferred): dict
         + delete_skill(skill_id): bool
+        + update_skill_preference(skill_id, is_preferred): bool
         + get_skills_for_diagnostician(id): list[dict]
         + get_all_skills_grouped(): dict[int, list[dict]]
-        __ Partnerships __
+        + get_exam_dictionary(): list[dict]
+        + upsert_exam_dictionary_entry(code, name, category): dict
+        __ Partnerships & Doctors __
         + get_all_partnerships(): list[dict]
         + create_partnership(...): dict
         + update_partnership(id, ...): dict | None
         + delete_partnership(id): bool
         + get_partnerships_by_doctor(doc_id): list[dict]
+        + get_partnerships_for_doctors(doc_ids): dict[str, list[dict]]
         + get_exclusive_partnerships(): dict[str, dict]
-        __ Availability __
+        + get_all_doctors(q, skip, limit): dict
+        + upsert_doctor(id, name): dict
+        + delete_doctor(id): bool
+        __ Availability & Pammakaristos Schedule __
         + get_all_availability(): list[dict]
         + upsert_availability(...): dict
+        + delete_availability(diag_id, date): bool
         + get_absent_diagnostician_ids(date): set[int]
-        __ Dynamic Exam Routing Rules __
+        + get_pamakristos_weekly_schedule_db(): list[dict]
+        + update_pamakristos_weekly_schedule_db(items): void
+        + get_oncall_diagnostician(date_str): dict | None
+        + get_pamakristos_manual_overrides(from_date): list[dict]
+        + delete_pamakristos_manual_override(avail_id): bool
+        __ Dynamic Exam Routing & Lab Rules __
         + get_all_exam_routing_rules(): list[dict]
         + create_exam_routing_rule(...): dict
         + update_exam_routing_rule(rule_id, ...): dict
         + delete_exam_routing_rule(rule_id): bool
-        __ Exclusive Lab Rules __
         + get_all_exclusive_lab_rules(): list[dict]
         + create_exclusive_lab_rule(...): dict
         + update_exclusive_lab_rule(rule_id, ...): dict
@@ -52,14 +65,23 @@ package "diagflow.db" as db_pkg #B2EBF2 {
         + create_modality_quota(...): dict
         + update_modality_quota(quota_id, ...): dict
         + delete_modality_quota(quota_id): bool
+        __ Admin Users Management __
+        + get_all_admin_users(): list[dict]
+        + get_admin_user_by_username(username): dict | None
+        + get_admin_user_by_id(user_id): dict | None
+        + create_admin_user(username, hash, role): dict
+        + update_admin_user(user_id, ...): dict | None
+        + delete_admin_user(user_id): bool
         __ System Settings & Weights __
         + get_system_weights(): dict
         + update_system_weights(weights): dict
-        __ Local Assignments & Audit __
+        __ Local Assignments & Dashboard __
         + upsert_local_assignment(exammoreid, ...): dict
         + get_all_local_assignments(): dict[int, dict]
-        + get_daily_assignment_counts(): dict[int, int]
         + delete_local_assignment(exammoreid): bool
+        + log_assignment(exammoreid, diag_id, ...): void
+        + get_daily_assignment_counts(): dict[int, dict]
+        + get_dashboard_data(): list[dict]
     }
 
     class "engines.py" as engines <<module>> {
@@ -73,7 +95,7 @@ package "diagflow.db" as db_pkg #B2EBF2 {
         + get_slis_session(): Session
         + get_config_session(): Session
         ..
-        <<for future MSSQL use>>
+        <<SQLAlchemy MSSQL / SQLite dual layer>>
     }
 
     ' ─── ORM Models (Reference, not used in prod) ───
@@ -131,6 +153,7 @@ package "diagflow.engine" as engine_pkg #BBDEFB {
         + exam_id: str
         + patient_id: str
         + patient_name: str
+        + age: int | None
         + modality: str (CT/MRI/MRA)
         + body_part: str
         + exam_code: str
@@ -142,6 +165,7 @@ package "diagflow.engine" as engine_pkg #BBDEFB {
         + comments: str
         + is_pamakristos: bool
         + request_date: date | None
+        + oldpers: int | None
     }
 
     class "CandidateDiagnostician" as candidate <<dataclass>> {
@@ -279,6 +303,6 @@ solver_result *-- solver_assign : contains
 
 ' Data layer connections
 cfg_db ..> candidate : "data feeds into\n(via DiagnosticianService)"
-engines ..> orm_diag : "would use\n(future MSSQL)"
+engines ..> orm_diag : "connection pooling"
 
 @enduml

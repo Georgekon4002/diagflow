@@ -12,18 +12,15 @@ from datetime import date, datetime
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Generator
+import structlog
 
 from diagflow.config import settings
 
+logger = structlog.get_logger()
+
 # Resolve db/ relative to the project root.
 if getattr(sys, "frozen", False):
-    _exe_dir = Path(sys.executable).parent
-    if (_exe_dir / "db").exists():
-        _PROJECT_ROOT = _exe_dir
-    elif (_exe_dir.parent / "db").exists():
-        _PROJECT_ROOT = _exe_dir.parent
-    else:
-        _PROJECT_ROOT = _exe_dir
+    _PROJECT_ROOT = Path(sys.executable).parent
 else:
     _PROJECT_ROOT = Path(__file__).parent.parent.parent.parent
 
@@ -172,6 +169,10 @@ def _ensure_schema(con: sqlite3.Connection) -> None:
             "CREATE TABLE IF NOT EXISTS exam_dictionary ("
             "code TEXT PRIMARY KEY, name TEXT NOT NULL, category TEXT)"
         )
+        con.execute(
+            "CREATE TABLE IF NOT EXISTS dismissed_auto_assignments ("
+            "exammoreid INTEGER PRIMARY KEY, dismissed_at TEXT)"
+        )
         if con.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='diagnostician_skills'").fetchone():
             con.execute("UPDATE diagnostician_skills SET exam_code = TRIM(exam_code) WHERE exam_code IS NOT NULL")
             con.execute(
@@ -318,8 +319,9 @@ def get_skills(diagnostician_id: int | None = None) -> list[dict]:
     tbl_diags = _tbl("diagnosticians")
     tbl_dict = _tbl("exam_dictionary")
     with _conn() as con:
-        dict_rows = con.execute(f"SELECT code, name FROM {tbl_dict}").fetchall()
+        dict_rows = con.execute(f"SELECT code, name, category FROM {tbl_dict}").fetchall()
         exam_name_map = {str(r["code"]).strip(): r["name"] for r in dict_rows}
+        exam_cat_map = {str(r["code"]).strip(): (r["category"] or "") for r in dict_rows}
 
         if diagnostician_id is not None:
             rows = con.execute(
@@ -347,6 +349,7 @@ def get_skills(diagnostician_id: int | None = None) -> list[dict]:
         d["exam_code"] = code_str
         d["exam_name"] = exam_name_map.get(code_str, code_str)
         d["exam_title"] = d["exam_name"]
+        d["category"] = exam_cat_map.get(code_str, "")
         results.append(d)
 
     return results
@@ -357,6 +360,7 @@ def upsert_skill(diagnostician_id: int, exam_code: str,
     code_str = str(exam_code).strip()
     tbl_skills = _tbl("diagnostician_skills")
     tbl_diags = _tbl("diagnosticians")
+    tbl_dict = _tbl("exam_dictionary")
     with _conn() as con:
         con.execute(
             f"DELETE FROM {tbl_skills} WHERE diagnostician_id = ? AND exam_code = ?",
@@ -375,7 +379,20 @@ def upsert_skill(diagnostician_id: int, exam_code: str,
             f"WHERE ds.diagnostician_id = ? AND ds.exam_code = ?",
             (diagnostician_id, code_str),
         ).fetchone()
-    return _row_to_dict(row)
+        dict_row = con.execute(
+            f"SELECT name, category FROM {tbl_dict} WHERE code = ?",
+            (code_str,),
+        ).fetchone()
+    d = _row_to_dict(row)
+    if dict_row:
+        d["exam_name"] = dict_row["name"]
+        d["exam_title"] = dict_row["name"]
+        d["category"] = dict_row["category"] or ""
+    else:
+        d["exam_name"] = code_str
+        d["exam_title"] = code_str
+        d["category"] = ""
+    return d
 
 
 def delete_skill(skill_id: int) -> bool:
@@ -841,8 +858,60 @@ def delete_doctor(doctor_id: str) -> bool:
 
 # ── Local Assignments & Assignment Log ───────────────────────────────────────
 
+def _ensure_dismissed_table_exists(con: DBAdapter) -> None:
+    tbl = _tbl("dismissed_auto_assignments")
+    try:
+        if not settings.use_mock_slis_db:
+            con.execute(
+                f"IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = '{tbl}') "
+                f"BEGIN CREATE TABLE {tbl} (exammoreid BIGINT PRIMARY KEY, dismissed_at NVARCHAR(50)); END"
+            )
+        else:
+            con.execute(
+                f"CREATE TABLE IF NOT EXISTS {tbl} (exammoreid INTEGER PRIMARY KEY, dismissed_at TEXT)"
+            )
+    except Exception as exc:
+        logger.warning("ensure_dismissed_table_warning", error=str(exc))
+
+
+def record_dismissed_auto_assignment(exammoreid: int) -> None:
+    tbl = _tbl("dismissed_auto_assignments")
+    now_iso = datetime.now().isoformat()
+    try:
+        with _conn() as con:
+            _ensure_dismissed_table_exists(con)
+            con.execute(f"DELETE FROM {tbl} WHERE exammoreid = ?", (exammoreid,))
+            con.execute(f"INSERT INTO {tbl} (exammoreid, dismissed_at) VALUES (?, ?)", (exammoreid, now_iso))
+    except Exception as e:
+        logger.warning("failed_to_record_dismissed_auto_assignment", exammoreid=exammoreid, error=str(e))
+
+
+def get_dismissed_auto_assignments() -> set[int]:
+    tbl = _tbl("dismissed_auto_assignments")
+    try:
+        with _conn() as con:
+            _ensure_dismissed_table_exists(con)
+            rows = con.execute(f"SELECT exammoreid FROM {tbl}").fetchall()
+            return {int(r["exammoreid"]) for r in rows if r.get("exammoreid") is not None}
+    except Exception as e:
+        logger.warning("failed_to_get_dismissed_auto_assignments", error=str(e))
+        return set()
+
+
+def remove_dismissed_auto_assignment(exammoreid: int) -> None:
+    tbl = _tbl("dismissed_auto_assignments")
+    try:
+        with _conn() as con:
+            _ensure_dismissed_table_exists(con)
+            con.execute(f"DELETE FROM {tbl} WHERE exammoreid = ?", (exammoreid,))
+    except Exception as e:
+        logger.warning("failed_to_remove_dismissed_auto_assignment", exammoreid=exammoreid, error=str(e))
+
+
 def upsert_local_assignment(exammoreid: int, diagnostician_id: int, diagnostician_name: str, assigned_at: str, modality: str | None = None, extracode: str | None = None, is_auto: bool = False, rule_desc: str | None = None) -> dict:
     tbl_local = _tbl("local_assignments")
+    if not is_auto:
+        remove_dismissed_auto_assignment(exammoreid)
     with _conn() as con:
         existing_local = con.execute(f"SELECT exammoreid FROM {tbl_local} WHERE exammoreid = ?", (exammoreid,)).fetchone()
         if existing_local:
@@ -870,11 +939,14 @@ def get_all_local_assignments() -> dict[int, dict]:
         return {r["exammoreid"]: _row_to_dict(r) for r in rows}
 
 
-def delete_local_assignment(exammoreid: int) -> bool:
+def delete_local_assignment(exammoreid: int, record_dismissed: bool = True) -> bool:
     tbl = _tbl("local_assignments")
     with _conn() as con:
         cur = con.execute(f"DELETE FROM {tbl} WHERE exammoreid = ?", (exammoreid,))
-        return cur.rowcount > 0
+        deleted = bool(cur.rowcount > 0)
+    if record_dismissed:
+        record_dismissed_auto_assignment(exammoreid)
+    return deleted
 
 
 def log_assignment(exammoreid: int, diagnostician_id: int, assigned_at: str | None = None, modality: str | None = None, extracode: str | None = None) -> None:
@@ -896,7 +968,8 @@ def log_assignment(exammoreid: int, diagnostician_id: int, assigned_at: str | No
 
 
 def mark_local_assignment_synced(exammoreid: int, synced_at: str | None = None) -> bool:
-    return delete_local_assignment(exammoreid)
+    remove_dismissed_auto_assignment(exammoreid)
+    return delete_local_assignment(exammoreid, record_dismissed=False)
 
 
 def get_daily_assignment_counts() -> dict[int, dict]:

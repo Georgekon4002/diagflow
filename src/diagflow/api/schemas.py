@@ -279,3 +279,11 @@ class SlisReassignRequest(BaseModel):
     diagnostician_id: int
     diagnostician_name: str = ""
 
+
+class UnassignRequest(BaseModel):
+    exam_id: str | int
+
+
+class BulkUnassignRequest(BaseModel):
+    exam_ids: list[str | int]
+

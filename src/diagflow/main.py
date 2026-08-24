@@ -42,7 +42,7 @@ async def lifespan(app: FastAPI):
         logger.warning("ensure_admin_users_failed", error=str(exc))
 
     # ── Sync Doctors and Pull Exams in background on startup ──
-    from diagflow.services.slis_sync import pull_from_slis, sync_doctors
+    from diagflow.services.slis_sync import pull_from_slis, sync_doctors, cleanup_mock_data
     import asyncio
 
     async def _async_startup_sync():
@@ -73,6 +73,9 @@ async def lifespan(app: FastAPI):
                     SLIS_STATUS["status"] = "connected"
                     SLIS_STATUS["error"] = None
                     logger.info("slis_db_connected_successfully")
+
+                    # Purge any local mock databases and clear in-memory caches
+                    cleanup_mock_data()
 
                     doc_res = sync_doctors()
                     logger.info("startup_doctor_sync", synced=doc_res.get("synced", 0))

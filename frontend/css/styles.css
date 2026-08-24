@@ -738,6 +738,12 @@ input[type="date"].filter-select::-webkit-calendar-picker-indicator {
     border: 1px solid #C4B5FD !important;
 }
 
+.modality-badge.other {
+    background: #F1F5F9 !important;
+    color: #475569 !important;
+    border: 1px solid #CBD5E1 !important;
+}
+
 /* In dark-themed table headers and dark mode */
 .exams-table .modality-badge.mra {
     background: rgba(225, 29, 72, 0.2) !important;
@@ -773,6 +779,12 @@ input[type="date"].filter-select::-webkit-calendar-picker-indicator {
     background: rgba(168, 85, 247, 0.25) !important;
     color: #DDD6FE !important;
     border: 1px solid rgba(168, 85, 247, 0.5) !important;
+}
+
+[data-theme="dark"] .modality-badge.other {
+    background: rgba(148, 163, 184, 0.2) !important;
+    color: #CBD5E1 !important;
+    border: 1px solid rgba(148, 163, 184, 0.4) !important;
 }
 
 .body-part-tag {
@@ -2218,6 +2230,11 @@ tr.selected-row td {
     background: rgba(239, 68, 68, 0.15);
     color: #ef4444;
     border: 1px solid rgba(239, 68, 68, 0.3);
+}
+.btn-danger:hover {
+    background: rgba(239, 68, 68, 0.3) !important;
+    color: #f87171 !important;
+    border-color: rgba(239, 68, 68, 0.5) !important;
 }
 .wrap-text {
     white-space: normal !important;

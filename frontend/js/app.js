@@ -371,16 +371,7 @@ function setTheme(theme) {
     localStorage.setItem('diagflow_theme', theme);
 }
 
-// ── Modal Helpers for Warning & Shortcuts ──
-function openShortcutsModal() {
-    const modal = document.getElementById('shortcuts-modal');
-    if (modal) modal.style.display = 'flex';
-}
-
-function closeShortcutsModal() {
-    const modal = document.getElementById('shortcuts-modal');
-    if (modal) modal.style.display = 'none';
-}
+// ── Modal Helpers for Warning ──
 
 function openSlisWarningModal() {
     const modal = document.getElementById('slis-warning-modal');
@@ -494,7 +485,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (e.key === 'Escape') {
             closeModal();
             closeLoginModal();
-            closeShortcutsModal();
             closeSlisWarningModal();
             clearUnifiedSelection();
             clearFocusedRow();
@@ -518,11 +508,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             return;
         }
 
-        if (false) {
-            e.preventDefault();
-            openShortcutsModal();
-            return;
-        }
+
 
         const currentTbody = currentTab === 'pending' ? document.getElementById('tbody-pending') : document.getElementById('tbody-assigned');
         if (!currentTbody) return;
@@ -706,10 +692,14 @@ function switchTab(tab) {
         countEl.textContent = `${assignedExams.length} σύνολο`;
     }
 
-    // Show/hide the 'Update Slis' all-button based on tab
+    // Show/hide the 'Update Slis' all-button and unassign-top button based on tab
     const updateSlisBtn = document.getElementById('btn-update-slis-all');
     if (updateSlisBtn) {
-        updateSlisBtn.style.display = tab === 'assigned' ? 'inline-flex' : 'none';
+        updateSlisBtn.style.display = (tab === 'assigned' && selectedAssignedExams.size === 0) ? 'inline-flex' : 'none';
+    }
+    const btnUnassignTop = document.getElementById('btn-unassign-selected-top');
+    if (btnUnassignTop) {
+        btnUnassignTop.style.display = (tab === 'assigned' && selectedAssignedExams.size > 0) ? 'inline-flex' : 'none';
     }
 
     // Keep active filters applied when switching tabs
@@ -992,8 +982,8 @@ function toggleModalityDropdown(event) {
 function matchesFilters(exam, search, selectedModalities, selectedLabs, dateFrom, dateTo) {
     // Category / modality filter — multi-select
     if (selectedModalities.length > 0) {
-        const examCat = exam.category || exam.modality || '';
-        if (!selectedModalities.includes(examCat)) return false;
+        const normExamCat = normalizeModalityCode(exam.category || exam.modality);
+        if (!selectedModalities.includes(normExamCat)) return false;
     }
 
     // Lab filter — compare against lab_name (from DB) or lab_id (legacy)
@@ -1636,6 +1626,9 @@ ${groupedCommentsCol}
                         </button>
                         <button class="btn btn-secondary btn-sm" onclick="changeAssignment('${exam.exam_id}')">
                             Αλλαγή
+                        </button>
+                        <button class="btn btn-danger btn-sm" onclick="unassignExam('${exam.exam_id}')" title="Αφαίρεση από τις τοπικές αναθέσεις (χωρίς διαγραφή από το Slis)">
+                            Αφαίρεση
                         </button>
                     </div>
                 </td>
@@ -2932,12 +2925,14 @@ function updateBulkActionsUI() {
     const countEl = document.getElementById('fab-selected-count');
     const btnAssignProposed = document.getElementById('fab-btn-assign-proposed');
     const btnUpdateSlis = document.getElementById('fab-btn-update-slis');
+    const btnUnassign = document.getElementById('fab-btn-unassign');
 
     let activeSize = 0;
     if (currentTab === 'pending') {
         activeSize = selectedExams.size;
         if (btnAssignProposed) btnAssignProposed.style.display = 'inline-block';
         if (btnUpdateSlis) btnUpdateSlis.style.display = 'none';
+        if (btnUnassign) btnUnassign.style.display = 'none';
         const selectAllCb = document.getElementById('selectAllCheckbox');
         const checkboxes = document.querySelectorAll('.row-checkbox');
         if (selectAllCb) {
@@ -2947,6 +2942,7 @@ function updateBulkActionsUI() {
         activeSize = selectedAssignedExams.size;
         if (btnAssignProposed) btnAssignProposed.style.display = 'none';
         if (btnUpdateSlis) btnUpdateSlis.style.display = 'inline-block';
+        if (btnUnassign) btnUnassign.style.display = 'inline-block';
         const selectAllAssignedCb = document.getElementById('selectAllAssignedCheckbox');
         const assignedCbs = document.querySelectorAll('.assigned-row-checkbox');
         if (selectAllAssignedCb) {
@@ -2957,7 +2953,11 @@ function updateBulkActionsUI() {
     const totalSelected = selectedExams.size + selectedAssignedExams.size;
     const btnUpdateSlisAll = document.getElementById('btn-update-slis-all');
     if (btnUpdateSlisAll) {
-        btnUpdateSlisAll.disabled = totalSelected > 0;
+        btnUpdateSlisAll.style.display = (currentTab === 'assigned' && selectedAssignedExams.size === 0) ? 'inline-flex' : (currentTab === 'assigned' ? 'none' : 'none');
+    }
+    const btnUnassignTop = document.getElementById('btn-unassign-selected-top');
+    if (btnUnassignTop) {
+        btnUnassignTop.style.display = (currentTab === 'assigned' && selectedAssignedExams.size > 0) ? 'inline-flex' : 'none';
     }
 
     if (activeSize > 0) {
@@ -3378,7 +3378,9 @@ async function updateExamOnSlis(examId, exammoreid) {
         } else {
             const failedItem = result?.failed?.[0];
             const err = failedItem?.error || 'Άγνωστο σφάλμα';
-            if (failedItem?.conflict) {
+            if (failedItem?.cancelled_in_slis) {
+                showToast(`ℹ️ ${err}`, 'info');
+            } else if (failedItem?.conflict) {
                 showToast(`⚠️ Συγκρουόμενη ανάθεση: ${err}`, 'warning');
             } else {
                 showToast(`❌ Αποτυχία ενημέρωσης Slis: ${err}`, 'error');
@@ -3416,13 +3418,20 @@ async function updateAllToSlis() {
         }
         
         if (failedItems.length > 0) {
+            const cancelled = failedItems.filter(f => f.cancelled_in_slis);
             const conflicts = failedItems.filter(f => f.conflict);
+            const otherErrors = failedItems.filter(f => !f.cancelled_in_slis && !f.conflict);
+
+            if (cancelled.length > 0) {
+                showToast(`ℹ️ ${cancelled.length} εξέταση/εις έχουν ακυρωθεί στο Slis και αφαιρέθηκαν αυτόματα.`, 'info');
+            }
             if (conflicts.length > 0) {
                 conflicts.forEach(c => {
                     showToast(`⚠️ ${c.error}`, 'warning');
                 });
-            } else {
-                showToast('⚠️ Ορισμένες εξετάσεις δεν μπόρεσαν να ενημερωθούν.', 'warning');
+            }
+            if (otherErrors.length > 0) {
+                showToast(`⚠️ ${otherErrors.length} εξετάσεις δεν μπόρεσαν να ενημερωθούν.`, 'warning');
             }
         } else if (succeededCount === 0 && result && result.total === 0) {
             showToast('Δεν υπάρχουν εξετάσεις για ενημέρωση', 'info');
@@ -3479,13 +3488,20 @@ async function updateSelectedToSlis() {
         }
         
         if (failedItems.length > 0) {
+            const cancelled = failedItems.filter(f => f.cancelled_in_slis);
             const conflicts = failedItems.filter(f => f.conflict);
+            const otherErrors = failedItems.filter(f => !f.cancelled_in_slis && !f.conflict);
+
+            if (cancelled.length > 0) {
+                showToast(`ℹ️ ${cancelled.length} εξέταση/εις έχουν ακυρωθεί στο Slis και αφαιρέθηκαν αυτόματα.`, 'info');
+            }
             if (conflicts.length > 0) {
                 conflicts.forEach(c => {
                     showToast(`⚠️ ${c.error}`, 'warning');
                 });
-            } else {
-                const err = failedItems[0]?.error || 'Άγνωστο σφάλμα';
+            }
+            if (otherErrors.length > 0) {
+                const err = otherErrors[0]?.error || 'Άγνωστο σφάλμα';
                 showToast(`❌ Αποτυχία ενημέρωσης Slis: ${err}`, 'error');
             }
         }
@@ -3499,6 +3515,48 @@ async function updateSelectedToSlis() {
             btn.innerHTML = originalHTML;
             btn.disabled = false;
         }
+    }
+}
+
+/**
+ * Remove a single draft assignment from local_assignments (does not affect Slis).
+ */
+async function unassignExam(examId) {
+    if (!examId) return;
+    try {
+        const res = await apiCall('/assignments/unassign', 'POST', { exam_id: examId });
+        if (res && res.success) {
+            showToast('✅ Η ανάθεση αφαιρέθηκε από τις τοπικές αναθέσεις.', 'success');
+            selectedAssignedExams.delete(examId);
+            await refreshExams();
+        } else {
+            showToast('❌ Αποτυχία αφαίρεσης ανάθεσης.', 'error');
+        }
+    } catch (err) {
+        showToast(`Σφάλμα: ${err.message}`, 'error');
+    }
+}
+
+/**
+ * Bulk remove draft assignments for all currently selected exams in Assigned tab.
+ */
+async function bulkUnassignSelected() {
+    if (selectedAssignedExams.size === 0) {
+        showToast('Επιλέξτε εξετάσεις για αφαίρεση', 'warning');
+        return;
+    }
+    const examIds = Array.from(selectedAssignedExams);
+    try {
+        const res = await apiCall('/assignments/bulk-unassign', 'POST', { exam_ids: examIds });
+        if (res && res.success) {
+            showToast(`✅ Αφαιρέθηκαν ${res.unassigned_count} αναθέσεις.`, 'success');
+            clearAssignedSelection();
+            await refreshExams();
+        } else {
+            showToast('❌ Αποτυχία αφαίρεσης αναθέσεων.', 'error');
+        }
+    } catch (err) {
+        showToast(`Σφάλμα: ${err.message}`, 'error');
     }
 }
 
@@ -4838,11 +4896,7 @@ window.addEventListener('keydown', function (e) {
             closeModal();
             return;
         }
-        const shortcutsModal = document.getElementById('shortcuts-modal');
-        if (shortcutsModal && shortcutsModal.style.display === 'flex') {
-            shortcutsModal.style.display = 'none';
-            return;
-        }
+
         if (selectedExams.size > 0 || selectedAssignedExams.size > 0) {
             clearUnifiedSelection();
             return;

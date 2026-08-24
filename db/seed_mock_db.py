@@ -16,15 +16,15 @@ from pathlib import Path
 # ── Locate files relative to this script ──────────────────────────
 SCRIPT_DIR   = Path(__file__).parent
 DB_PATH      = SCRIPT_DIR / "mock_slis.db"
-INIT_SQL     = SCRIPT_DIR / "init_mock_slis.sql"
+INIT_SQL = SCRIPT_DIR / "templates" / "init_mock_slis.sql"
 
 
 # ── Seed the database ─────────────────────────────────────────────
-def seed(db_path: Path, init_sql: Path):
+def seed(db_path: Path, init_sql: Path = INIT_SQL):
     print(f"Seeding {db_path} from {init_sql} ...")
 
     if not init_sql.exists():
-        fallback_sql = SCRIPT_DIR / "templates" / "init_mock_slis.sql"
+        fallback_sql = SCRIPT_DIR / "init_mock_slis.sql"
         if fallback_sql.exists():
             init_sql = fallback_sql
         else:
@@ -69,21 +69,12 @@ def seed(db_path: Path, init_sql: Path):
 
     # Seed realistic patient history (oldpers & olddiagnostis) into recent pending exams
     diags_pool = [
-        (14, 'ΝΑΤΣΙΚΑ ΜΑΡΓΑΡΙΤΑ'),
-        (34, 'ΚΟΥΛΟΓΙΩΡΓΑ ΔΗΜΗΤΡΑ'),
-        (41, 'ΠΑΠΟΥΤΣΗ ΔΗΜΗΤΡΑ'),
-        (59, 'ΜΠΕΡΕΤΗΣ ΓΕΩΡΓΙΟΣ'),
-        (61, 'ΑΝΘΙΜΟΥ ΣΠΥΡΙΔΩΝ'),
-        (67, 'ΑΛΕΞΟΠΟΥΛΟΣ ΝΙΚΟΛΑΟΣ'),
-        (69, 'ΚΡΕΖΙΑ ΜΑΡΙΑΝΝΑ'),
-        (74, 'ΝΙΚΟΛΑΚΟΠΟΥΛΟΣ ΙΩΑΝΝΗΣ'),
-        (89, 'ΚΥΠΡΙΩΤΗΣ ΔΗΜΟΣΘΕΝΗΣ'),
-        (189, 'ΛΙΟΝΤΟΣ ΠΟΛΥΧΡΟΝΗΣ'),
-        (205, 'ΑΝΔΡΙΩΤΗΣ ΕΥΘΥΜΙΟΣ'),
-        (264, 'ΣΙΓΑΛΑΣ ΑΝΤΩΝΙΟΣ'),
-        (268, 'ΚΟΡΟΔΗΜΟΣ ΠΑΝΑΓΙΩΤΗΣ'),
-        (269, 'ΠΑΠΑΔΑΚΗΣ ΣΤΥΛΙΑΝΟΣ'),
-        (270, 'ΖΑΧΑΡΟΠΟΥΛΟΣ ΒΑΣΙΛΕΙΟΣ'),
+        (1, 'ΔΙΑΓΝΩΣΤΗΣ Α'),
+        (2, 'ΔΙΑΓΝΩΣΤΗΣ Β'),
+        (3, 'ΔΙΑΓΝΩΣΤΗΣ Γ'),
+        (4, 'ΔΙΑΓΝΩΣΤΗΣ Δ'),
+        (5, 'ΔΙΑΓΝΩΣΤΗΣ Ε'),
+        (6, 'ΔΙΑΓΝΩΣΤΗΣ Ζ'),
     ]
     cur.execute("SELECT exammoreid FROM slis_exams WHERE diagnostis IS NULL ORDER BY exammoreid ASC")
     pending_ids = [r[0] for r in cur.fetchall()]

@@ -170,6 +170,7 @@ package "mock_slis.db" as db2 #FFF3E0 {
         demogid : INTEGER
         fname : TEXT
         lname : TEXT
+        age : INTEGER
         examid : INTEGER
         examnumcode : INTEGER <<FK>>
         examname : TEXT
@@ -185,6 +186,7 @@ package "mock_slis.db" as db2 #FFF3E0 {
         name : TEXT
         notes : TEXT
         category : TEXT
+        oldpers : INTEGER <<nullable>>
         slis_synced_at : TEXT <<nullable>>
     }
 
