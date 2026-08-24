@@ -1585,12 +1585,14 @@ async def slis_search_exams(req: SlisSearchRequest):
 async def slis_reassign_exam(req: SlisReassignRequest):
     """
     Re-assign an exam to a new diagnostician and immediately update Slis.
+    Overrides any existing Slis assignment without optimistic locking conflicts.
     """
     from diagflow.services.slis_sync import push_exam_to_slis
     result = push_exam_to_slis(
         exammoreid=req.exammoreid,
         diagnostician_id=req.diagnostician_id,
         diagnostician_name=req.diagnostician_name,
+        force=req.force,
     )
     return result
 

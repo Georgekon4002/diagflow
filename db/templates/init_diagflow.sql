@@ -68,12 +68,12 @@ CREATE TABLE diagnosticians (
     preferred_lab_id INTEGER DEFAULT NULL,
     created_at       TEXT    DEFAULT (datetime('now'))
 );
-INSERT INTO "diagnosticians" VALUES(1,'ΔΙΑΓΝΩΣΤΗΣ Α',1,1,1,15,15,15,15,15,0,0,1,'2026-08-24 11:38:34');
-INSERT INTO "diagnosticians" VALUES(2,'ΔΙΑΓΝΩΣΤΗΣ Β',1,1,1,15,15,15,15,15,0,0,1,'2026-08-24 11:38:34');
-INSERT INTO "diagnosticians" VALUES(3,'ΔΙΑΓΝΩΣΤΗΣ Γ',1,1,1,15,15,15,15,15,0,0,2,'2026-08-24 11:38:34');
-INSERT INTO "diagnosticians" VALUES(4,'ΔΙΑΓΝΩΣΤΗΣ Δ',1,1,0,12,12,12,12,12,0,0,1,'2026-08-24 11:38:34');
-INSERT INTO "diagnosticians" VALUES(5,'ΔΙΑΓΝΩΣΤΗΣ Ε',1,0,1,12,12,12,12,12,0,0,2,'2026-08-24 11:38:34');
-INSERT INTO "diagnosticians" VALUES(6,'ΔΙΑΓΝΩΣΤΗΣ Ζ',1,1,1,15,15,15,15,15,0,0,1,'2026-08-24 11:38:34');
+INSERT INTO "diagnosticians" VALUES(1,'ΔΙΑΓΝΩΣΤΗΣ Α',1,1,1,15,15,15,15,15,0,0,1,'2026-08-24 12:48:03');
+INSERT INTO "diagnosticians" VALUES(2,'ΔΙΑΓΝΩΣΤΗΣ Β',1,1,1,15,15,15,15,15,0,0,1,'2026-08-24 12:48:03');
+INSERT INTO "diagnosticians" VALUES(3,'ΔΙΑΓΝΩΣΤΗΣ Γ',1,1,1,15,15,15,15,15,0,0,2,'2026-08-24 12:48:03');
+INSERT INTO "diagnosticians" VALUES(4,'ΔΙΑΓΝΩΣΤΗΣ Δ',1,1,0,12,12,12,12,12,0,0,1,'2026-08-24 12:48:03');
+INSERT INTO "diagnosticians" VALUES(5,'ΔΙΑΓΝΩΣΤΗΣ Ε',1,0,1,12,12,12,12,12,0,0,2,'2026-08-24 12:48:03');
+INSERT INTO "diagnosticians" VALUES(6,'ΔΙΑΓΝΩΣΤΗΣ Ζ',1,1,1,15,15,15,15,15,0,0,1,'2026-08-24 12:48:03');
 CREATE TABLE doctors (
     id          TEXT PRIMARY KEY,
     name        TEXT NOT NULL

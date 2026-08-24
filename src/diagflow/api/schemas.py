@@ -286,6 +286,7 @@ class SlisReassignRequest(BaseModel):
     exammoreid: int
     diagnostician_id: int
     diagnostician_name: str = ""
+    force: bool = True
 
 
 class UnassignRequest(BaseModel):

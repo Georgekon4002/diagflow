@@ -308,11 +308,17 @@ def delete_expired(con: sqlite3.Connection | None = None) -> int:
         con.close()
     return deleted_count
 
-def push_exam_to_slis(exammoreid: int, diagnostician_id: int, diagnostician_name: str) -> dict:
+def push_exam_to_slis(
+    exammoreid: int,
+    diagnostician_id: int,
+    diagnostician_name: str,
+    force: bool = False
+) -> dict:
     """
     Execute the SQL update required to update a single exam in Slis (or mock_slis.db).
     Updates the database and records local assignment sync timestamp.
-    Implements Optimistic Locking: Prevents overwriting if the exam was already assigned concurrently by another user.
+    When force=False, implements Optimistic Locking to prevent concurrent overwrite.
+    When force=True (e.g. from Slis Search / Reassign tab), directly overrides Slis assignment.
 
     Returns:
         dict with success, exammoreid, diagnostician_id, sql (or conflict, error)
@@ -326,19 +332,14 @@ def push_exam_to_slis(exammoreid: int, diagnostician_id: int, diagnostician_name
             from sqlalchemy import create_engine, text
             engine = create_engine(settings.slis_db_connection_string, connect_args={"timeout": 10})
             with engine.connect() as conn:
-                # Optimistic locking: Only update if unassigned (NULL / 0) or already set to this diagnostician
-                result = conn.execute(
-                    text("UPDATE exammore SET diagnostisid = :diag_id WHERE exammoreid = :id AND (diagnostisid IS NULL OR diagnostisid = 0 OR diagnostisid = :diag_id)"),
-                    {"diag_id": diagnostician_id, "id": exammoreid}
-                )
-                conn.commit()
-                if result.rowcount == 0:
-                    # Concurrency conflict or exam cancelled/deleted in Slis
-                    curr = conn.execute(
-                        text("SELECT diagnostisid FROM exammore WHERE exammoreid = :id"),
-                        {"id": exammoreid}
-                    ).fetchone()
-                    if curr is None:
+                if force:
+                    # Direct override: Update without optimistic locking
+                    result = conn.execute(
+                        text("UPDATE exammore SET diagnostisid = :diag_id WHERE exammoreid = :id"),
+                        {"diag_id": diagnostician_id, "id": exammoreid}
+                    )
+                    conn.commit()
+                    if result.rowcount == 0:
                         # Exam does not exist in Slis (cancelled or deleted in central DB)
                         logger.warning("exam_not_found_in_slis_auto_purging", exammoreid=exammoreid)
                         cfg_db.delete_local_assignment(exammoreid)
@@ -349,19 +350,43 @@ def push_exam_to_slis(exammoreid: int, diagnostician_id: int, diagnostician_name
                             "exammoreid": exammoreid,
                             "error": f"Η εξέταση #{exammoreid} δεν βρέθηκε στο Slis (έχει ακυρωθεί/διαγραφεί) και αφαιρέθηκε αυτόματα από τις αναθέσεις.",
                         }
+                else:
+                    # Optimistic locking: Only update if unassigned (NULL / 0) or already set to this diagnostician
+                    result = conn.execute(
+                        text("UPDATE exammore SET diagnostisid = :diag_id WHERE exammoreid = :id AND (diagnostisid IS NULL OR diagnostisid = 0 OR diagnostisid = :diag_id)"),
+                        {"diag_id": diagnostician_id, "id": exammoreid}
+                    )
+                    conn.commit()
+                    if result.rowcount == 0:
+                        # Concurrency conflict or exam cancelled/deleted in Slis
+                        curr = conn.execute(
+                            text("SELECT diagnostisid FROM exammore WHERE exammoreid = :id"),
+                            {"id": exammoreid}
+                        ).fetchone()
+                        if curr is None:
+                            # Exam does not exist in Slis (cancelled or deleted in central DB)
+                            logger.warning("exam_not_found_in_slis_auto_purging", exammoreid=exammoreid)
+                            cfg_db.delete_local_assignment(exammoreid)
+                            return {
+                                "success": False,
+                                "conflict": False,
+                                "cancelled_in_slis": True,
+                                "exammoreid": exammoreid,
+                                "error": f"Η εξέταση #{exammoreid} δεν βρέθηκε στο Slis (έχει ακυρωθεί/διαγραφεί) και αφαιρέθηκε αυτόματα από τις αναθέσεις.",
+                            }
 
-                    curr_diag_id = curr[0]
-                    diag_info = cfg_db.get_diagnostician(curr_diag_id) if curr_diag_id else None
-                    assigned_name = diag_info["name"] if diag_info else (f"ID {curr_diag_id}" if curr_diag_id else "άλλον χρήστη")
-                    logger.warning("optimistic_lock_conflict_detected", exammoreid=exammoreid, current_diag=assigned_name)
-                    return {
-                        "success": False,
-                        "conflict": True,
-                        "cancelled_in_slis": False,
-                        "exammoreid": exammoreid,
-                        "current_diagnostician": assigned_name,
-                        "error": f"Η εξέταση #{exammoreid} έχει ήδη ανατεθεί στον/στην {assigned_name} στο Slis από άλλον χρήστη.",
-                    }
+                        curr_diag_id = curr[0]
+                        diag_info = cfg_db.get_diagnostician(curr_diag_id) if curr_diag_id else None
+                        assigned_name = diag_info["name"] if diag_info else (f"ID {curr_diag_id}" if curr_diag_id else "άλλον χρήστη")
+                        logger.warning("optimistic_lock_conflict_detected", exammoreid=exammoreid, current_diag=assigned_name)
+                        return {
+                            "success": False,
+                            "conflict": True,
+                            "cancelled_in_slis": False,
+                            "exammoreid": exammoreid,
+                            "current_diagnostician": assigned_name,
+                            "error": f"Η εξέταση #{exammoreid} έχει ήδη ανατεθεί στον/στην {assigned_name} στο Slis από άλλον χρήστη.",
+                        }
 
         cat = None
         extra = None
@@ -378,7 +403,8 @@ def push_exam_to_slis(exammoreid: int, diagnostician_id: int, diagnostician_name
                 extra = extra or (str(row["extracode"]) if ("extracode" in row.keys() and row["extracode"]) else None)
 
                 # Mock Mode Optimistic Locking: check if already assigned to someone else
-                if (settings.use_mock_slis_db and 
+                if (not force and
+                    settings.use_mock_slis_db and 
                     row["diagnostis"] is not None and 
                     str(row["diagnostis"]).strip() not in ("", "0", "None", str(diagnostician_id)) and 
                     row["slis_synced_at"] is not None):
