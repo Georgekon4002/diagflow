@@ -13,7 +13,7 @@
         rel="stylesheet">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/themes/airbnb.css">
-    <link rel="stylesheet" href="css/styles.css">
+    <link rel="stylesheet" href="css/styles.css?v=3">
 </head>
 
 <body>
@@ -615,6 +615,26 @@
                 <!-- ════════════ SECTION: Για Προχωρημένους ════════════ -->
                 <div id="section-advanced" class="admin-section" style="display:none;">
 
+                    <!-- COMMENT-BASED AUTO-ASSIGNMENT RULE TOGGLE (CHECKBOX ONLY) -->
+                    <div class="admin-card" style="margin-bottom: 24px; border-left: 4px solid #8b5cf6;">
+                        <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 20px;">
+                            <div style="flex: 1; min-width: 280px;">
+                                <div class="admin-card-title" style="margin-bottom: 6px; display: flex; align-items: center; gap: 10px;">
+                                    <span>⚡ Αυτόματη Ανάθεση βάσει Σχολίων Γραμματείας</span>
+                                    <span id="comment-rule-status-badge" class="badge" style="background: rgba(16, 185, 129, 0.15); color: #10b981; border: 1px solid rgba(16, 185, 129, 0.35); font-weight: 600; padding: 3px 10px; font-size: 11px;">ΕΝΕΡΓΟ</span>
+                                </div>
+                                <p style="color:var(--text-secondary); font-size:var(--font-size-sm); margin:0; max-width: 850px; line-height: 1.5;">
+                                    Αυτόματη ανάθεση εξέτασης όταν αναφέρεται όνομα ενεργού διαγνώστη ή παραλλαγή του στα σχόλια (π.χ. <i>ΝΑΤΣΙΚΑ, ΝΤΣΚ, Νάτσικα, Νατσκα</i>). Αν προηγείται η λέξη <b>«ΟΧΙ»</b> (π.χ. <i>ΟΧΙ ΝΑΤΣΙΚΑ</i>), ο διαγνώστης αποκλείεται πλήρως από τις προτάσεις (υπερισχύει όλων των κανόνων).
+                                </p>
+                            </div>
+                            <div style="display: flex; align-items: center; justify-content: center; background: rgba(139, 92, 246, 0.08); padding: 12px 18px; border-radius: 12px; border: 1px solid rgba(139, 92, 246, 0.25);">
+                                <label for="chk-comment-rule" style="display: flex; align-items: center; cursor: pointer; user-select: none; margin: 0;" title="Ενεργοποίηση/Απενεργοποίηση κανόνα σχολίων">
+                                    <input type="checkbox" id="chk-comment-rule" onchange="toggleCommentAutoAssignRule(this.checked)" style="width: 24px; height: 24px; accent-color: #8b5cf6; cursor: pointer;">
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+
                     <!-- EXAM ROUTING RULES -->
                     <div class="admin-card" style="position: relative; z-index: 100;">
                         <div class="admin-card-title">Αυτόματη Ανάθεση Εξετάσεων</div>
@@ -639,8 +659,9 @@
                                 προτεραιότητας:</p>
                             <ol
                                 style="margin-bottom: 12px; margin-top: 0; font-size: 13.5px; line-height: 1.5; padding-left: 20px;">
-                                <li style="margin-bottom: 4px;"><b>Αποκλειστικοί Συνεργάτες (Υψηλότερη
-                                        Προτεραιότητα):</b> Εξετάσεις από ιατρούς που έχουν δηλωθεί ως αποκλειστικοί
+                                <li style="margin-bottom: 4px;"><b>Αναφορά Σχολίων & Εξαιρέσεις «ΟΧΙ» (Υπέρτατη Προτεραιότητα):</b>
+                                    Αν αναφέρεται όνομα διαγνώστη στα σχόλια, η εξέταση ανατίθεται άμεσα σε αυτόν. Αν υπάρχει εξαίρεση «ΟΧΙ [Όνομα]», ο διαγνώστης αποκλείεται από κάθε κανόνα.</li>
+                                <li style="margin-bottom: 4px;"><b>Αποκλειστικοί Συνεργάτες:</b> Εξετάσεις από ιατρούς που έχουν δηλωθεί ως αποκλειστικοί
                                     συνεργάτες πάνε απευθείας στον συγκεκριμένο διαγνώστη.</li>
                                 <li style="margin-bottom: 4px;"><b>Κανόνες Ανάθεσης (Αυτή η ενότητα):</b> Αν ταιριάζει
                                     κάποιος από τους παρακάτω κανόνες, η εξέταση ανατίθεται άμεσα.</li>
@@ -949,14 +970,14 @@
                             <div
                                 style="background:rgba(59, 130, 246, 0.1); border:1px solid rgba(59, 130, 246, 0.3); padding:8px 16px; border-radius:8px; text-align:center;">
                                 <b style="color: #60a5fa;">Φάση 0: Αυτόματη Ανάθεση </b><br>
-                                <span style="font-weight:normal;">1. Αποκλειστικοί Συνεργάτες → 2. Κανόνες Ανάθεσης → 3.
+                                <span style="font-weight:normal;">1. Αναφορά Σχολίων («ΟΧΙ» εξαιρέσεις) → 2. Αποκλειστικοί Συνεργάτες → 3. Κανόνες Ανάθεσης → 4.
                                     Εφημερία Παμμακάριστου</span>
                             </div>
                             <div style="color:var(--text-tertiary);">↓ (Αν δεν γίνει αυτόματη ανάθεση)</div>
                             <div
                                 style="background:rgba(239, 68, 68, 0.1); border:1px solid rgba(239, 68, 68, 0.3); padding:8px 16px; border-radius:8px; text-align:center;">
                                 <b style="color: #f87171;">Φάση 1: Φιλτράρισμα (Αποκλεισμός)</b><br>
-                                <span style="font-weight:normal;">Αποκλειστικότητα Εργαστηρίου, Ικανότητες (Skills),
+                                <span style="font-weight:normal;">Εξαίρεση Σχολίων («ΟΧΙ»), Αποκλειστικότητα Εργαστηρίου, Ικανότητες (Skills),
                                     Ημερήσια Όρια (Quotas)</span>
                             </div>
                             <div style="color:var(--text-tertiary);">↓ (Για όσους επιβιώσουν)</div>
@@ -982,6 +1003,7 @@
                             Φιλτράρισμα (Αποκλεισμοί)</h5>
                         <ul
                             style="margin-bottom: 12px; margin-top: 0; font-size: 13.5px; line-height: 1.5; padding-left: 20px;">
+                            <li style="margin-bottom: 4px;"><b>Εξαίρεση από Σχόλια («ΟΧΙ»):</b> Αν στα σχόλια της εξέτασης προηγείται η λέξη «ΟΧΙ» πριν από το όνομα ενός διαγνώστη (π.χ. «ΟΧΙ ΝΑΤΣΙΚΑ»), ο διαγνώστης αποκλείεται πλήρως (με αιτιολογία <i>«Αποκλείστηκε λόγω σχολίου»</i>).</li>
                             <li style="margin-bottom: 4px;"><b>Αποκλειστικότητα Εργαστηρίου:</b> Αν ένας ιατρός έχει
                                 ρυθμιστεί (πιο πάνω) να δέχεται εξετάσεις ΜΟΝΟ από συγκεκριμένο εργαστήριο, αποκλείεται
                                 από εξετάσεις άλλων εργαστηρίων.</li>
@@ -1105,7 +1127,7 @@
 
     <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
     <script src="https://cdn.jsdelivr.net/npm/flatpickr/dist/l10n/gr.js"></script>
-    <script src="js/admin.js?v=2"></script>
+    <script src="js/admin.js?v=5"></script>
 </body>
 
 </html>

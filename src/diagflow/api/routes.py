@@ -359,6 +359,14 @@ async def _generate_suggestion_for_exam(
     diag_svc: DiagnosticianService,
 ) -> AssignmentSuggestion | None:
     """Core suggestion generator with multi-exam order alignment and virtual workload tracking."""
+    raw_exam_date = exam_data.get("visitdate") or exam_data.get("request_date")
+    parsed_req_date = None
+    if raw_exam_date:
+        try:
+            parsed_req_date = date.fromisoformat(str(raw_exam_date)[:10])
+        except Exception:
+            parsed_req_date = None
+
     exam = ExamContext(
         exam_id=exam_data["exam_id"],
         patient_id=exam_data["patient_id"],
@@ -375,6 +383,7 @@ async def _generate_suggestion_for_exam(
         comments=exam_data.get("comments", ""),
         is_pamakristos="ΠΑΜΜΑΚΑΡΙΣΤΟΣ" in exam_data.get("issuing_doctor_name", "").upper(),
         oldpers=exam_data.get("oldpers"),
+        request_date=parsed_req_date,
     )
 
     candidates = await diag_svc.get_candidates_for_exam(
@@ -387,6 +396,7 @@ async def _generate_suggestion_for_exam(
         patient_id=exam.patient_id,
         exam_code=exam.exam_code,
         oldpers=exam.oldpers,
+        exam_date=parsed_req_date,
     )
 
     # Apply session-level virtual workload
@@ -434,6 +444,14 @@ async def _generate_suggestion_for_exam(
         if not best_cand_id:
             order_contexts = []
             for e_dict in order_exams:
+                raw_e_date = e_dict.get("visitdate") or e_dict.get("request_date")
+                parsed_e_date = None
+                if raw_e_date:
+                    try:
+                        parsed_e_date = date.fromisoformat(str(raw_e_date)[:10])
+                    except Exception:
+                        parsed_e_date = None
+
                 e_ctx = ExamContext(
                     exam_id=e_dict["exam_id"],
                     patient_id=e_dict["patient_id"],
@@ -449,6 +467,7 @@ async def _generate_suggestion_for_exam(
                     comments=e_dict.get("comments", ""),
                     is_pamakristos="ΠΑΜΜΑΚΑΡΙΣΤΟΣ" in e_dict.get("issuing_doctor_name", "").upper(),
                     oldpers=e_dict.get("oldpers"),
+                    request_date=parsed_e_date,
                 )
                 e_cands = await diag_svc.get_candidates_for_exam(
                     exam_id=e_ctx.exam_id,
@@ -460,6 +479,7 @@ async def _generate_suggestion_for_exam(
                     patient_id=e_ctx.patient_id,
                     exam_code=e_ctx.exam_code,
                     oldpers=e_ctx.oldpers,
+                    exam_date=parsed_e_date,
                 )
                 for c in e_cands:
                     cand_info[c.id] = c
@@ -742,25 +762,35 @@ async def bulk_eligible_diagnosticians(
     reasons: dict[int, str | None] = {d_id: None for d_id in eligible_diags}
     is_eligible = {d_id: True for d_id in eligible_diags}
 
-    exam_contexts = [
-        ExamContext(
-            exam_id=exam_data["exam_id"],
-            patient_id=exam_data["patient_id"],
-            patient_name=exam_data.get("patient_name", ""),
-            modality=exam_data["modality"],
-            body_part=exam_data["body_part"],
-            exam_code=str(exam_data.get("examnumcode", "")),
-            exam_name=exam_data.get("examname", ""),
-            lab_id=exam_data["lab_id"],
-            lab_name=exam_data["lab_name"],
-            issuing_doctor_id=exam_data["issuing_doctor_id"],
-            issuing_doctor_name=exam_data["issuing_doctor_name"],
-            comments=exam_data.get("comments", ""),
-            is_pamakristos="ΠΑΜΜΑΚΑΡΙΣΤΟΣ" in exam_data.get("issuing_doctor_name", "").upper(),
-            oldpers=exam_data.get("oldpers"),
+    exam_contexts = []
+    for exam_data in selected_exams:
+        raw_b_date = exam_data.get("visitdate") or exam_data.get("request_date")
+        parsed_b_date = None
+        if raw_b_date:
+            try:
+                parsed_b_date = date.fromisoformat(str(raw_b_date)[:10])
+            except Exception:
+                parsed_b_date = None
+
+        exam_contexts.append(
+            ExamContext(
+                exam_id=exam_data["exam_id"],
+                patient_id=exam_data["patient_id"],
+                patient_name=exam_data.get("patient_name", ""),
+                modality=exam_data["modality"],
+                body_part=exam_data["body_part"],
+                exam_code=str(exam_data.get("examnumcode", "")),
+                exam_name=exam_data.get("examname", ""),
+                lab_id=exam_data["lab_id"],
+                lab_name=exam_data["lab_name"],
+                issuing_doctor_id=exam_data["issuing_doctor_id"],
+                issuing_doctor_name=exam_data["issuing_doctor_name"],
+                comments=exam_data.get("comments", ""),
+                is_pamakristos="ΠΑΜΜΑΚΑΡΙΣΤΟΣ" in exam_data.get("issuing_doctor_name", "").upper(),
+                oldpers=exam_data.get("oldpers"),
+                request_date=parsed_b_date,
+            )
         )
-        for exam_data in selected_exams
-    ]
 
     # Pre-fetch candidate evaluations for all selected exams in one batch
     batch_candidates = await diag_svc.get_candidates_for_exams_batch(exam_contexts)
@@ -778,6 +808,7 @@ async def bulk_eligible_diagnosticians(
                 exam_code=exam.exam_code,
                 lab_name=exam.lab_name,
                 oldpers=exam.oldpers,
+                exam_date=exam.request_date,
             )
 
         # Run filters for this exam
@@ -981,9 +1012,9 @@ def list_doctors_public(q: str = "", limit: int = 200):
 
 
 @router.get("/dashboard")
-async def get_dashboard():
-    """Get today's assigned exams per diagnostician."""
-    dashboard_data = cfg_db.get_dashboard_data()
+async def get_dashboard(date: str | None = None):
+    """Get assigned exams per diagnostician for a given date (defaults to today)."""
+    dashboard_data = cfg_db.get_dashboard_data(target_date=date)
     
     try:
         from diagflow.services.assignment import _exam_details_cache
@@ -1738,3 +1769,24 @@ def update_weights(weights: dict = Body(...)):
         
     updated = update_system_weights(weights)
     return {"message": "Τα βάρη αποθηκεύτηκαν επιτυχώς", "weights": updated}
+
+
+# ── Comment-Based Auto-Assignment Toggle ─────────────────────────────
+
+class CommentRuleToggleRequest(BaseModel):
+    enabled: bool
+
+@router.get("/admin/advanced/comment-rule")
+async def get_comment_rule_status():
+    """Get the current enabled state of the comment-based auto-assign rule."""
+    return {"enabled": cfg_db.get_comment_auto_assign_enabled()}
+
+@router.post("/admin/advanced/comment-rule")
+async def toggle_comment_rule(req: CommentRuleToggleRequest, _=Depends(_require_admin)):
+    """Enable or disable the comment-based auto-assign rule."""
+    new_state = cfg_db.set_comment_auto_assign_enabled(req.enabled)
+    return {
+        "enabled": new_state,
+        "message": f"Ο κανόνας αυτόματης ανάθεσης από σχόλια είναι πλέον {'ενεργός' if new_state else 'ανενεργός'}."
+    }
+

@@ -39,7 +39,8 @@
                     <span class="oncall-name" id="oncall-name">—</span>
                 </div>
 
-                <button class="btn-header-icon" id="btn-theme-toggle" onclick="toggleTheme()" title="Εναλλαγή Φωτεινού/Σκοτεινού Θέματος">
+                <button class="btn-header-icon" id="btn-theme-toggle" onclick="toggleTheme()"
+                    title="Εναλλαγή Φωτεινού/Σκοτεινού Θέματος">
                     🌙
                 </button>
 
@@ -137,21 +138,26 @@
                 <div class="fab-actions">
                     <div class="fab-dropdown-wrap" style="position: relative; display: inline-block;">
                         <button class="btn btn-secondary" onclick="toggleSlisSearchFabDropdown(event)">
-                            <span id="slis-search-fab-btn-text">Επιλέξτε διαγνώστη...</span> <span style="font-size: 10px;">▼</span>
+                            <span id="slis-search-fab-btn-text">Επιλέξτε διαγνώστη...</span> <span
+                                style="font-size: 10px;">▼</span>
                         </button>
                         <div id="slis-search-fab-dropdown-menu" class="fab-dropdown-menu"
                             style="display: none; position: absolute; top: 100%; right: 0; background: var(--bg-tertiary); border: 1px solid var(--border-color); border-radius: 8px; padding: 8px; margin-top: 6px; box-shadow: 0 8px 24px rgba(0,0,0,0.4); z-index: 10000; min-width: 220px;">
-                            <input type="text" id="slis-search-fab-diag-search" placeholder="🔍 Αναζήτηση..." class="search-input"
-                                style="width: 100%; margin-bottom: 8px; padding: 6px; font-size: 12px;" onclick="event.stopPropagation()"
-                                oninput="filterSlisSearchFabDiagnosticians()">
-                            <div id="slis-search-fab-diag-list" style="max-height: 200px; overflow-y: auto; display: flex; flex-direction: column; gap: 2px;">
+                            <input type="text" id="slis-search-fab-diag-search" placeholder="🔍 Αναζήτηση..."
+                                class="search-input"
+                                style="width: 100%; margin-bottom: 8px; padding: 6px; font-size: 12px;"
+                                onclick="event.stopPropagation()" oninput="filterSlisSearchFabDiagnosticians()">
+                            <div id="slis-search-fab-diag-list"
+                                style="max-height: 200px; overflow-y: auto; display: flex; flex-direction: column; gap: 2px;">
                                 <!-- Populated dynamically -->
                             </div>
                         </div>
                     </div>
-                    <button class="btn btn-slis-update" id="btn-update-selected-slis-search" onclick="triggerBatchSlisReassign()">
+                    <button class="btn btn-slis-update" id="btn-update-selected-slis-search"
+                        onclick="triggerBatchSlisReassign()">
                         <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-                            <path d="M2 7h10M8 3l4 4-4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+                            <path d="M2 7h10M8 3l4 4-4 4" stroke="currentColor" stroke-width="1.5"
+                                stroke-linecap="round" stroke-linejoin="round" />
                         </svg>
                         Ενημέρωση στο Slis
                     </button>
@@ -290,9 +296,13 @@
                         Ενημέρωση όλων στο Slis
                     </button>
                     <button class="btn btn-danger" id="btn-unassign-selected-top" onclick="bulkUnassignSelected()"
-                        style="display:none;" title="Αφαίρεση των επιλεγμένων από τις τοπικές αναθέσεις (χωρίς διαγραφή από το Slis)">
+                        style="display:none;"
+                        title="Αφαίρεση των επιλεγμένων από τις τοπικές αναθέσεις (χωρίς διαγραφή από το Slis)">
                         <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-                            <path d="M2 3.5h10M4.5 3.5v8a1 1 0 0 0 1 1h3a1 1 0 0 0 1-1v-8M5.5 3.5V2a1 1 0 0 1 1-1h1a1 1 0 0 1 1 1v1.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+                            <path
+                                d="M2 3.5h10M4.5 3.5v8a1 1 0 0 0 1 1h3a1 1 0 0 0 1-1v-8M5.5 3.5V2a1 1 0 0 1 1-1h1a1 1 0 0 1 1 1v1.5"
+                                stroke="currentColor" stroke-width="1.5" stroke-linecap="round"
+                                stroke-linejoin="round" />
                         </svg>
                         Αφαίρεση επιλεγμένων
                     </button>
@@ -316,9 +326,8 @@
                                 <th colspan="2" style="text-align: center; cursor: pointer;"
                                     onclick="handleSort('patient')">Ασθενής <span id="sort-icon-patient"
                                         style="opacity:0.5; font-size:10px;">↕️</span></th>
-                                <th style="text-align: center; cursor: pointer;"
-                                    onclick="handleSort('age')">ΗΛΙΚΙΑ <span id="sort-icon-age"
-                                        style="opacity:0.5; font-size:10px;">↕️</span></th>
+                                <th style="text-align: center; cursor: pointer;" onclick="handleSort('age')">ΗΛΙΚΙΑ
+                                    <span id="sort-icon-age" style="opacity:0.5; font-size:10px;">↕️</span></th>
                                 <th style="cursor: pointer;" onclick="handleSort('date')">Ημερομηνία <span
                                         id="sort-icon-date" style="opacity:0.5; font-size:10px;">↕️</span></th>
                                 <th style="cursor: pointer;" onclick="handleSort('lab')">Μονάδα <span id="sort-icon-lab"
@@ -359,7 +368,8 @@
                             onclick="changePendingPage(1)">Επόμενο</button>
                     </div>
                 </div>
-                <div style="font-size: 11px; color: var(--text-tertiary); text-align: center; margin: 2px 0 6px 0; font-style: italic;">
+                <div
+                    style="font-size: 11px; color: var(--text-tertiary); text-align: center; margin: 2px 0 6px 0; font-style: italic;">
                     Εμφανίζονται οι εξετάσεις CT/MRI των τελευταίων 3 ημερών χωρίς διαγνώστη
                 </div>
             </div>
@@ -382,9 +392,9 @@
                                 <th colspan="2" style="text-align: center; cursor: pointer;"
                                     onclick="handleSort('patient')">Ασθενής <span id="sort-icon-patient-assigned"
                                         style="opacity:0.5; font-size:10px;">↕️</span></th>
-                                <th style="text-align: center; cursor: pointer;"
-                                    onclick="handleSort('age')">ΗΛΙΚΙΑ <span id="sort-icon-age-assigned"
-                                        style="opacity:0.5; font-size:10px;">↕️</span></th>
+                                <th style="text-align: center; cursor: pointer;" onclick="handleSort('age')">ΗΛΙΚΙΑ
+                                    <span id="sort-icon-age-assigned" style="opacity:0.5; font-size:10px;">↕️</span>
+                                </th>
                                 <th style="cursor: pointer;" onclick="handleSort('date')">Ημερομηνία <span
                                         id="sort-icon-date-assigned" style="opacity:0.5; font-size:10px;">↕️</span></th>
                                 <th style="cursor: pointer;" onclick="handleSort('lab')">Μονάδα <span
@@ -436,18 +446,56 @@
 
         <!-- ─── Dashboard List ─── -->
         <div class="dashboard-section" id="dashboard-section" style="display: none; padding: 20px;">
-            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px;">
-                <h2 style="margin: 0; color: var(--text-primary);">Σημερινές Αναθέσεις</h2>
-                <button class="btn btn-secondary" onclick="loadDashboard()">
-                    <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-                        <path d="M12 7A5 5 0 1 1 7 2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
-                        <path d="M12 2v4h-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
-                    </svg>
-                    Ανανέωση
-                </button>
+            <!-- Multi-Day Sub-Tabs Bar & Custom Date Picker -->
+            <div class="dashboard-subtabs-container">
+                <div class="dashboard-subtabs" id="dashboard-subtabs-list">
+                    <button class="dashboard-subtab-btn active" id="dash-tab-today"
+                        onclick="switchDashboardDateOffset(0)">
+                        📅 Σήμερα <span id="dash-date-today"
+                            style="opacity: 0.8; font-weight: 500; font-size: 11.5px;"></span>
+                    </button>
+                    <button class="dashboard-subtab-btn" id="dash-tab-yesterday"
+                        onclick="switchDashboardDateOffset(-1)">
+                        ⏮️ Χθες <span id="dash-date-yesterday"
+                            style="opacity: 0.8; font-weight: 500; font-size: 11.5px;"></span>
+                    </button>
+                    <button class="dashboard-subtab-btn" id="dash-tab-prev" onclick="switchDashboardDateOffset(-2)">
+                        ⏮ Προχθές <span id="dash-date-prev"
+                            style="opacity: 0.8; font-weight: 500; font-size: 11.5px;"></span>
+                    </button>
+                </div>
+                <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
+                    <div class="dashboard-date-picker-wrap">
+                        <label for="dashboard-custom-date-text"
+                            style="font-size: 12px; font-weight: 600; color: var(--text-secondary);">📅 Άλλη
+                            Ημερομηνία:</label>
+                        <div class="dashboard-custom-date-wrapper">
+                            <input type="text" id="dashboard-custom-date-text" class="dashboard-date-input"
+                                placeholder="ΗΗ-ΜΜ-ΕΕΕΕ" maxlength="10" onchange="onDashboardDateTextChange(this.value)"
+                                onkeyup="onDashboardDateTextKeyUp(event, this)">
+                            <button type="button" class="dashboard-calendar-btn" onclick="openDashboardDatePicker()"
+                                title="Επιλογή από ημερολόγιο">
+                                📅
+                            </button>
+                            <input type="date" id="dashboard-custom-date"
+                                style="position: absolute; opacity: 0; pointer-events: none; width: 0; height: 0;"
+                                onchange="onDashboardDateNativeChange(this.value)">
+                        </div>
+                    </div>
+                    <button class="btn btn-secondary" onclick="refreshDashboardCurrentDate()"
+                        style="padding: 6px 12px; font-size: 12.5px; height: 32px;">
+                        <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                            <path d="M12 7A5 5 0 1 1 7 2" stroke="currentColor" stroke-width="1.5"
+                                stroke-linecap="round" />
+                            <path d="M12 2v4h-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"
+                                stroke-linejoin="round" />
+                        </svg>
+                        Ανανέωση
+                    </button>
+                </div>
             </div>
-            <div id="dashboard-grid"
-                style="display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 16px;">
+
+            <div id="dashboard-grid">
                 <!-- Populated by JS -->
             </div>
         </div>
@@ -468,23 +516,25 @@
                 <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px;">
                     <div>
                         <label class="form-label"
-                            style="font-size: 12px; font-weight: 600; display: block; margin-bottom: 4px;">📋 Εντολή</label>
+                            style="font-size: 12px; font-weight: 600; display: block; margin-bottom: 4px;">📋
+                            Εντολή</label>
                         <input type="text" id="slis-search-extracode" class="form-input" placeholder="π.χ. 2783623"
                             style="width: 100%;" onkeydown="if(event.key==='Enter') performSlisSearch()">
                     </div>
                     <div>
                         <label class="form-label"
-                            style="font-size: 12px; font-weight: 600; display: block; margin-bottom: 4px;">👤 Ασθενής</label>
+                            style="font-size: 12px; font-weight: 600; display: block; margin-bottom: 4px;">👤
+                            Ασθενής</label>
                         <input type="text" id="slis-search-patient" class="form-input"
                             placeholder="π.χ. 857640 ή ΓΕΩΡΓΙΟΥ" style="width: 100%;"
                             onkeydown="if(event.key==='Enter') performSlisSearch()">
                     </div>
                     <div style="position: relative;">
                         <label class="form-label"
-                            style="font-size: 12px; font-weight: 600; display: block; margin-bottom: 4px;">🩺 Παραπέμπων Ιατρός</label>
+                            style="font-size: 12px; font-weight: 600; display: block; margin-bottom: 4px;">🩺 Παραπέμπων
+                            Ιατρός</label>
                         <input type="text" id="slis-search-doctor" class="form-input"
-                            placeholder="π.χ. 99512413 ή ΔΗΜΗΤΡΙΟΥ" style="width: 100%;"
-                            autocomplete="off"
+                            placeholder="π.χ. 99512413 ή ΔΗΜΗΤΡΙΟΥ" style="width: 100%;" autocomplete="off"
                             oninput="handleSlisDoctorAutocomplete(this.value)"
                             onfocus="handleSlisDoctorAutocomplete(this.value)"
                             onkeydown="handleAutocompleteKeydown(event, 'slis-search-doctor-results', performSlisSearch)">
@@ -492,10 +542,10 @@
                     </div>
                     <div style="position: relative;">
                         <label class="form-label"
-                            style="font-size: 12px; font-weight: 600; display: block; margin-bottom: 4px;">👨‍⚕️ Διαγνώστης</label>
-                        <input type="text" id="slis-search-diagnostis" class="form-input" placeholder="π.χ. ΤΡΙΑΝΤΑΦΥΛΛΟΥ"
-                            style="width: 100%;"
-                            autocomplete="off"
+                            style="font-size: 12px; font-weight: 600; display: block; margin-bottom: 4px;">👨‍⚕️
+                            Διαγνώστης</label>
+                        <input type="text" id="slis-search-diagnostis" class="form-input"
+                            placeholder="π.χ. ΤΡΙΑΝΤΑΦΥΛΛΟΥ" style="width: 100%;" autocomplete="off"
                             oninput="handleSlisDiagAutocomplete(this.value)"
                             onfocus="handleSlisDiagAutocomplete(this.value)"
                             onkeydown="handleAutocompleteKeydown(event, 'slis-search-diagnostis-results', performSlisSearch)">
@@ -503,7 +553,8 @@
                     </div>
                     <div>
                         <label class="form-label"
-                            style="font-size: 12px; font-weight: 600; display: block; margin-bottom: 4px;">📆 Εύρος Ημερομηνιών</label>
+                            style="font-size: 12px; font-weight: 600; display: block; margin-bottom: 4px;">📆 Εύρος
+                            Ημερομηνιών</label>
                         <input type="text" id="slis-search-date-range" class="form-input"
                             placeholder="Τελευταίες 7 μέρες" style="width: 100%;"
                             onkeydown="if(event.key==='Enter') performSlisSearch()">
@@ -519,11 +570,15 @@
 
             <!-- Results Section -->
             <div id="slis-search-results-container">
-                <div class="section-title" style="margin-bottom: 12px; display: flex; align-items: center; justify-content: space-between;">
-                    <h3 style="margin: 0;">Αποτελέσματα Αναζήτησης <span id="slis-search-count" class="section-count">(0)</span></h3>
-                    <button class="btn btn-slis-update" id="btn-update-selected-slis-search" onclick="triggerBatchSlisReassign()" style="display: none;">
+                <div class="section-title"
+                    style="margin-bottom: 12px; display: flex; align-items: center; justify-content: space-between;">
+                    <h3 style="margin: 0;">Αποτελέσματα Αναζήτησης <span id="slis-search-count"
+                            class="section-count">(0)</span></h3>
+                    <button class="btn btn-slis-update" id="btn-update-selected-slis-search"
+                        onclick="triggerBatchSlisReassign()" style="display: none;">
                         <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-                            <path d="M2 7h10M8 3l4 4-4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+                            <path d="M2 7h10M8 3l4 4-4 4" stroke="currentColor" stroke-width="1.5"
+                                stroke-linecap="round" stroke-linejoin="round" />
                         </svg>
                         Ενημέρωση επιλεγμένων στο Slis (<span id="slis-search-selected-count">0</span>)
                     </button>
@@ -534,31 +589,39 @@
                         <thead>
                             <tr>
                                 <th class="frozen-col-1" style="width: 44px; text-align: center;">
-                                    <input type="checkbox" id="slis-search-select-all" onclick="toggleSelectAllSlisSearch(this)">
+                                    <input type="checkbox" id="slis-search-select-all"
+                                        onclick="toggleSelectAllSlisSearch(this)">
                                 </th>
-                                <th class="frozen-col-2" style="cursor: pointer;" onclick="handleSlisSearchSort('extracode')">
-                                    Εντολή <span id="sort-icon-extracode-slis" style="opacity:0.5; font-size:10px;">↕️</span>
+                                <th class="frozen-col-2" style="cursor: pointer;"
+                                    onclick="handleSlisSearchSort('extracode')">
+                                    Εντολή <span id="sort-icon-extracode-slis"
+                                        style="opacity:0.5; font-size:10px;">↕️</span>
                                 </th>
                                 <th style="cursor: pointer;" onclick="handleSlisSearchSort('patient')">
-                                    Ασθενής <span id="sort-icon-patient-slis" style="opacity:0.5; font-size:10px;">↕️</span>
+                                    Ασθενής <span id="sort-icon-patient-slis"
+                                        style="opacity:0.5; font-size:10px;">↕️</span>
                                 </th>
                                 <th style="text-align: center; cursor: pointer;" onclick="handleSlisSearchSort('age')">
                                     ΗΛΙΚΙΑ <span id="sort-icon-age-slis" style="opacity:0.5; font-size:10px;">↕️</span>
                                 </th>
                                 <th style="cursor: pointer;" onclick="handleSlisSearchSort('date')">
-                                    Ημερομηνία <span id="sort-icon-date-slis" style="opacity:0.5; font-size:10px;">↕️</span>
+                                    Ημερομηνία <span id="sort-icon-date-slis"
+                                        style="opacity:0.5; font-size:10px;">↕️</span>
                                 </th>
                                 <th style="cursor: pointer;" onclick="handleSlisSearchSort('lab')">
                                     Μονάδα <span id="sort-icon-lab-slis" style="opacity:0.5; font-size:10px;">↕️</span>
                                 </th>
                                 <th style="cursor: pointer;" onclick="handleSlisSearchSort('exam')">
-                                    Εξέταση <span id="sort-icon-exam-slis" style="opacity:0.5; font-size:10px;">↕️</span>
+                                    Εξέταση <span id="sort-icon-exam-slis"
+                                        style="opacity:0.5; font-size:10px;">↕️</span>
                                 </th>
                                 <th style="cursor: pointer;" onclick="handleSlisSearchSort('doctor')">
-                                    Παραπέμπων Ιατρός <span id="sort-icon-doctor-slis" style="opacity:0.5; font-size:10px;">↕️</span>
+                                    Παραπέμπων Ιατρός <span id="sort-icon-doctor-slis"
+                                        style="opacity:0.5; font-size:10px;">↕️</span>
                                 </th>
                                 <th style="cursor: pointer;" onclick="handleSlisSearchSort('diagnostician')">
-                                    Διαγνώστης Slis <span id="sort-icon-diagnostician-slis" style="opacity:0.5; font-size:10px;">↕️</span>
+                                    Διαγνώστης Slis <span id="sort-icon-diagnostician-slis"
+                                        style="opacity:0.5; font-size:10px;">↕️</span>
                                 </th>
                                 <th>Ενέργειες</th>
                             </tr>
@@ -670,24 +733,36 @@
     </div>
 
     <!-- ─── Confirm Update All Slis Modal ─── -->
-    <div class="modal-overlay" id="confirm-update-all-modal" style="display:none; background: rgba(15, 23, 42, 0.8); backdrop-filter: blur(6px); z-index: 20000;">
-        <div class="modal" style="max-width: 520px; background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 16px; padding: 24px; color: var(--text-primary); box-shadow: 0 20px 50px rgba(0,0,0,0.5);">
-            <div class="modal-header" style="padding: 0 0 16px 0; border-bottom: 1px solid var(--border-color); background: transparent;">
-                <h3 style="display:flex; align-items:center; gap:8px; margin:0; color: var(--text-primary); font-size: 18px; font-weight: 700;">
+    <div class="modal-overlay" id="confirm-update-all-modal"
+        style="display:none; background: rgba(15, 23, 42, 0.8); backdrop-filter: blur(6px); z-index: 20000;">
+        <div class="modal"
+            style="max-width: 520px; background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 16px; padding: 24px; color: var(--text-primary); box-shadow: 0 20px 50px rgba(0,0,0,0.5);">
+            <div class="modal-header"
+                style="padding: 0 0 16px 0; border-bottom: 1px solid var(--border-color); background: transparent;">
+                <h3
+                    style="display:flex; align-items:center; gap:8px; margin:0; color: var(--text-primary); font-size: 18px; font-weight: 700;">
                     <span>⚡ Επιβεβαίωση Ενημέρωσης Slis</span>
                 </h3>
-                <button class="modal-close" style="color: var(--text-secondary);" onclick="closeConfirmUpdateAllModal()">✕</button>
+                <button class="modal-close" style="color: var(--text-secondary);"
+                    onclick="closeConfirmUpdateAllModal()">✕</button>
             </div>
             <div class="modal-body" style="padding: 20px 0; gap: 12px; background: transparent;">
-                <p id="confirm-update-all-text" style="font-size: 14px; color: var(--text-primary); margin:0; line-height: 1.6; font-weight: 500;">
-                    Με αυτή την ενέργεια θα ενημερωθούν και οι X εξετάσεις στο Slis. Επιβεβαιωθείτε ότι είναι σωστές οι αναθέσεις πρωτού προβείτε στην ενημέρωση του Slis.
+                <p id="confirm-update-all-text"
+                    style="font-size: 14px; color: var(--text-primary); margin:0; line-height: 1.6; font-weight: 500;">
+                    Με αυτή την ενέργεια θα ενημερωθούν και οι X εξετάσεις στο Slis. Επιβεβαιωθείτε ότι είναι σωστές οι
+                    αναθέσεις πρωτού προβείτε στην ενημέρωση του Slis.
                 </p>
             </div>
-            <div class="modal-footer" style="padding: 16px 0 0 0; border-top: 1px solid var(--border-color); display:flex; justify-content: flex-end; gap: 12px; background: transparent;">
-                <button class="btn btn-secondary" style="background: var(--bg-tertiary); color: var(--text-primary); border: 1px solid var(--border-color);" onclick="closeConfirmUpdateAllModal()">
+            <div class="modal-footer"
+                style="padding: 16px 0 0 0; border-top: 1px solid var(--border-color); display:flex; justify-content: flex-end; gap: 12px; background: transparent;">
+                <button class="btn btn-secondary"
+                    style="background: var(--bg-tertiary); color: var(--text-primary); border: 1px solid var(--border-color);"
+                    onclick="closeConfirmUpdateAllModal()">
                     Ακύρωση
                 </button>
-                <button class="btn btn-slis-update" style="background: #10B981 !important; color: #ffffff !important; border: 1px solid #059669 !important; font-weight: 600; padding: 8px 20px;" id="btn-do-confirm-update-all" onclick="executeUpdateAllToSlis()">
+                <button class="btn btn-slis-update"
+                    style="background: #10B981 !important; color: #ffffff !important; border: 1px solid #059669 !important; font-weight: 600; padding: 8px 20px;"
+                    id="btn-do-confirm-update-all" onclick="executeUpdateAllToSlis()">
                     ✓ Επιβεβαίωση
                 </button>
             </div>
@@ -725,21 +800,32 @@
     <div class="toast-container" id="toast-container"></div>
 
     <!-- ─── Slis Disconnection / Mock Warning Modal ─── -->
-    <div class="modal-overlay" id="slis-warning-modal" style="display: none; z-index: 25000; background: rgba(15, 23, 42, 0.8); backdrop-filter: blur(6px);">
-        <div class="modal" style="max-width: 520px; border: 2px solid #ef4444; box-shadow: 0 20px 50px rgba(239, 68, 68, 0.35);">
-            <div class="modal-header" style="background: rgba(239, 68, 68, 0.1); border-bottom: 1px solid rgba(239, 68, 68, 0.2); padding: 16px 20px;">
-                <h3 style="color: #ef4444; display: flex; align-items: center; gap: 8px; margin: 0; font-size: 16px; font-weight: 700;">
+    <div class="modal-overlay" id="slis-warning-modal"
+        style="display: none; z-index: 25000; background: rgba(15, 23, 42, 0.8); backdrop-filter: blur(6px);">
+        <div class="modal"
+            style="max-width: 520px; border: 2px solid #ef4444; box-shadow: 0 20px 50px rgba(239, 68, 68, 0.35);">
+            <div class="modal-header"
+                style="background: rgba(239, 68, 68, 0.1); border-bottom: 1px solid rgba(239, 68, 68, 0.2); padding: 16px 20px;">
+                <h3
+                    style="color: #ef4444; display: flex; align-items: center; gap: 8px; margin: 0; font-size: 16px; font-weight: 700;">
                     ⚠️ ΠΡΟΣΟΧΗ: Μη Πραγματικά Δεδομένα
                 </h3>
                 <button class="modal-close" onclick="closeSlisWarningModal()">&times;</button>
             </div>
-            <div class="modal-body" style="padding: 20px; font-size: 14px; line-height: 1.6; color: var(--text-primary);">
+            <div class="modal-body"
+                style="padding: 20px; font-size: 14px; line-height: 1.6; color: var(--text-primary);">
                 <p style="margin: 0; font-weight: 500;">
-                    <strong>ΠΡΟΣΟΧΗ!</strong> Τα δεδομένα δεν είναι τα πραγματικά. Υπάρχει πρόβλημα με τη σύνδεση στη βάση του Slis. Επανεκκινήστε την εφαρμογή ή ελέγξτε αν είστε συνδεδεμένοι σε δίκτυο με πρόσβαση στη βάση του Slis και ότι η πρόσβαση γίνεται σωστά από το αρχείο <code>.env</code> στον φάκελο της εφαρμογής.
+                    <strong>ΠΡΟΣΟΧΗ!</strong> Τα δεδομένα δεν είναι τα πραγματικά. Υπάρχει πρόβλημα με τη σύνδεση στη
+                    βάση του Slis. Επανεκκινήστε την εφαρμογή ή ελέγξτε αν είστε συνδεδεμένοι σε δίκτυο με πρόσβαση στη
+                    βάση του Slis και ότι η πρόσβαση γίνεται σωστά από το αρχείο <code>.env</code> στον φάκελο της
+                    εφαρμογής.
                 </p>
             </div>
-            <div class="modal-footer" style="padding: 12px 20px; display: flex; justify-content: flex-end; background: var(--bg-tertiary);">
-                <button class="btn btn-primary" style="background-color: #ef4444; border-color: #ef4444; padding: 8px 18px; font-weight: 600;" onclick="closeSlisWarningModal()">
+            <div class="modal-footer"
+                style="padding: 12px 20px; display: flex; justify-content: flex-end; background: var(--bg-tertiary);">
+                <button class="btn btn-primary"
+                    style="background-color: #ef4444; border-color: #ef4444; padding: 8px 18px; font-weight: 600;"
+                    onclick="closeSlisWarningModal()">
                     Κατάλαβα
                 </button>
             </div>
@@ -750,7 +836,7 @@
 
     <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
     <script src="https://cdn.jsdelivr.net/npm/flatpickr/dist/l10n/gr.js"></script>
-    <script src="js/app.js?v=1.0.1"></script>
+    <script src="js/app.js?v=1.0.2"></script>
 </body>
 
 </html>

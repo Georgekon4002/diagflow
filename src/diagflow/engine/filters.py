@@ -102,18 +102,13 @@ def filter_by_comment_exclusion(
     exam: ExamContext,
 ) -> FilterResult:
     """
-    [DISABLED] Priority 0: Check if the candidate is excluded by parsed comments.
-
-    This function is preserved for future use but is NOT called by
-    apply_hard_filters() in the current implementation phase.
-    The actual LLM parsing happens in the comment_parser service before
-    this filter runs. This filter just checks the result.
+    Priority 0: Check if the candidate is excluded by parsed comments (e.g. 'ΟΧΙ ΝΑΤΣΙΚΑ').
     """
     if candidate.is_excluded_by_comment:
         return FilterResult(
             passed=False,
             rule_name="comment_exclusion",
-            reason=f"Εξαιρέθηκε από σχόλιο γραμματείας: '{exam.comments[:80]}...'",
+            reason="Αποκλείστηκε λόγω σχολίου",
         )
     return FilterResult(
         passed=True,
@@ -284,6 +279,7 @@ def apply_hard_filters(
     Apply all active hard filters to the candidate list.
 
     Active filters (per current business rules):
+      0. Comment Exclusion ('ΟΧΙ' / 'όχι' - Top priority)
       1. Availability
       2. Capacity (daily quota limit)
       3. Modality capability (CT/MRI)
@@ -292,8 +288,20 @@ def apply_hard_filters(
       6. Modality Quotas (Dynamic)
     """
     import diagflow.db.diagflow_db as cfg_db
+    from diagflow.engine.comment_rules import parse_comment_diagnosticians
+
     exclusive_rules = cfg_db.get_all_exclusive_lab_rules()
     modality_quotas = cfg_db.get_all_modality_quotas()
+    comment_rule_enabled = cfg_db.get_comment_auto_assign_enabled()
+
+    excluded_by_comment: set[int] = set()
+    if comment_rule_enabled and exam.comments:
+        cand_dicts = [{"id": c.id, "name": c.name, "active": True} for c in candidates]
+        _, excluded_by_comment = parse_comment_diagnosticians(exam.comments, cand_dicts)
+
+    for candidate in candidates:
+        if candidate.id in excluded_by_comment:
+            candidate.is_excluded_by_comment = True
 
     def filter_by_exclusive_lab_dynamic(candidate: CandidateDiagnostician, exam: ExamContext) -> FilterResult:
         for rule in exclusive_rules:
@@ -332,6 +340,7 @@ def apply_hard_filters(
         return FilterResult(passed=True, rule_name="modality_quota", reason="OK")
 
     active_filters = [
+        filter_by_comment_exclusion,
         filter_by_exclusive_lab_dynamic,
         filter_by_availability,
         filter_by_capacity,
@@ -339,6 +348,7 @@ def apply_hard_filters(
         filter_by_modality,
         filter_by_skills_hard,
     ]
+
 
     passed_candidates: list[CandidateDiagnostician] = []
     all_results: dict[int, list[FilterResult]] = {}

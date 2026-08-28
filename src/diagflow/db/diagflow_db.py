@@ -151,19 +151,42 @@ class DBAdapter:
             self.raw_conn.rollback()
 
 
+def _get_table_columns(con, table_name: str) -> list[str]:
+    try:
+        rows = con.execute(f"PRAGMA table_info({table_name})").fetchall()
+        cols = []
+        for r in rows:
+            if isinstance(r, dict):
+                cols.append(r.get("name") or r.get("column_name") or "")
+            elif hasattr(r, "keys"):
+                cols.append(r["name"] if "name" in r.keys() else (r["column_name"] if "column_name" in r.keys() else str(r[1])))
+            else:
+                try:
+                    cols.append(str(r["name"]))
+                except Exception:
+                    cols.append(str(r[1]))
+        return [c for c in cols if c]
+    except Exception:
+        return []
+
+
 def _ensure_schema(con: sqlite3.Connection) -> None:
     try:
-        cols = [row[1] for row in con.execute("PRAGMA table_info(local_assignments)").fetchall()]
+        cols = _get_table_columns(con, "local_assignments")
         if cols and "extracode" not in cols:
             con.execute("ALTER TABLE local_assignments ADD COLUMN extracode TEXT DEFAULT NULL")
         if cols and "modality" not in cols:
             con.execute("ALTER TABLE local_assignments ADD COLUMN modality TEXT DEFAULT NULL")
+        if cols and "visitdate" not in cols:
+            con.execute("ALTER TABLE local_assignments ADD COLUMN visitdate TEXT DEFAULT NULL")
         
-        log_cols = [row[1] for row in con.execute("PRAGMA table_info(assignment_log)").fetchall()]
+        log_cols = _get_table_columns(con, "assignment_log")
         if log_cols and "extracode" not in log_cols:
             con.execute("ALTER TABLE assignment_log ADD COLUMN extracode TEXT DEFAULT NULL")
         if log_cols and "modality" not in log_cols:
             con.execute("ALTER TABLE assignment_log ADD COLUMN modality TEXT DEFAULT NULL")
+        if log_cols and "visitdate" not in log_cols:
+            con.execute("ALTER TABLE assignment_log ADD COLUMN visitdate TEXT DEFAULT NULL")
 
         con.execute(
             "CREATE TABLE IF NOT EXISTS exam_dictionary ("
@@ -908,25 +931,49 @@ def remove_dismissed_auto_assignment(exammoreid: int) -> None:
         logger.warning("failed_to_remove_dismissed_auto_assignment", exammoreid=exammoreid, error=str(e))
 
 
-def upsert_local_assignment(exammoreid: int, diagnostician_id: int, diagnostician_name: str, assigned_at: str, modality: str | None = None, extracode: str | None = None, is_auto: bool = False, rule_desc: str | None = None) -> dict:
+def upsert_local_assignment(
+    exammoreid: int,
+    diagnostician_id: int,
+    diagnostician_name: str,
+    assigned_at: str,
+    modality: str | None = None,
+    extracode: str | None = None,
+    is_auto: bool = False,
+    rule_desc: str | None = None,
+    visitdate: str | None = None,
+) -> dict:
     tbl_local = _tbl("local_assignments")
     if not is_auto:
         remove_dismissed_auto_assignment(exammoreid)
     with _conn() as con:
+        cols = _get_table_columns(con, tbl_local)
+        has_vdate = "visitdate" in cols
         existing_local = con.execute(f"SELECT exammoreid FROM {tbl_local} WHERE exammoreid = ?", (exammoreid,)).fetchone()
         if existing_local:
-            con.execute(
-                f"UPDATE {tbl_local} SET diagnostician_id=?, diagnostician_name=?, assigned_at=?, is_auto=?, rule_desc=?, extracode=?, modality=? WHERE exammoreid=?",
-                (diagnostician_id, diagnostician_name, assigned_at, int(is_auto), rule_desc, extracode, modality, exammoreid)
-            )
+            if has_vdate:
+                con.execute(
+                    f"UPDATE {tbl_local} SET diagnostician_id=?, diagnostician_name=?, assigned_at=?, is_auto=?, rule_desc=?, extracode=?, modality=?, visitdate=? WHERE exammoreid=?",
+                    (diagnostician_id, diagnostician_name, assigned_at, int(is_auto), rule_desc, extracode, modality, visitdate, exammoreid)
+                )
+            else:
+                con.execute(
+                    f"UPDATE {tbl_local} SET diagnostician_id=?, diagnostician_name=?, assigned_at=?, is_auto=?, rule_desc=?, extracode=?, modality=? WHERE exammoreid=?",
+                    (diagnostician_id, diagnostician_name, assigned_at, int(is_auto), rule_desc, extracode, modality, exammoreid)
+                )
         else:
-            con.execute(
-                f"INSERT INTO {tbl_local} (exammoreid, diagnostician_id, diagnostician_name, assigned_at, is_auto, rule_desc, extracode, modality) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                (exammoreid, diagnostician_id, diagnostician_name, assigned_at, int(is_auto), rule_desc, extracode, modality)
-            )
+            if has_vdate:
+                con.execute(
+                    f"INSERT INTO {tbl_local} (exammoreid, diagnostician_id, diagnostician_name, assigned_at, is_auto, rule_desc, extracode, modality, visitdate) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (exammoreid, diagnostician_id, diagnostician_name, assigned_at, int(is_auto), rule_desc, extracode, modality, visitdate)
+                )
+            else:
+                con.execute(
+                    f"INSERT INTO {tbl_local} (exammoreid, diagnostician_id, diagnostician_name, assigned_at, is_auto, rule_desc, extracode, modality) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    (exammoreid, diagnostician_id, diagnostician_name, assigned_at, int(is_auto), rule_desc, extracode, modality)
+                )
 
         row = con.execute(
-            f"SELECT exammoreid, diagnostician_id, diagnostician_name, assigned_at, is_auto, rule_desc, extracode, modality FROM {tbl_local} WHERE exammoreid = ?",
+            f"SELECT * FROM {tbl_local} WHERE exammoreid = ?",
             (exammoreid,)
         ).fetchone()
     return _row_to_dict(row)
@@ -935,7 +982,7 @@ def upsert_local_assignment(exammoreid: int, diagnostician_id: int, diagnosticia
 def get_all_local_assignments() -> dict[int, dict]:
     tbl = _tbl("local_assignments")
     with _conn() as con:
-        rows = con.execute(f"SELECT exammoreid, diagnostician_id, diagnostician_name, assigned_at, is_auto, rule_desc, extracode, modality FROM {tbl}").fetchall()
+        rows = con.execute(f"SELECT * FROM {tbl}").fetchall()
         return {r["exammoreid"]: _row_to_dict(r) for r in rows}
 
 
@@ -949,22 +996,43 @@ def delete_local_assignment(exammoreid: int, record_dismissed: bool = True) -> b
     return deleted
 
 
-def log_assignment(exammoreid: int, diagnostician_id: int, assigned_at: str | None = None, modality: str | None = None, extracode: str | None = None) -> None:
+def log_assignment(
+    exammoreid: int,
+    diagnostician_id: int,
+    assigned_at: str | None = None,
+    modality: str | None = None,
+    extracode: str | None = None,
+    visitdate: str | None = None,
+) -> None:
     if not assigned_at:
         assigned_at = datetime.now().isoformat()
     tbl = _tbl("assignment_log")
     with _conn() as con:
+        cols = _get_table_columns(con, tbl)
+        has_vdate = "visitdate" in cols
         existing = con.execute(f"SELECT exammoreid FROM {tbl} WHERE exammoreid = ?", (exammoreid,)).fetchone()
         if existing:
-            con.execute(
-                f"UPDATE {tbl} SET diagnostician_id = ?, assigned_at = ?, modality = ?, extracode = ? WHERE exammoreid = ?",
-                (diagnostician_id, assigned_at, modality, extracode, exammoreid)
-            )
+            if has_vdate:
+                con.execute(
+                    f"UPDATE {tbl} SET diagnostician_id = ?, assigned_at = ?, modality = ?, extracode = ?, visitdate = ? WHERE exammoreid = ?",
+                    (diagnostician_id, assigned_at, modality, extracode, visitdate, exammoreid)
+                )
+            else:
+                con.execute(
+                    f"UPDATE {tbl} SET diagnostician_id = ?, assigned_at = ?, modality = ?, extracode = ? WHERE exammoreid = ?",
+                    (diagnostician_id, assigned_at, modality, extracode, exammoreid)
+                )
         else:
-            con.execute(
-                f"INSERT INTO {tbl} (exammoreid, diagnostician_id, assigned_at, modality, extracode) VALUES (?, ?, ?, ?, ?)",
-                (exammoreid, diagnostician_id, assigned_at, modality, extracode)
-            )
+            if has_vdate:
+                con.execute(
+                    f"INSERT INTO {tbl} (exammoreid, diagnostician_id, assigned_at, modality, extracode, visitdate) VALUES (?, ?, ?, ?, ?, ?)",
+                    (exammoreid, diagnostician_id, assigned_at, modality, extracode, visitdate)
+                )
+            else:
+                con.execute(
+                    f"INSERT INTO {tbl} (exammoreid, diagnostician_id, assigned_at, modality, extracode) VALUES (?, ?, ?, ?, ?)",
+                    (exammoreid, diagnostician_id, assigned_at, modality, extracode)
+                )
 
 
 def mark_local_assignment_synced(exammoreid: int, synced_at: str | None = None) -> bool:
@@ -972,8 +1040,8 @@ def mark_local_assignment_synced(exammoreid: int, synced_at: str | None = None) 
     return delete_local_assignment(exammoreid, record_dismissed=False)
 
 
-def get_daily_assignment_counts() -> dict[int, dict]:
-    dash_data = get_dashboard_data()
+def get_daily_assignment_counts(target_date: str | None = None) -> dict[int, dict]:
+    dash_data = get_dashboard_data(target_date)
     counts = {}
     for d in dash_data:
         did = d["diagnostician_id"]
@@ -985,11 +1053,91 @@ def get_daily_assignment_counts() -> dict[int, dict]:
     return counts
 
 
-def get_dashboard_data() -> list[dict]:
+def get_all_assignment_counts_by_date() -> dict[int, dict[str, int]]:
+    counts_by_diag: dict[int, dict[str, int]] = {}
+    tbl_diags = _tbl("diagnosticians")
+    tbl_local = _tbl("local_assignments")
+    tbl_log = _tbl("assignment_log")
+
+    with _conn() as con:
+        diags = con.execute(f"SELECT id FROM {tbl_diags} WHERE active = 1").fetchall()
+        for d in diags:
+            counts_by_diag[d["id"]] = {}
+
+        local_cols = _get_table_columns(con, tbl_local)
+        has_loc_vdate = "visitdate" in local_cols
+        loc_q = f"SELECT diagnostician_id, exammoreid, assigned_at" + (", visitdate" if has_loc_vdate else "") + f" FROM {tbl_local}"
+        local_rows = con.execute(loc_q).fetchall()
+
+        log_cols = _get_table_columns(con, tbl_log)
+        has_log_vdate = "visitdate" in log_cols
+        log_q = f"SELECT diagnostician_id, exammoreid, assigned_at" + (", visitdate" if has_log_vdate else "") + f" FROM {tbl_log}"
+        log_rows = con.execute(log_q).fetchall()
+
+    slis_exam_dates: dict[int, str] = {}
+    slis_assignments: dict[int, int] = {}
+    if settings.use_mock_slis_db:
+        try:
+            from diagflow.services.assignment import _get_mock_db
+            con_slis = _get_mock_db()
+            cur_slis = con_slis.execute("SELECT exammoreid, diagnostis, visitdate FROM slis_exams")
+            for r in cur_slis.fetchall():
+                eid = r["exammoreid"]
+                if r["visitdate"]:
+                    slis_exam_dates[eid] = str(r["visitdate"])[:10]
+                raw_diag = r["diagnostis"]
+                if raw_diag is not None and str(raw_diag).strip() not in ("", "0", "none", "None", "NULL"):
+                    try:
+                        slis_assignments[eid] = int(raw_diag)
+                    except Exception:
+                        pass
+            con_slis.close()
+        except Exception:
+            pass
+
+    seen_eids = set()
+    for r in local_rows:
+        did = r["diagnostician_id"]
+        eid = r["exammoreid"]
+        seen_eids.add(eid)
+        dt_str = (r["visitdate"] if has_loc_vdate and r["visitdate"] else None) or slis_exam_dates.get(eid) or (str(r["assigned_at"])[:10] if r["assigned_at"] else None)
+        if did and dt_str:
+            if did not in counts_by_diag:
+                counts_by_diag[did] = {}
+            counts_by_diag[did][dt_str] = counts_by_diag[did].get(dt_str, 0) + 1
+
+    for r in log_rows:
+        did = r["diagnostician_id"]
+        eid = r["exammoreid"]
+        if eid in seen_eids:
+            continue
+        seen_eids.add(eid)
+        dt_str = (r["visitdate"] if has_log_vdate and r["visitdate"] else None) or slis_exam_dates.get(eid) or (str(r["assigned_at"])[:10] if r["assigned_at"] else None)
+        if did and dt_str:
+            if did not in counts_by_diag:
+                counts_by_diag[did] = {}
+            counts_by_diag[did][dt_str] = counts_by_diag[did].get(dt_str, 0) + 1
+
+    for eid, did in slis_assignments.items():
+        if eid in seen_eids:
+            continue
+        seen_eids.add(eid)
+        dt_str = slis_exam_dates.get(eid)
+        if did and dt_str:
+            if did not in counts_by_diag:
+                counts_by_diag[did] = {}
+            counts_by_diag[did][dt_str] = counts_by_diag[did].get(dt_str, 0) + 1
+
+    return counts_by_diag
+
+
+def get_dashboard_data(target_date: str | None = None) -> list[dict]:
     tbl_diags = _tbl("diagnosticians")
     tbl_mod_quotas = _tbl("modality_quotas")
     tbl_local = _tbl("local_assignments")
     tbl_log = _tbl("assignment_log")
+    
+    target_date_str = str(target_date)[:10] if target_date else date.today().isoformat()
     
     with _conn() as con:
         diags = con.execute(f"SELECT id, name FROM {tbl_diags} WHERE active = 1 ORDER BY name").fetchall()
@@ -1013,50 +1161,52 @@ def get_dashboard_data() -> list[dict]:
                 "modality_limits": modality_limits.get(did, {})
             }
 
-        today_str = date.today().isoformat()
-
         # 1. Fetch from local_assignments
         local_assignment_map = {}
-        local_rows = con.execute(f"SELECT diagnostician_id, exammoreid, extracode, modality, assigned_at FROM {tbl_local}").fetchall()
+        local_cols = _get_table_columns(con, tbl_local)
+        has_vdate = "visitdate" in local_cols
+        query = f"SELECT diagnostician_id, exammoreid, extracode, modality, assigned_at" + (", visitdate" if has_vdate else "") + f" FROM {tbl_local}"
+        local_rows = con.execute(query).fetchall()
         for r in local_rows:
             local_assignment_map[r["exammoreid"]] = {
                 "diagnostician_id": r["diagnostician_id"],
                 "extracode": r["extracode"],
                 "category": r.get("modality"),
-                "assigned_at": r["assigned_at"]
+                "assigned_at": r["assigned_at"],
+                "visitdate": r["visitdate"] if has_vdate and r["visitdate"] else None,
             }
 
-        # 2. Fetch from assignment_log for today
+        # 2. Fetch from assignment_log
         log_assignment_map = {}
-        log_rows = con.execute(
-            f"SELECT diagnostician_id, exammoreid, extracode, modality as category, assigned_at FROM {tbl_log} WHERE assigned_at LIKE ?",
-            (f"{today_str}%",)
-        ).fetchall()
+        log_cols = _get_table_columns(con, tbl_log)
+        has_log_vdate = "visitdate" in log_cols
+        log_query = f"SELECT diagnostician_id, exammoreid, extracode, modality as category, assigned_at" + (", visitdate" if has_log_vdate else "") + f" FROM {tbl_log}"
+        log_rows = con.execute(log_query).fetchall()
         for r in log_rows:
             log_assignment_map[r["exammoreid"]] = {
                 "diagnostician_id": r["diagnostician_id"],
                 "extracode": r["extracode"],
                 "category": r["category"],
-                "assigned_at": r["assigned_at"]
+                "assigned_at": r["assigned_at"],
+                "visitdate": r["visitdate"] if has_log_vdate and r["visitdate"] else None,
             }
 
-    # 3. In Mock mode, check mock_slis.db
-    slis_assignment_map = {}
+    # 3. Check mock_slis.db for exam metadata and visitdate
     exam_details = {}
+    slis_assignment_map = {}
     if settings.use_mock_slis_db:
         try:
             from diagflow.services.assignment import _get_mock_db
             con_slis = _get_mock_db()
-            cols = [row[1] for row in con_slis.execute("PRAGMA table_info(slis_exams)").fetchall()]
-            has_synced_col = "slis_synced_at" in cols
-            query_cols = "exammoreid, extracode, category, diagnostis, visitdate" + (", slis_synced_at" if has_synced_col else "")
-            cur_slis = con_slis.execute(f"SELECT {query_cols} FROM slis_exams")
+            cur_slis = con_slis.execute("SELECT exammoreid, extracode, category, diagnostis, visitdate, slis_synced_at FROM slis_exams")
             for r in cur_slis.fetchall():
                 eid = r["exammoreid"]
-                exam_details[eid] = (r["extracode"], r["category"])
-                vdate = str(r["visitdate"])[:10] if (r.keys() and "visitdate" in r.keys() and r["visitdate"]) else None
-                synced_at = str(r["slis_synced_at"])[:10] if (has_synced_col and "slis_synced_at" in r.keys() and r["slis_synced_at"]) else None
-                
+                vdate = str(r["visitdate"])[:10] if r["visitdate"] else None
+                exam_details[eid] = {
+                    "extracode": r["extracode"],
+                    "category": r["category"],
+                    "visitdate": vdate
+                }
                 raw_diag = r["diagnostis"]
                 if raw_diag is not None and str(raw_diag).strip() not in ("", "0", "none", "None", "NULL"):
                     try:
@@ -1067,12 +1217,24 @@ def get_dashboard_data() -> list[dict]:
                         "diagnostician_id": d_id,
                         "extracode": r["extracode"],
                         "category": r["category"],
-                        "vdate": vdate,
-                        "synced_at": synced_at
+                        "visitdate": vdate,
                     }
             con_slis.close()
         except Exception:
             pass
+
+    # Augment with _exam_details_cache in memory if available
+    try:
+        from diagflow.services.assignment import _exam_details_cache
+        for eid, c_info in _exam_details_cache.items():
+            if eid not in exam_details:
+                exam_details[eid] = {
+                    "extracode": c_info.get("extracode"),
+                    "category": c_info.get("category") or c_info.get("modality"),
+                    "visitdate": str(c_info.get("visitdate") or "")[:10] or None
+                }
+    except Exception:
+        pass
 
     all_assigned_eids = set(local_assignment_map.keys()) | set(slis_assignment_map.keys()) | set(log_assignment_map.keys())
 
@@ -1080,29 +1242,38 @@ def get_dashboard_data() -> list[dict]:
         d_id = None
         extracode = None
         category = None
-        is_today = False
+        exam_vdate = None
 
         if eid in local_assignment_map:
             info = local_assignment_map[eid]
             d_id = info["diagnostician_id"]
             extracode = info["extracode"]
             category = info.get("category")
-            assign_date = str(info["assigned_at"])[:10] if info["assigned_at"] else None
-            is_today = (assign_date == today_str) or (eid in slis_assignment_map and (slis_assignment_map[eid]["synced_at"] == today_str or slis_assignment_map[eid]["vdate"] == today_str))
+            exam_vdate = info.get("visitdate")
         elif eid in slis_assignment_map:
             info = slis_assignment_map[eid]
             d_id = info["diagnostician_id"]
             extracode = info["extracode"]
             category = info["category"]
-            synced_at = info["synced_at"]
-            vdate = info["vdate"]
-            is_today = (synced_at == today_str) or (vdate == today_str) or (eid in log_assignment_map)
+            exam_vdate = info.get("visitdate")
         elif eid in log_assignment_map:
             info = log_assignment_map[eid]
             d_id = info["diagnostician_id"]
             extracode = info["extracode"]
             category = info["category"]
-            is_today = True
+            exam_vdate = info.get("visitdate")
+
+        # Fallback to exam metadata for visitdate, extracode, category
+        if eid in exam_details:
+            if not exam_vdate:
+                exam_vdate = exam_details[eid].get("visitdate")
+            if not extracode:
+                extracode = exam_details[eid].get("extracode")
+            if not category:
+                category = exam_details[eid].get("category")
+
+        # An exam belongs to target_date if its visitdate matches target_date_str
+        is_target = (exam_vdate == target_date_str)
 
         if d_id is not None:
             try:
@@ -1112,13 +1283,8 @@ def get_dashboard_data() -> list[dict]:
         else:
             d_id_int = None
 
-        if is_today and d_id_int is not None and d_id_int in dashboard_map:
+        if is_target and d_id_int is not None and d_id_int in dashboard_map:
             dashboard_map[d_id_int]["assigned_exam_ids"].append(eid)
-
-            if not extracode and eid in exam_details:
-                extracode = exam_details[eid][0]
-            if not category and eid in exam_details:
-                category = exam_details[eid][1]
 
             order_val = str(extracode).strip() if (extracode is not None and str(extracode).strip() != "") else None
             if order_val:
@@ -1503,3 +1669,38 @@ def update_system_weights(new_weights: dict) -> dict:
             else:
                 con.execute(f"INSERT INTO {tbl} ([key], [value]) VALUES (?, ?)", (k, str(v)))
     return get_system_weights()
+
+
+def get_comment_auto_assign_enabled() -> bool:
+    """Returns whether comment-based auto-assignment rule is enabled (default: True)."""
+    tbl = _tbl("system_settings")
+    with _conn() as con:
+        if settings.use_mock_slis_db:
+            con.execute(
+                f"CREATE TABLE IF NOT EXISTS {tbl} ("
+                "[key] TEXT PRIMARY KEY, [value] TEXT NOT NULL)"
+            )
+        row = con.execute(f"SELECT [value] FROM {tbl} WHERE [key] = 'comment_auto_assign_enabled'").fetchone()
+    if not row:
+        return True
+    val = str(row["value"]).strip().lower()
+    return val in ("1", "true", "yes", "on")
+
+
+def set_comment_auto_assign_enabled(enabled: bool) -> bool:
+    """Sets whether comment-based auto-assignment rule is enabled."""
+    tbl = _tbl("system_settings")
+    val_str = "1" if enabled else "0"
+    with _conn() as con:
+        if settings.use_mock_slis_db:
+            con.execute(
+                f"CREATE TABLE IF NOT EXISTS {tbl} ("
+                "[key] TEXT PRIMARY KEY, [value] TEXT NOT NULL)"
+            )
+        existing = con.execute(f"SELECT [key] FROM {tbl} WHERE [key] = 'comment_auto_assign_enabled'").fetchone()
+        if existing:
+            con.execute(f"UPDATE {tbl} SET [value] = ? WHERE [key] = 'comment_auto_assign_enabled'", (val_str,))
+        else:
+            con.execute(f"INSERT INTO {tbl} ([key], [value]) VALUES ('comment_auto_assign_enabled', ?)", (val_str,))
+    return get_comment_auto_assign_enabled()
+

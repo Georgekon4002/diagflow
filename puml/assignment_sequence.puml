@@ -27,10 +27,9 @@ else USE_MOCK_SLIS_DB = true
     assign -> mockdb : SELECT pending exams (last 3 days, no diagnostician)
     mockdb --> assign : Raw exam rows
 end
-assign -> centraldb : Get exclusive partnerships
-assign -> centraldb : Get exam_routing_rules
-assign -> centraldb : Get Παμμακάριστος on-call
-assign -> assign : Auto-assign:\n1. Exclusive doctor partnerships\n2. Dynamic exam routing rules\n   (e.g., Arthrografies, TMJ, Spectroscopies)\n3. Παμμακάριστος general → on-call
+assign -> centraldb : Get comment_auto_assign_enabled setting
+assign -> centraldb : Get exclusive partnerships, routing rules & Παμμακάριστος on-call
+assign -> assign : Auto-assign (Priority Hierarchy):\n1. Comment Name Mentions (exact, 'ΝΤΣΚ', typos)\n2. 'ΟΧΙ' comment exclusions (suppress lower rules)\n3. Exclusive doctor partnerships\n4. Dynamic exam routing rules (e.g. Arthrografies)\n5. Παμμακάριστος general → on-call
 assign -> centraldb : upsert_local_assignment()\n(is_auto=True, rule_desc into df_local_assignments)
 assign --> api : Remaining pending exams
 

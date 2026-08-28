@@ -9,8 +9,20 @@ start
 
 :Receive pending exam\n(ExamContext);
 
-partition "**Stage 0: Exclusive Partnership & Routing Check**" #F3E5F5 {
-    if (Doctor has exclusive partner OR\nmatches dynamic exam routing rule?) then (yes)
+partition "**Stage 0: Comment Rule & 'ΟΧΙ' Exclusion (Highest Priority)**" #F3E5F5 {
+    if (Comment rule enabled AND\nactive diagnostician named in comments?) then (positive match)
+        :Auto-assign directly to\nnamed diagnostician\n(exact, skeleton e.g. 'ΝΤΣΚ', typos);
+        :Return AssignmentSuggestion\n"Όνομα Διαγνώστη αναφέρθηκε στα σχόλια";
+        stop
+    else (no / 'ΟΧΙ' exclusion)
+        if ('ΟΧΙ [Name]' detected?) then (yes)
+            :Flag candidate as comment-excluded;\n(Suppresses all subsequent auto-rules);
+        endif
+    endif
+}
+
+partition "**Stage 0.5: Exclusive Partnership & Routing Check**" #F3E5F5 {
+    if (Doctor has exclusive partner OR\nmatches dynamic routing rule AND\nNOT excluded by 'ΟΧΙ' comment?) then (yes)
         :Auto-assign directly to\ndesignated diagnostician;
         :Return AssignmentSuggestion\nwith rule explanation;
         stop
@@ -28,6 +40,14 @@ partition "**Stage 1: Hard Filters**" #E8EAF6 {
         • Daily counts (assignment_log)
         • Per-weekday quotas
         • Dynamic routing & quota rules
+        • Comment-based exclusions ('ΟΧΙ')
+    end note
+
+    :Apply **filter_by_comment_exclusion()** (Priority 0);
+    note right
+        Excluded if 'ΟΧΙ' was found
+        before name in comments.
+        Reason: "Αποκλείστηκε λόγω σχολίου"
     end note
 
     :Apply **filter_by_exclusive_lab_dynamic()**;

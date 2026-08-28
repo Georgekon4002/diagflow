@@ -103,8 +103,11 @@ class AssignmentPipeline:
             candidates=len(candidates),
         )
 
-        # ── Step 0.5: Exclusive Partnerships ──
-        exclusive_partner = next((c for c in candidates if c.is_partnership_exclusive), None)
+        # ── Step 1: Hard filters (including comment exclusions) ──
+        filtered_candidates, filter_results = apply_hard_filters(candidates, exam)
+
+        # ── Step 0.5: Exclusive Partnerships (only if not excluded by hard filters) ──
+        exclusive_partner = next((c for c in filtered_candidates if c.is_partnership_exclusive), None)
         if exclusive_partner:
             logger.info(
                 "exclusive_partnership_match",
@@ -113,7 +116,6 @@ class AssignmentPipeline:
             )
             
             # Generate alternatives so the user can override if needed
-            filtered_candidates, filter_results = apply_hard_filters(candidates, exam)
             scored_candidates = []
             if filtered_candidates:
                 scored_candidates = score_all_candidates(filtered_candidates, exam)
@@ -126,9 +128,6 @@ class AssignmentPipeline:
             )
             
             return self._build_exclusive_assignment_suggestion(exam, exclusive_partner, alternatives, scored_candidates)
-
-        # ── Step 1: Hard filters ──
-        filtered_candidates, filter_results = apply_hard_filters(candidates, exam)
 
         if not filtered_candidates:
             logger.warning(

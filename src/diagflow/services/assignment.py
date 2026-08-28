@@ -208,32 +208,39 @@ class AssignmentService:
 
         try:
             eid_int = int(exam_id)
-            exam_info = _exam_details_cache.get(eid_int) or {}
-            mod = exam_info.get("category") or exam_info.get("modality")
-            ext = str(exam_info.get("extracode")) if exam_info.get("extracode") else None
-            ename = exam_info.get("examname") or exam_info.get("exam_name") or exam_info.get("exam_title")
+            vdate = None
+            if eid_int in _exam_details_cache:
+                c_data = _exam_details_cache[eid_int]
+                mod = c_data.get("category") or c_data.get("modality")
+                ext = c_data.get("extracode")
+                ename = c_data.get("examname")
+                vdate = c_data.get("visitdate")
+            else:
+                mod, ext, ename = None, None, None
             
-            if not mod or not ext or not ename:
+            if not mod or not ext or not ename or not vdate:
                 if not settings.use_mock_slis_db:
                     try:
                         from sqlalchemy import create_engine, text
                         engine = create_engine(settings.slis_db_connection_string, connect_args={"timeout": 5})
                         with engine.connect() as conn:
-                            res = conn.execute(text("SELECT category, extracode, examname FROM exammore e LEFT JOIN exams ex ON ex.examid = e.examid WHERE e.exammoreid = :id"), {"id": eid_int}).fetchone()
+                            res = conn.execute(text("SELECT category, extracode, examname, visitdate FROM exammore e LEFT JOIN exams ex ON ex.examid = e.examid WHERE e.exammoreid = :id"), {"id": eid_int}).fetchone()
                             if res:
                                 if not mod and res[0]: mod = normalize_modality(res[0])
                                 if not ext and res[1]: ext = str(res[1])
                                 if not ename and res[2]: ename = str(res[2])
+                                if not vdate and res[3]: vdate = str(res[3])[:10]
                     except Exception:
                         pass
                 else:
                     try:
                         con = _get_mock_db()
-                        row = con.execute("SELECT category, extracode, examname FROM slis_exams WHERE exammoreid = ?", (eid_int,)).fetchone()
+                        row = con.execute("SELECT category, extracode, examname, visitdate FROM slis_exams WHERE exammoreid = ?", (eid_int,)).fetchone()
                         if row:
                             if not mod: mod = row["category"] if "category" in row.keys() else None
                             if not ext: ext = str(row["extracode"]) if ("extracode" in row.keys() and row["extracode"]) else None
                             if not ename: ename = row["examname"] if "examname" in row.keys() else None
+                            if not vdate and "visitdate" in row.keys() and row["visitdate"]: vdate = str(row["visitdate"])[:10]
                         con.close()
                     except Exception:
                         pass
@@ -241,7 +248,7 @@ class AssignmentService:
             if mod:
                 mod = normalize_modality(mod)
 
-            cfg_db.upsert_local_assignment(eid_int, diagnostician_id, diagnostician_name, now_iso, modality=mod, extracode=ext, is_auto=False)
+            cfg_db.upsert_local_assignment(eid_int, diagnostician_id, diagnostician_name, now_iso, modality=mod, extracode=ext, is_auto=False, visitdate=vdate)
         except Exception as e:
             logger.warning("local_assignment_update_failed", error=str(e))
 
@@ -301,6 +308,10 @@ def _get_pending_exams_from_db() -> list[dict]:
         routing_rules = cfg_db.get_all_exam_routing_rules()
         # Fetch exams that were explicitly unassigned/dismissed by user
         dismissed_auto_assignments = cfg_db.get_dismissed_auto_assignments()
+        # Fetch active diagnosticians and comment auto-assign rule status
+        from diagflow.engine.comment_rules import parse_comment_diagnosticians
+        active_diagnosticians = [d for d in cfg_db.get_all_diagnosticians() if d.get("active", True)]
+        comment_rule_enabled = cfg_db.get_comment_auto_assign_enabled()
 
         raw_exam_rows = []
 
@@ -367,6 +378,7 @@ def _get_pending_exams_from_db() -> list[dict]:
         now_iso = datetime.now().isoformat()
         for r in raw_exam_rows:
             exam_id = int(r["exammoreid"])
+            exam_vdate = str(r.get("visitdate") or "")[:10]
             _exam_details_cache[exam_id] = {
                 "exammoreid": exam_id,
                 "extracode": r.get("extracode"),
@@ -375,6 +387,7 @@ def _get_pending_exams_from_db() -> list[dict]:
                 "examname": r.get("examname") or r.get("exam_name") or r.get("exam_title") or "",
                 "examnumcode": r.get("examnumcode"),
                 "patient_name": f"{r.get('fname') or ''} {r.get('lname') or ''}".strip(),
+                "visitdate": exam_vdate,
             }
             if exam_id in local_assignments:
                 continue  # already handled (staged in df_local_assignments)
@@ -384,30 +397,69 @@ def _get_pending_exams_from_db() -> list[dict]:
                 rows.append(_row_to_exam_dict(r))
                 continue
 
-            doc_id = str(r.get("wcode")) if r.get("wcode") else ""
+            # ── Check 0: Comment-based Auto-Assignment & 'ΟΧΙ' Exclusion (Above all rules) ──
+            comments_text = str(r.get("notes") or r.get("comments") or "").strip()
+            matched_comment_diag = None
+            excluded_comment_diag_ids: set[int] = set()
 
-            # Check 1: Exclusive partner auto-assignment (bypasses all filters)
-            if doc_id and doc_id in exclusive_map:
-                ex_part = exclusive_map[doc_id]
+            if comment_rule_enabled and comments_text:
+                matched_comment_diag, excluded_comment_diag_ids = parse_comment_diagnosticians(
+                    comments_text, active_diagnosticians
+                )
+
+            if comment_rule_enabled and matched_comment_diag and matched_comment_diag["id"] not in excluded_comment_diag_ids:
                 cfg_db.upsert_local_assignment(
                     exam_id,
-                    ex_part["preferred_diagnostician_id"],
-                    ex_part["preferred_diagnostician_name"],
+                    matched_comment_diag["id"],
+                    matched_comment_diag["name"],
                     now_iso,
                     modality=r.get("category"),
                     extracode=str(r.get("extracode")) if r.get("extracode") else None,
                     is_auto=True,
-                    rule_desc="Συνεργάτης (Αποκλειστικότητα)"
+                    rule_desc="Όνομα Διαγνώστη αναφέρθηκε στα σχόλια",
+                    visitdate=exam_vdate,
                 )
                 logger.info(
-                    "exclusive_partner_auto_assigned",
+                    "comment_auto_assigned",
                     exam_id=exam_id,
-                    doctor=doc_id,
-                    diagnostician=ex_part["preferred_diagnostician_name"],
+                    diagnostician=matched_comment_diag["name"],
+                    token=matched_comment_diag.get("matched_token"),
                 )
                 continue
 
-            # Check 2: Dynamic Exam Routing Rules (Replaces hardcoded lab & exam rules)
+            doc_id = str(r.get("wcode")) if r.get("wcode") else ""
+
+            # Check 1: Exclusive partner auto-assignment (bypasses regular filters, but respects comment exclusion)
+            if doc_id and doc_id in exclusive_map:
+                ex_part = exclusive_map[doc_id]
+                pref_diag_id = ex_part["preferred_diagnostician_id"]
+                if pref_diag_id not in excluded_comment_diag_ids:
+                    cfg_db.upsert_local_assignment(
+                        exam_id,
+                        pref_diag_id,
+                        ex_part["preferred_diagnostician_name"],
+                        now_iso,
+                        modality=r.get("category"),
+                        extracode=str(r.get("extracode")) if r.get("extracode") else None,
+                        is_auto=True,
+                        rule_desc="Συνεργάτης (Αποκλειστικότητα)",
+                        visitdate=exam_vdate,
+                    )
+                    logger.info(
+                        "exclusive_partner_auto_assigned",
+                        exam_id=exam_id,
+                        doctor=doc_id,
+                        diagnostician=ex_part["preferred_diagnostician_name"],
+                    )
+                    continue
+                else:
+                    logger.info(
+                        "exclusive_partner_suppressed_by_comment_exclusion",
+                        exam_id=exam_id,
+                        diagnostician=pref_diag_id,
+                    )
+
+            # Check 2: Dynamic Exam Routing Rules (suppressed if target is excluded by comment)
             exam_code_str = str(r.get("examnumcode") or "").strip()
             lab_id_val = r.get("labcodeid")
             is_pam = "ΠΑΜΜΑΚΑΡΙΣΤΟΣ" in (r.get("wname") or "").upper()
@@ -425,40 +477,49 @@ def _get_pending_exams_from_db() -> list[dict]:
                     rule_codes = [c.strip() for c in rule["exam_codes"].split(",")]
                     if exam_code_str in rule_codes:
                         target_id = rule["diagnostician_id"]
-                        d_info = cfg_db.get_diagnostician(target_id)
-                        d_name = d_info["name"] if d_info else rule["diagnostician_name"]
-                        cfg_db.upsert_local_assignment(
-                            exam_id, target_id, d_name, now_iso,
-                            modality=r.get("category"),
-                            extracode=str(r.get("extracode")) if r.get("extracode") else None,
-                            is_auto=True,
-                            rule_desc=rule["description"]
-                        )
-                        logger.info("dynamic_rule_auto_assigned", exam_id=exam_id, rule_id=rule["id"], diagnostician=target_id)
-                        routed = True
-                        break
+                        if target_id not in excluded_comment_diag_ids:
+                            d_info = cfg_db.get_diagnostician(target_id)
+                            d_name = d_info["name"] if d_info else rule["diagnostician_name"]
+                            cfg_db.upsert_local_assignment(
+                                exam_id, target_id, d_name, now_iso,
+                                modality=r.get("category"),
+                                extracode=str(r.get("extracode")) if r.get("extracode") else None,
+                                is_auto=True,
+                                rule_desc=rule["description"],
+                                visitdate=exam_vdate,
+                            )
+                            logger.info("dynamic_rule_auto_assigned", exam_id=exam_id, rule_id=rule["id"], diagnostician=target_id)
+                            routed = True
+                            break
+                        else:
+                            logger.info("dynamic_rule_suppressed_by_comment_exclusion", exam_id=exam_id, rule_id=rule["id"], target_id=target_id)
             
             if routed:
                 continue
 
-            # Check 3: Παμμακάριστος general on-call (if not routed by a specific rule)
+            # Check 3: Παμμακάριστος general on-call (suppressed if on-call is excluded by comment)
             if is_pam and pam_oncall:
-                cfg_db.upsert_local_assignment(
-                    exam_id,
-                    pam_oncall["diagnostician_id"],
-                    pam_oncall["diagnostician_name"],
-                    now_iso,
-                    modality=r.get("category"),
-                    extracode=str(r.get("extracode")) if r.get("extracode") else None,
-                    is_auto=True,
-                    rule_desc="Παμμακάριστος Εφημερία"
-                )
-                logger.info(
-                    "pam_exam_auto_assigned",
-                    exam_id=exam_id,
-                    oncall=pam_oncall["diagnostician_name"],
-                )
-                continue
+                pam_diag_id = pam_oncall["diagnostician_id"]
+                if pam_diag_id not in excluded_comment_diag_ids:
+                    cfg_db.upsert_local_assignment(
+                        exam_id,
+                        pam_diag_id,
+                        pam_oncall["diagnostician_name"],
+                        now_iso,
+                        modality=r.get("category"),
+                        extracode=str(r.get("extracode")) if r.get("extracode") else None,
+                        is_auto=True,
+                        rule_desc="Παμμακάριστος Εφημερία",
+                        visitdate=exam_vdate,
+                    )
+                    logger.info(
+                        "pam_exam_auto_assigned",
+                        exam_id=exam_id,
+                        oncall=pam_oncall["diagnostician_name"],
+                    )
+                    continue
+                else:
+                    logger.info("pam_oncall_suppressed_by_comment_exclusion", exam_id=exam_id, oncall=pam_diag_id)
 
             # Normal pending exam
             rows.append(_row_to_exam_dict(r))

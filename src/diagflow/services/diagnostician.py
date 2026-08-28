@@ -48,33 +48,36 @@ class DiagnosticianService:
         exam_code: str = "",
         lab_name: str = "",
         oldpers: int | None = None,
+        exam_date: str | date | None = None,
     ) -> list[CandidateDiagnostician]:
         """
         Load all potentially eligible diagnosticians for an exam.
 
         For each diagnostician from diagflow.db:
-        - Checks availability (on_leave for today)
+        - Checks availability (on_leave for exam date)
         - Checks skills (exact exam_code match)
         - Checks partnership (issuing doctor preference)
         - Derives can_ct / can_mri flags
+        - Evaluates daily quota for exam date's weekday
+        - Loads workload count on exam date
         """
         self._current_exam_oldpers = oldpers
-        today = str(date.today())
+        
+        target_dt = date.today()
+        if isinstance(exam_date, str) and len(exam_date) >= 10:
+            try:
+                target_dt = date.fromisoformat(exam_date[:10])
+            except Exception:
+                target_dt = date.today()
+        elif isinstance(exam_date, date):
+            target_dt = exam_date
 
-        # In-memory short-lived cache (3 seconds) to speed up concurrent suggestion requests
-        import time
-        now = time.time()
-        if not hasattr(DiagnosticianService, "_cache_timestamp") or (now - getattr(DiagnosticianService, "_cache_timestamp", 0)) > 3.0:
-            DiagnosticianService._cached_all_diags = cfg_db.get_all_diagnosticians()
-            DiagnosticianService._cached_absent_ids = cfg_db.get_absent_diagnostician_ids(today)
-            DiagnosticianService._cached_daily_counts = cfg_db.get_daily_assignment_counts()
-            DiagnosticianService._cached_skills_by_diag = cfg_db.get_all_skills_grouped()
-            DiagnosticianService._cache_timestamp = now
+        target_date_str = str(target_dt)
 
-        all_diags = DiagnosticianService._cached_all_diags
-        absent_ids = DiagnosticianService._cached_absent_ids
-        daily_counts = DiagnosticianService._cached_daily_counts
-        all_skills_by_diag = DiagnosticianService._cached_skills_by_diag
+        all_diags = cfg_db.get_all_diagnosticians()
+        absent_ids = cfg_db.get_absent_diagnostician_ids(target_date_str)
+        daily_counts = cfg_db.get_daily_assignment_counts(target_date_str)
+        all_skills_by_diag = cfg_db.get_all_skills_grouped()
 
         # Pre-calculate configured exam codes across all diagnosticians
         all_configured_exam_codes = {
@@ -94,8 +97,8 @@ class DiagnosticianService:
 
         candidates = []
 
-        # Pre-compute weekday key once (same for all iterations)
-        weekday_str = date.today().strftime("%A").lower()
+        # Pre-compute weekday key for target exam date
+        weekday_str = target_dt.strftime("%A").lower()
         quota_key = f"quota_{weekday_str}"
 
         for diag in all_diags:
@@ -124,10 +127,10 @@ class DiagnosticianService:
             can_mri = bool(diag["can_mri"])
             preferred_lab_id = diag.get("preferred_lab_id")
 
-            # Check if diagnostician is absent
+            # Check if diagnostician is absent on exam date
             is_available = diag_id not in absent_ids
 
-            # Daily quota for today's weekday
+            # Daily quota for exam date's weekday
             daily_quota = diag.get(quota_key, 0)
 
             # Check for partnership match
@@ -138,8 +141,6 @@ class DiagnosticianService:
             # Patient history
             has_history = False
             history_count = 0
-            # If the exam context provides the old diagnostician ID (oldpers)
-            # we check if this candidate matches it.
             if hasattr(self, "_current_exam_oldpers") and self._current_exam_oldpers == diag_id:
                 has_history = True
                 history_count = 1
@@ -177,6 +178,8 @@ class DiagnosticianService:
         logger.info(
             "candidates_loaded",
             exam_id=exam_id,
+            exam_date=target_date_str,
+            weekday=weekday_str,
             total=len(candidates),
         )
 
@@ -188,26 +191,25 @@ class DiagnosticianService:
     ) -> dict[str, list[CandidateDiagnostician]]:
         """
         High-performance batch candidate evaluation for multiple exams simultaneously.
-        Pre-loads all diagnosticians, absences, daily counts, skills, and doctor partnerships
+        Pre-loads all diagnosticians, absences per date, daily counts per date, skills, and doctor partnerships
         in single bulk operations, turning O(N) database queries into O(1) in-memory lookups.
         """
         if not exams:
             return {}
 
-        today = str(date.today())
-        import time
-        now = time.time()
-        if not hasattr(DiagnosticianService, "_cache_timestamp") or (now - getattr(DiagnosticianService, "_cache_timestamp", 0)) > 3.0:
-            DiagnosticianService._cached_all_diags = cfg_db.get_all_diagnosticians()
-            DiagnosticianService._cached_absent_ids = cfg_db.get_absent_diagnostician_ids(today)
-            DiagnosticianService._cached_daily_counts = cfg_db.get_daily_assignment_counts()
-            DiagnosticianService._cached_skills_by_diag = cfg_db.get_all_skills_grouped()
-            DiagnosticianService._cache_timestamp = now
+        all_diags = cfg_db.get_all_diagnosticians()
+        all_skills_by_diag = cfg_db.get_all_skills_grouped()
 
-        all_diags = DiagnosticianService._cached_all_diags
-        absent_ids = DiagnosticianService._cached_absent_ids
-        daily_counts = DiagnosticianService._cached_daily_counts
-        all_skills_by_diag = DiagnosticianService._cached_skills_by_diag
+        # Gather distinct exam dates across the batch
+        unique_dates: set[str] = set()
+        for e in exams:
+            if e.request_date:
+                unique_dates.add(str(e.request_date)[:10])
+            else:
+                unique_dates.add(str(date.today()))
+
+        absent_ids_by_date = {dt: cfg_db.get_absent_diagnostician_ids(dt) for dt in unique_dates}
+        daily_counts_by_date = {dt: cfg_db.get_daily_assignment_counts(dt) for dt in unique_dates}
 
         # Gather all unique doctor IDs across the batch
         doctor_ids = [e.issuing_doctor_id for e in exams if e.issuing_doctor_id]
@@ -220,18 +222,27 @@ class DiagnosticianService:
             if sk.get("exam_code")
         }
 
-        weekday_str = date.today().strftime("%A").lower()
-        quota_key = f"quota_{weekday_str}"
-
         batch_result: dict[str, list[CandidateDiagnostician]] = {}
 
         for exam in exams:
             clean_exam_code = str(exam.exam_code or "").strip()
             exam_code_has_skills = clean_exam_code in all_configured_exam_codes
 
+            target_dt_str = str(exam.request_date or date.today())[:10]
+            try:
+                target_dt = date.fromisoformat(target_dt_str)
+            except Exception:
+                target_dt = date.today()
+                target_dt_str = str(target_dt)
+
+            weekday_str = target_dt.strftime("%A").lower()
+            quota_key = f"quota_{weekday_str}"
+
+            absent_ids = absent_ids_by_date.get(target_dt_str, set())
+            daily_counts = daily_counts_by_date.get(target_dt_str, {})
+
             partnerships = doctor_partnerships_batch.get(str(exam.issuing_doctor_id).strip(), [])
             if not partnerships and exam.issuing_doctor_id:
-                # Fallback if not found in batch map
                 partnerships = cfg_db.get_partnerships_by_doctor(exam.issuing_doctor_id)
 
             partnership_map: dict[int, dict] = {
@@ -307,9 +318,10 @@ class DiagnosticianService:
         return batch_result
 
     async def get_all_diagnosticians(self) -> list[dict]:
-        """Get all active diagnosticians for the UI dropdown/list."""
+        """Get all active diagnosticians for the UI dropdown/list with counts_by_date."""
         diags = cfg_db.get_all_diagnosticians()
         counts = cfg_db.get_daily_assignment_counts()
+        counts_by_date_map = cfg_db.get_all_assignment_counts_by_date()
         today = str(date.today())
         absent_ids = cfg_db.get_absent_diagnostician_ids(today)
 
@@ -331,6 +343,7 @@ class DiagnosticianService:
                     if isinstance(counts.get(d["id"]), dict)
                     else (counts.get(d["id"]) or 0)
                 ),
+                "counts_by_date": counts_by_date_map.get(d["id"], {}),
                 "available": bool(d["active"]) and (d["id"] not in absent_ids),
             }
             for d in diags

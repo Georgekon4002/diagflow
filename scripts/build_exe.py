@@ -85,6 +85,7 @@ def build():
         "--hidden-import", "diagflow.db.slis_models",
         "--hidden-import", "diagflow.engine.pipeline",
         "--hidden-import", "diagflow.engine.filters",
+        "--hidden-import", "diagflow.engine.comment_rules",
         "--hidden-import", "diagflow.engine.scoring",
         "--hidden-import", "diagflow.engine.rules",
         "--hidden-import", "diagflow.engine.solver",

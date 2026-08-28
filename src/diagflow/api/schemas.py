@@ -161,6 +161,7 @@ class DiagnosticianResponse(BaseModel):
     quota_saturday: int
     quota_sunday: int
     current_day_count: int
+    counts_by_date: dict[str, int] = {}
     available: bool
 
 

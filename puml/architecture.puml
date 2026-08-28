@@ -44,7 +44,7 @@ package "Offline / Mock Dev Environment" as mock_env #FFF3E0 {
 package "Client PC 1 (Secretariat / Admin)" as client1 #E3F2FD {
     component "DiagFlow.exe (Client A)\n(PyInstaller + pywebview GUI)" as app1 {
         component "FastAPI Server (Port 8080)" as api1
-        component "Rule Engine & OR-Tools Solver" as engine1
+        component "Rule Engine (Comments, Filters, Scoring)\n& OR-Tools Solver" as engine1
         component "Dual-Engine DB Layer\n(diagflow_db.py / engines.py)" as db_layer1
     }
     actor "Operator A" as op1
@@ -54,7 +54,7 @@ package "Client PC 1 (Secretariat / Admin)" as client1 #E3F2FD {
 package "Client PC 2 (Secretariat / Admin)" as client2 #E3F2FD {
     component "DiagFlow.exe (Client B)\n(PyInstaller + pywebview GUI)" as app2 {
         component "FastAPI Server (Port 8080)" as api2
-        component "Rule Engine & OR-Tools Solver" as engine2
+        component "Rule Engine (Comments, Filters, Scoring)\n& OR-Tools Solver" as engine2
         component "Dual-Engine DB Layer\n(diagflow_db.py / engines.py)" as db_layer2
     }
     actor "Operator B" as op2

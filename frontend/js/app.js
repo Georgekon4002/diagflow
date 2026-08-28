@@ -1303,7 +1303,7 @@ function renderPendingRows(rawExams) {
         const normCat = normalizeModalityCode(exam.category || exam.modality);
         const catClass = normCat.toLowerCase();
         const patientName = exam.patient_name || `${exam.fname || ''} ${exam.lname || ''}`.trim() || '—';
-        const notesHtml = buildNotesCell(exam.notes || exam.comments || '');
+        const notesHtml = buildNotesCell(exam.notes || exam.comments || '', exam);
         const oldVisitHtml = buildOldVisitCell(exam);
 
         const isSelected = selectedExams.has(exam.exam_id) ? 'checked' : '';
@@ -1360,7 +1360,7 @@ ${groupedCommentsCol}
                     ${hasSuggestion
                 ? `<span class="suggested-name">${exam.suggestion.suggested_diagnostician_name}</span>
                    <span class="suggested-score">${Math.round(exam.suggestion.confidence_score * 100)}%</span>
-                   <div class="proposal-workload-row">${renderWorkloadGaugeHtml(exam.suggestion.suggested_diagnostician_id)}</div>`
+                   <div class="proposal-workload-row">${renderWorkloadGaugeHtml(exam.suggestion.suggested_diagnostician_id, diagnosticians, exam.visitdate || exam.request_date)}</div>`
                 : '<span class="no-suggestion" id="sugg-status-' + exam.exam_id + '">—</span>'
             }
                 </td>
@@ -1391,7 +1391,7 @@ function updateExamSuggestionRow(exam) {
         if (suggCell) {
             suggCell.innerHTML = `<span class="suggested-name">${escapeHtmlFull(exam.suggestion.suggested_diagnostician_name)}</span>
                                   <span class="suggested-score">${Math.round(exam.suggestion.confidence_score * 100)}%</span>
-                                  <div class="proposal-workload-row">${renderWorkloadGaugeHtml(exam.suggestion.suggested_diagnostician_id)}</div>`;
+                                  <div class="proposal-workload-row">${renderWorkloadGaugeHtml(exam.suggestion.suggested_diagnostician_id, diagnosticians, exam.visitdate || exam.request_date)}</div>`;
         }
         if (lastTd) {
             lastTd.innerHTML = `<div class="btn-group"><button class="btn btn-view" onclick="viewSuggestion('${exam.exam_id}')">Προβολή</button></div>`;
@@ -1556,7 +1556,7 @@ function renderAssignedRows(rawExams) {
         const catClass = normCat.toLowerCase();
         const patientName = exam.patient_name || `${exam.fname || ''} ${exam.lname || ''}`.trim() || '—';
         const diagName = exam.code || exam.diagnostician_name || exam.assigned_diagnostician_name || '—';
-        const notesHtml = buildNotesCell(exam.notes || exam.comments || '');
+        const notesHtml = buildNotesCell(exam.notes || exam.comments || '', exam);
         const oldVisitHtml = buildOldVisitCell(exam);
         const isSelected = selectedAssignedExams.has(exam.exam_id);
         const rowClass = isSelected ? 'selected-row' : '';
@@ -1593,7 +1593,7 @@ function renderAssignedRows(rawExams) {
         const groupedCommentsCol = info.isGroupHeader ? `
             <td class="comment-cell" rowspan="${span}">${notesHtml}</td>` : '';
 
-        const autoBadgeRuleDesc = exam.rule_desc ? `Κανόνας: ${escapeHtmlFull(exam.rule_desc)}` : 'Αυτόματη Ανάθεση';
+        const autoBadgeRuleDesc = exam.rule_desc ? (exam.rule_desc === 'Όνομα Διαγνώστη αναφέρθηκε στα σχόλια' ? 'Όνομα Διαγνώστη αναφέρθηκε στα σχόλια' : `Κανόνας: ${escapeHtmlFull(exam.rule_desc)}`) : 'Αυτόματη Ανάθεση';
         const autoBadge = exam.is_auto_assigned ? `
             <div class="auto-badge-container">
                 <span class="status-badge" style="background:#9b59b6; margin-left:6px; padding: 2px 6px; font-size:10px;">⚡ Auto</span>
@@ -1753,13 +1753,14 @@ function renderScoreVisualizerHtml(suggestion) {
     `;
 }
 
-function renderWorkloadGaugeHtml(diagId, diagsList = diagnosticians) {
+function renderWorkloadGaugeHtml(diagId, diagsList = diagnosticians, examDate = null) {
     if (!diagId || !diagsList || diagsList.length === 0) return '';
     const diag = diagsList.find(d => String(d.id) === String(diagId));
     if (!diag) return '';
 
-    const count = diag.current_day_count || 0;
-    const quota = typeof getTodayQuota === 'function' ? getTodayQuota(diag) : (diag.daily_quota || 15);
+    const targetDate = examDate ? String(examDate).slice(0, 10) : null;
+    const count = getDiagnosticianCountForDate(diag, targetDate);
+    const quota = getQuotaForDate(diag, targetDate);
     const quotaStr = quota === 999 ? '∞' : quota;
 
     let pct = 0;
@@ -1791,9 +1792,10 @@ function renderWorkloadGaugeHtml(diagId, diagsList = diagnosticians) {
 
     // Minimum fill display of 10% so the vibrant color is always immediately visible
     const displayFillWidth = Math.max(pct, 10);
+    const dateLabel = targetDate ? ` (${formatDateDMY(targetDate)})` : '';
 
     return `
-        <span class="workload-gauge" title="Φόρτος ημέρας: ${count}/${quotaStr} (${pct}%)">
+        <span class="workload-gauge" title="Φόρτος${dateLabel}: ${count}/${quotaStr} (${pct}%)">
             <span class="workload-status-dot ${dotClass}"></span>
             <span class="workload-gauge-track ${trackClass}">
                 <span class="workload-gauge-fill ${fillClass}" style="width: ${displayFillWidth}%;"></span>
@@ -1811,6 +1813,8 @@ function openSuggestionModal(examId, suggestion) {
     selectedAlternativeId = null;
     let exam = pendingExams.find(e => e.exam_id === examId);
     if (!exam) exam = assignedExams.find(e => e.exam_id === examId);
+
+    const examDateVal = exam?.visitdate || exam?.request_date || null;
 
     // Exam summary
     const examCode = exam?.examnumcode || exam?.exam_code || '—';
@@ -1831,7 +1835,7 @@ function openSuggestionModal(examId, suggestion) {
     `;
 
     // Suggestion card with live workload gauge
-    const diagWorkloadHtml = renderWorkloadGaugeHtml(suggestion.suggested_diagnostician_id);
+    const diagWorkloadHtml = renderWorkloadGaugeHtml(suggestion.suggested_diagnostician_id, diagnosticians, examDateVal);
     document.getElementById('suggestion-name').innerHTML = `
         <span style="display:flex; align-items:center; gap:8px;">
             ${escapeHtml(suggestion.suggested_diagnostician_name)}
@@ -1878,7 +1882,7 @@ function openSuggestionModal(examId, suggestion) {
         let rankCounter = 2; // Suggestion is #1
 
         altList.innerHTML = alternatives.map(alt => {
-            const gaugeHtml = renderWorkloadGaugeHtml(alt.id);
+            const gaugeHtml = renderWorkloadGaugeHtml(alt.id, diagnosticians, examDateVal);
             if (alt.eliminated) {
                 return `
                     <div class="alternative-item eliminated" data-diag-id="${alt.id}" onclick="selectAlternative('${alt.id}', '${escapeHtml(alt.name)}', true, event)">
@@ -2450,7 +2454,49 @@ function levenshteinDistance(a, b) {
     return matrix[b.length][a.length];
 }
 
-function buildNotesCell(notes) {
+function latinToGreek(str) {
+    if (!str) return '';
+    let s = String(str).toUpperCase();
+    const multiMap = [
+        ['TH', 'Θ'],
+        ['CH', 'Χ'],
+        ['PS', 'Ψ'],
+        ['KS', 'Ξ'],
+        ['PH', 'Φ'],
+        ['MP', 'ΜΠ'],
+        ['NT', 'ΝΤ'],
+        ['GK', 'ΓΚ'],
+        ['GG', 'ΓΓ'],
+        ['TS', 'ΤΣ'],
+        ['TZ', 'ΤΖ'],
+        ['OU', 'ΟΥ'],
+        ['OI', 'ΟΙ'],
+        ['EI', 'ΕΙ'],
+        ['AI', 'ΑΙ']
+    ];
+    for (const [lat, grk] of multiMap) {
+        s = s.split(lat).join(grk);
+    }
+    const singleMap = {
+        'A': 'Α', 'B': 'Β', 'C': 'Κ', 'D': 'Δ', 'E': 'Ε', 'F': 'Φ',
+        'G': 'Γ', 'H': 'Η', 'I': 'Ι', 'J': 'ΤΖ', 'K': 'Κ', 'L': 'Λ',
+        'M': 'Μ', 'N': 'Ν', 'O': 'Ο', 'P': 'Π', 'Q': 'Κ', 'R': 'Ρ',
+        'S': 'Σ', 'T': 'Τ', 'U': 'Υ', 'V': 'Β', 'W': 'Ω', 'X': 'Χ',
+        'Y': 'Υ', 'Z': 'Ζ'
+    };
+    return s.split('').map(ch => singleMap[ch] || ch).join('');
+}
+
+const GREEK_VOWELS_SET = new Set(['Α', 'Ε', 'Η', 'Ι', 'Ο', 'Υ', 'Ω', 'A', 'E', 'I', 'O', 'U', 'Y']);
+const COMMENT_NEGATION_WORDS = new Set(['ΟΧΙ', 'OXI', 'ΜΗ', 'ΜΗΝ', 'NOT', 'NO', 'ΕΚΤΟΣ', 'ΑΠΟΚΛΕΙΣΜΟΣ', 'ΑΚΥΡΟ', 'ΧΩΡΙΣ']);
+
+function extractConsonantSkeletonJS(word) {
+    if (!word) return '';
+    const norm = normalizeGreek(word).replace(/[^A-ZΑ-Ω]/g, '');
+    return norm.split('').filter(ch => !GREEK_VOWELS_SET.has(ch)).join('');
+}
+
+function buildNotesCell(notes, exam = null) {
     if (!notes || EMPTY_NOTES_RE.test(notes)) {
         return '<span style="color:var(--text-tertiary)">—</span>';
     }
@@ -2459,54 +2505,127 @@ function buildNotesCell(notes) {
     if (!display) return '<span style="color:var(--text-tertiary)">—</span>';
 
     let isRed = false;
-    const displayUpper = normalizeGreek(display);
-    const commentWords = displayUpper.split(/[\s\.,;:!\?\-\/\(\)\*]+/).filter(w => w.length >= 3);
 
-    const surnameList = ["ΠΑΠΟΥΤΣΗ", "ΠΑΠΟΥΤΣΗΣ", "ΝΑΤΣΙΚΑ", "ΜΠΕΡΕΤΗΣ", "ΜΠΕΡΕΤΗ"];
-
-    if (typeof diagnosticians !== 'undefined' && diagnosticians.length > 0) {
-        diagnosticians.forEach(d => {
-            if (d.active !== false && d.name) {
-                const surname = d.name.trim().split(/\s+/)[0];
-                if (surname.length >= 3) {
-                    surnameList.push(normalizeGreek(surname));
-                }
+    // 1. Check if exam metadata or rule_desc explicitly indicates comment auto-assignment/exclusion
+    if (exam) {
+        const ruleDesc = exam.rule_desc || (exam.suggestion && exam.suggestion.rule_desc) || '';
+        if (ruleDesc && (ruleDesc.includes('σχόλια') || ruleDesc.includes('σχολί'))) {
+            isRed = true;
+        }
+        if (!isRed && exam.suggestion && Array.isArray(exam.suggestion.alternatives)) {
+            if (exam.suggestion.alternatives.some(a => a.elimination_reason && a.elimination_reason.includes('σχολί'))) {
+                isRed = true;
             }
-        });
+        }
     }
 
-    // Evaluate matching against each surname in surnameList using word token boundaries
-    for (const rawSurname of surnameList) {
-        const normSurname = normalizeGreek(rawSurname);
-        const surnameStem = getGreekStem(normSurname);
+    // 2. Deep pattern matching on comment text if not already flagged
+    if (!isRed) {
+        const displayUpper = normalizeGreek(display);
+        const translitUpper = normalizeGreek(latinToGreek(display));
 
-        for (const word of commentWords) {
-            const wordStem = getGreekStem(word);
+        // Tokenize words
+        const rawTokens = displayUpper.split(/[\s\.,;:!\?\-\/\(\)\*\\_\[\]\{\}]+/).filter(Boolean);
+        const trTokens = translitUpper.split(/[\s\.,;:!\?\-\/\(\)\*\\_\[\]\{\}]+/).filter(Boolean);
+        const allTokens = Array.from(new Set([...rawTokens, ...trTokens]));
 
-            // 1. Exact word match or stem equality
-            if (word === normSurname || (surnameStem.length >= 3 && wordStem === surnameStem)) {
+        // Check for immediate negation keyword presence
+        for (const tok of allTokens) {
+            if (COMMENT_NEGATION_WORDS.has(tok)) {
                 isRed = true;
                 break;
-            }
-
-            // 2. Prefix match (e.g. ΜΠΕΡΕΤ... vs ΜΠΕΡΕΤΗΣ)
-            if (surnameStem.length >= 5 && (word.startsWith(surnameStem) || (surnameStem.startsWith(wordStem) && wordStem.length >= 5))) {
-                isRed = true;
-                break;
-            }
-
-            // 3. Fuzzy match (typos) via Levenshtein distance
-            if (surnameStem.length >= 5 && Math.abs(wordStem.length - surnameStem.length) <= 2) {
-                const dist = levenshteinDistance(wordStem, surnameStem);
-                const maxDist = surnameStem.length >= 7 ? 2 : 1;
-                if (dist <= maxDist) {
-                    isRed = true;
-                    break;
-                }
             }
         }
 
-        if (isRed) break;
+        if (!isRed) {
+            // Build comprehensive diagnostician search profiles
+            const profiles = [];
+            const fallbackSurnames = [
+                'ΠΑΠΟΥΤΣΗ', 'ΠΑΠΟΥΤΣΗΣ', 'ΝΑΤΣΙΚΑ', 'ΝΑΤΣΙΚΑΣ', 'ΜΠΕΡΕΤΗΣ', 'ΜΠΕΡΕΤΗ',
+                'ΣΙΓΑΛΑΣ', 'ΣΙΓΑΛΑ', 'ΚΟΥΛΟΓΙΩΡΓΑ', 'ΚΟΥΛΟΓΙΩΡΓΑΣ', 'ΜΑΥΡΟΜΜΑΤΗ', 'ΜΑΥΡΟΜΜΑΤΗΣ'
+            ];
+
+            const diagSources = (typeof diagnosticians !== 'undefined' && Array.isArray(diagnosticians) && diagnosticians.length > 0)
+                ? diagnosticians
+                : fallbackSurnames.map((name, idx) => ({ id: idx + 1, name }));
+
+            diagSources.forEach(d => {
+                if (d.active !== false && d.name) {
+                    const normName = normalizeGreek(d.name).trim();
+                    const parts = normName.split(/\s+/).filter(Boolean);
+                    if (parts.length === 0) return;
+
+                    const surname = parts[0];
+                    const firstName = parts[1] || '';
+
+                    const exactKeys = new Set();
+                    exactKeys.add(surname);
+                    if (firstName && firstName.length >= 3) exactKeys.add(firstName);
+
+                    let stem = surname;
+                    const suffixes = ['ΟΣ', 'ΗΣ', 'ΑΣ', 'ΟΥ', 'ΕΑΣ', 'ΩΝ'];
+                    for (const suf of suffixes) {
+                        if (surname.endsWith(suf) && surname.length > suf.length + 2) {
+                            stem = surname.slice(0, -suf.length);
+                            ['', 'Α', 'Η', 'Ο', 'ΟΥ', 'Ε', 'ΕΣ', 'ΟΙ', 'ΩΝ'].forEach(end => exactKeys.add(stem + end));
+                            break;
+                        }
+                    }
+                    if (surname.endsWith('Α') && surname.length > 3) {
+                        stem = surname.slice(0, -1);
+                        exactKeys.add(stem);
+                        exactKeys.add(stem + 'ΑΣ');
+                        exactKeys.add(stem + 'ΕΣ');
+                    } else if (surname.endsWith('Η') && surname.length > 3) {
+                        stem = surname.slice(0, -1);
+                        exactKeys.add(stem);
+                        exactKeys.add(stem + 'ΗΣ');
+                    }
+
+                    const skeletons = new Set();
+                    const sSkel = extractConsonantSkeletonJS(surname);
+                    if (sSkel.length >= 3) {
+                        skeletons.add(sSkel);
+                        if (sSkel.endsWith('Σ') && sSkel.length > 3) skeletons.add(sSkel.slice(0, -1));
+                    }
+                    const stemSkel = extractConsonantSkeletonJS(stem);
+                    if (stemSkel.length >= 3) skeletons.add(stemSkel);
+
+                    profiles.push({ surname, stem, exactKeys, skeletons });
+                }
+            });
+
+            // Match all tokens against profiles
+            for (const tok of allTokens) {
+                if (tok.length < 3) continue;
+
+                for (const prof of profiles) {
+                    // Exact or declension
+                    if (prof.exactKeys.has(tok)) {
+                        isRed = true;
+                        break;
+                    }
+                    // Consonant skeleton (e.g. ΝΤΣΚ, ΜΠΡΤ, ΣΓΛ, ΚΛΓΡΓ)
+                    if (prof.skeletons.has(tok)) {
+                        isRed = true;
+                        break;
+                    }
+                    // Stem prefix (length >= 4)
+                    if (prof.stem.length >= 4 && (tok.startsWith(prof.stem) || (tok.length >= 4 && prof.stem.startsWith(tok)))) {
+                        isRed = true;
+                        break;
+                    }
+                    // Typo distance <= 1
+                    if (prof.surname.length >= 4 && Math.abs(tok.length - prof.surname.length) <= 1) {
+                        if (levenshteinDistance(tok, prof.surname) <= 1 || levenshteinDistance(tok, prof.stem) <= 1) {
+                            isRed = true;
+                            break;
+                        }
+                    }
+                }
+                if (isRed) break;
+            }
+        }
     }
 
     const btnClass = isRed ? 'comment-btn comment-btn-alert' : 'comment-btn';
@@ -3035,10 +3154,36 @@ document.addEventListener('click', (e) => {
     }
 });
 
-function getTodayQuota(d) {
+function getQuotaForDate(d, dateStr = null) {
+    if (!d) return 0;
     const days = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
-    const todayStr = days[new Date().getDay()];
-    return d[`quota_${todayStr}`] !== undefined ? d[`quota_${todayStr}`] : (d.daily_quota || 0);
+    let dayIndex;
+    if (dateStr) {
+        const parsed = new Date(dateStr);
+        if (!isNaN(parsed.getTime())) {
+            dayIndex = parsed.getDay();
+        }
+    }
+    if (dayIndex === undefined) {
+        dayIndex = new Date().getDay();
+    }
+    const dayStr = days[dayIndex];
+    return d[`quota_${dayStr}`] !== undefined ? d[`quota_${dayStr}`] : (d.daily_quota !== undefined ? d.daily_quota : 15);
+}
+
+function getTodayQuota(d) {
+    return getQuotaForDate(d, null);
+}
+
+function getDiagnosticianCountForDate(d, dateStr = null) {
+    if (!d) return 0;
+    if (dateStr && d.counts_by_date) {
+        const cleanDate = String(dateStr).slice(0, 10);
+        if (d.counts_by_date[cleanDate] !== undefined) {
+            return d.counts_by_date[cleanDate];
+        }
+    }
+    return d.current_day_count !== undefined ? d.current_day_count : 0;
 }
 
 let currentBulkSelection = "";
@@ -3099,6 +3244,13 @@ function getEligibleFabDiagnosticians() {
         return diagnosticians.map(d => ({ ...d, isEligible: d.available }));
     }
 
+    // Resolve date: if all selected exams are from the same date, use it; otherwise use today's date
+    let targetDate = null;
+    const dates = [...new Set(selectedList.map(e => (e.visitdate || e.request_date || '').slice(0, 10)).filter(Boolean))];
+    if (dates.length === 1) {
+        targetDate = dates[0];
+    }
+
     if (bulkEligibilityCache) {
         return diagnosticians.map(d => {
             const cached = bulkEligibilityCache.get(d.id);
@@ -3134,11 +3286,12 @@ function getEligibleFabDiagnosticians() {
             rejectReason = 'Δεν αξιολογεί MRIs';
         }
 
-        const quota = getTodayQuota(d);
+        const quota = getQuotaForDate(d, targetDate);
+        const count = getDiagnosticianCountForDate(d, targetDate);
         if (quota === 0) {
             isEligible = false;
             rejectReason = 'Μη διαθέσιμος';
-        } else if (quota !== 999 && d.current_day_count >= quota) {
+        } else if (quota !== 999 && count >= quota) {
             isEligible = false;
             rejectReason = 'Όριο γεμάτο';
         }
@@ -3159,6 +3312,19 @@ function populateFabDropdown() {
     const search = normalizeGreek(searchInput ? searchInput.value : '');
 
     let eligible = getEligibleFabDiagnosticians();
+
+    // Check if single date or mixed dates across selection
+    const selectedList = currentTab === 'pending'
+        ? pendingExams.filter(e => selectedExams.has(e.exam_id))
+        : assignedExams.filter(e => selectedAssignedExams.has(e.exam_id));
+
+    let targetDate = null;
+    if (selectedList.length > 0) {
+        const dates = [...new Set(selectedList.map(e => (e.visitdate || e.request_date || '').slice(0, 10)).filter(Boolean))];
+        if (dates.length === 1) {
+            targetDate = dates[0];
+        }
+    }
 
     // Sort: Eligible first, then calculating, then non-eligible, then alphabetical
     eligible.sort((a, b) => {
@@ -3186,7 +3352,8 @@ function populateFabDropdown() {
     }
 
     list.innerHTML = headerLoadingHtml + filtered.map(d => {
-        const quota = getTodayQuota(d);
+        const quota = getQuotaForDate(d, targetDate);
+        const count = getDiagnosticianCountForDate(d, targetDate);
         const quotaStr = quota === 999 ? '∞' : quota;
         const isError = !d.isEligible && !d.isCalculating;
         const isCalc = d.isCalculating;
@@ -3203,7 +3370,7 @@ function populateFabDropdown() {
 
         return `
             <div class="${itemClass}" onclick="bulkAssignToSpecific(${d.id}, '${escapeHtml(d.name)}')" style="${style}">
-                ${escapeHtmlFull(d.name)} <span style="opacity: ${isError ? '0.9' : '0.5'}; font-size: 11px; margin-left: 4px;">(${d.current_day_count}/${quotaStr})</span>
+                ${escapeHtmlFull(d.name)} <span style="opacity: ${isError ? '0.9' : '0.5'}; font-size: 11px; margin-left: 4px;">(${count}/${quotaStr})</span>
                 ${reasonHtml}
             </div>
         `;
@@ -3647,21 +3814,183 @@ function updateAssignedBulkUI() {
     updateBulkActionsUI();
 }
 
-async function loadDashboard() {
+let currentDashboardDate = null;
+let currentDashboardOffset = 0;
+
+function getDateByOffset(offset) {
+    const d = new Date();
+    d.setDate(d.getDate() + offset);
+    const yyyy = d.getFullYear();
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    return `${yyyy}-${mm}-${dd}`;
+}
+
+function parseDateDMY(dmyStr) {
+    if (!dmyStr || typeof dmyStr !== 'string') return null;
+    const clean = dmyStr.trim();
+    // Match DD-MM-YYYY or DD/MM/YYYY or DD.MM.YYYY
+    const dmyMatch = clean.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})$/);
+    if (dmyMatch) {
+        const day = dmyMatch[1].padStart(2, '0');
+        const month = dmyMatch[2].padStart(2, '0');
+        const year = dmyMatch[3];
+        return `${year}-${month}-${day}`;
+    }
+    // Match YYYY-MM-DD
+    const ymdMatch = clean.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})$/);
+    if (ymdMatch) {
+        const year = ymdMatch[1];
+        const month = ymdMatch[2].padStart(2, '0');
+        const day = ymdMatch[3].padStart(2, '0');
+        return `${year}-${month}-${day}`;
+    }
+    return null;
+}
+
+function openDashboardDatePicker() {
+    const dateInput = document.getElementById('dashboard-custom-date');
+    if (!dateInput) return;
+    if (typeof dateInput.showPicker === 'function') {
+        try {
+            dateInput.showPicker();
+            return;
+        } catch (e) {
+            // fallback
+        }
+    }
+    dateInput.click();
+}
+
+function onDashboardDateNativeChange(val) {
+    if (!val) return;
+    const textInput = document.getElementById('dashboard-custom-date-text');
+    if (textInput) {
+        textInput.value = formatDateDMY(val);
+    }
+    switchDashboardCustomDate(val);
+}
+
+function onDashboardDateTextChange(textVal) {
+    if (!textVal || !textVal.trim()) {
+        switchDashboardDateOffset(0);
+        return;
+    }
+    const isoDate = parseDateDMY(textVal);
+    if (isoDate) {
+        const textInput = document.getElementById('dashboard-custom-date-text');
+        if (textInput) textInput.value = formatDateDMY(isoDate);
+        const dateInput = document.getElementById('dashboard-custom-date');
+        if (dateInput) dateInput.value = isoDate;
+        switchDashboardCustomDate(isoDate);
+    } else {
+        // Revert to current
+        const textInput = document.getElementById('dashboard-custom-date-text');
+        if (textInput) textInput.value = formatDateDMY(currentDashboardDate || getDateByOffset(0));
+    }
+}
+
+function onDashboardDateTextKeyUp(e, inputEl) {
+    if (e.key === 'Enter') {
+        inputEl.blur();
+    }
+}
+
+function updateDashboardDateLabels() {
+    const todayStr = getDateByOffset(0);
+    const yestStr = getDateByOffset(-1);
+    const prevStr = getDateByOffset(-2);
+
+    const elToday = document.getElementById('dash-date-today');
+    const elYest = document.getElementById('dash-date-yesterday');
+    const elPrev = document.getElementById('dash-date-prev');
+    const dateInput = document.getElementById('dashboard-custom-date');
+    const textInput = document.getElementById('dashboard-custom-date-text');
+
+    if (elToday) elToday.textContent = `(${formatDateDMY(todayStr)})`;
+    if (elYest) elYest.textContent = `(${formatDateDMY(yestStr)})`;
+    if (elPrev) elPrev.textContent = `(${formatDateDMY(prevStr)})`;
+    
+    const activeDate = currentDashboardDate || todayStr;
+    if (dateInput) {
+        dateInput.value = activeDate;
+    }
+    if (textInput) {
+        textInput.value = formatDateDMY(activeDate);
+    }
+}
+
+function switchDashboardDateOffset(offset) {
+    currentDashboardOffset = offset;
+    currentDashboardDate = getDateByOffset(offset);
+
+    document.querySelectorAll('.dashboard-subtab-btn').forEach(b => b.classList.remove('active'));
+    if (offset === 0) document.getElementById('dash-tab-today')?.classList.add('active');
+    else if (offset === -1) document.getElementById('dash-tab-yesterday')?.classList.add('active');
+    else if (offset === -2) document.getElementById('dash-tab-prev')?.classList.add('active');
+
+    const dateInput = document.getElementById('dashboard-custom-date');
+    if (dateInput) dateInput.value = currentDashboardDate;
+    const textInput = document.getElementById('dashboard-custom-date-text');
+    if (textInput) textInput.value = formatDateDMY(currentDashboardDate);
+
+    loadDashboard(currentDashboardDate);
+}
+
+function switchDashboardCustomDate(val) {
+    if (!val) return;
+    currentDashboardDate = val;
+    currentDashboardOffset = null;
+
+    document.querySelectorAll('.dashboard-subtab-btn').forEach(b => b.classList.remove('active'));
+    const todayStr = getDateByOffset(0);
+    const yestStr = getDateByOffset(-1);
+    const prevStr = getDateByOffset(-2);
+
+    if (val === todayStr) {
+        currentDashboardOffset = 0;
+        document.getElementById('dash-tab-today')?.classList.add('active');
+    } else if (val === yestStr) {
+        currentDashboardOffset = -1;
+        document.getElementById('dash-tab-yesterday')?.classList.add('active');
+    } else if (val === prevStr) {
+        currentDashboardOffset = -2;
+        document.getElementById('dash-tab-prev')?.classList.add('active');
+    }
+
+    const dateInput = document.getElementById('dashboard-custom-date');
+    if (dateInput) dateInput.value = currentDashboardDate;
+    const textInput = document.getElementById('dashboard-custom-date-text');
+    if (textInput) textInput.value = formatDateDMY(currentDashboardDate);
+
+    loadDashboard(currentDashboardDate);
+}
+
+function refreshDashboardCurrentDate() {
+    loadDashboard(currentDashboardDate || getDateByOffset(0));
+}
+
+async function loadDashboard(targetDate = null) {
+    updateDashboardDateLabels();
+    if (!targetDate) {
+        targetDate = currentDashboardDate || getDateByOffset(0);
+    }
+    currentDashboardDate = targetDate;
+
     const grid = document.getElementById('dashboard-grid');
     if (!grid) return;
 
-    grid.innerHTML = '<div style="color: var(--text-secondary);">Φόρτωση...</div>';
+    grid.innerHTML = '<div class="dashboard-empty-state">Φόρτωση δεδομένων...</div>';
     try {
-        const data = await apiCall('/dashboard', 'GET');
+        const data = await apiCall(`/dashboard?date=${targetDate}`, 'GET');
         if (!data || data.length === 0) {
-            grid.innerHTML = '<div style="color: var(--text-secondary);">Δεν υπάρχουν δεδομένα για σήμερα.</div>';
+            grid.innerHTML = `<div class="dashboard-empty-state">Δεν υπάρχουν καταγεγραμμένες αναθέσεις για ${formatDateDMY(targetDate)}.</div>`;
             return;
         }
 
         grid.innerHTML = data.map(d => {
             const diagInfo = diagnosticians.find(x => x.id === d.diagnostician_id);
-            let quota = diagInfo ? getTodayQuota(diagInfo) : 0;
+            let quota = diagInfo ? getQuotaForDate(diagInfo, targetDate) : 0;
             let quotaStr = quota === 999 ? '∞' : quota;
             let count = (d.assigned_exam_ids && d.assigned_exam_ids.length > 0) ? d.assigned_exam_ids.length : d.assigned_orders.length;
 
@@ -3783,7 +4112,7 @@ async function loadDashboard() {
             `;
         }).join('');
     } catch (e) {
-        grid.innerHTML = `<div style="color: #ef4444;">Σφάλμα φόρτωσης: ${escapeHtml(e.message)}</div>`;
+        grid.innerHTML = `<div style="color: #ef4444; padding: 16px;">Σφάλμα φόρτωσης: ${escapeHtml(e.message)}</div>`;
     }
 }
 

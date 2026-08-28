@@ -20,10 +20,16 @@ def setup_logging(log_level: str = "DEBUG") -> None:
         log_level: Minimum log level (DEBUG, INFO, WARNING, ERROR)
     """
     # Ensure stdout/stderr use UTF-8 to avoid UnicodeEncodeError on Windows
-    if sys.stdout.encoding.lower() != 'utf-8':
-        sys.stdout.reconfigure(encoding='utf-8')
-    if sys.stderr.encoding.lower() != 'utf-8':
-        sys.stderr.reconfigure(encoding='utf-8')
+    try:
+        if sys.stdout and hasattr(sys.stdout, 'reconfigure'):
+            sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+    except Exception:
+        pass
+    try:
+        if sys.stderr and hasattr(sys.stderr, 'reconfigure'):
+            sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+    except Exception:
+        pass
 
     # Determine if we're in development
     is_dev = log_level.upper() == "DEBUG"

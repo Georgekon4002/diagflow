@@ -390,17 +390,21 @@ def push_exam_to_slis(
 
         cat = None
         extra = None
+        vdate = None
         local_assign = cfg_db.get_all_local_assignments().get(exammoreid)
         if local_assign:
             cat = local_assign.get("modality")
             extra = local_assign.get("extracode")
+            vdate = local_assign.get("visitdate")
 
         try:
             con = _get_db()
-            row = con.execute("SELECT category, extracode, diagnostis, code, slis_synced_at FROM slis_exams WHERE exammoreid = ?", (exammoreid,)).fetchone()
+            row = con.execute("SELECT category, extracode, diagnostis, code, slis_synced_at, visitdate FROM slis_exams WHERE exammoreid = ?", (exammoreid,)).fetchone()
             if row:
                 cat = cat or (row["category"] if "category" in row.keys() else None)
                 extra = extra or (str(row["extracode"]) if ("extracode" in row.keys() and row["extracode"]) else None)
+                if not vdate and "visitdate" in row.keys() and row["visitdate"]:
+                    vdate = str(row["visitdate"])[:10]
 
                 # Mock Mode Optimistic Locking: check if already assigned to someone else
                 if (not force and
@@ -441,7 +445,7 @@ def push_exam_to_slis(
             logger.warning("failed_to_update_local_slis_cache", exammoreid=exammoreid, error=str(cache_exc))
 
         cfg_db.mark_local_assignment_synced(exammoreid, now_iso)
-        cfg_db.log_assignment(exammoreid, diagnostician_id, now_iso, cat, extra)
+        cfg_db.log_assignment(exammoreid, diagnostician_id, now_iso, cat, extra, visitdate=vdate)
 
         logger.info(
             "push_to_slis_success",

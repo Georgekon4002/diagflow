@@ -4,6 +4,8 @@ DiagFlow — Scoring Tests
 Tests that the weighted scoring logic produces correct scores.
 """
 
+import pytest
+
 from diagflow.engine.scoring import (
     compute_candidate_score,
     score_all_candidates,
@@ -116,7 +118,3 @@ class TestCompositeScoring:
 
         for score in scores:
             assert 0.0 <= score.total_score <= 1.0
-
-
-# Need to import pytest for approx
-import pytest

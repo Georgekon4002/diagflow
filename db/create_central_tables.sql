@@ -252,7 +252,8 @@ BEGIN
         diagnostician_id INT           NOT NULL,
         assigned_at      NVARCHAR(50)  NOT NULL,
         modality         NVARCHAR(50)  NULL,
-        extracode        NVARCHAR(100) NULL
+        extracode        NVARCHAR(100) NULL,
+        visitdate        NVARCHAR(50)  NULL
     );
     CREATE INDEX idx_df_assignlog_diag ON df_assignment_log(diagnostician_id);
     CREATE INDEX idx_df_assignlog_date ON df_assignment_log(assigned_at);
@@ -273,7 +274,8 @@ BEGIN
         is_auto            BIT           NOT NULL DEFAULT 0,
         rule_desc          NVARCHAR(500) NULL,
         extracode          NVARCHAR(100) NULL,
-        modality           NVARCHAR(50)  NULL
+        modality           NVARCHAR(50)  NULL,
+        visitdate          NVARCHAR(50)  NULL
     );
     CREATE INDEX idx_df_localassign_diag ON df_local_assignments(diagnostician_id);
     PRINT 'Created table df_local_assignments';

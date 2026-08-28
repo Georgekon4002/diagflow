@@ -667,6 +667,8 @@ function showSection(name) {
         loadOncall();
         loadPamakristosOverrides();
         loadPamakristosWeeklySchedule();
+    } else if (name === 'advanced') {
+        loadAdvancedOptions();
     }
 }
 
@@ -3320,18 +3322,20 @@ let advRoutingRules = [];
 let advExclusiveRules = [];
 let advModalityQuotas = [];
 let advDoctorsList = [];
+let advCommentRuleEnabled = true;
 
 async function loadAdvancedOptions() {
     try {
-        const [routing, exclusive, quotas] = await Promise.all([
+        const [routing, exclusive, quotas, commentRule] = await Promise.all([
             apiCall('/admin/advanced/exam-routing-rules'),
             apiCall('/admin/advanced/exclusive-lab-rules'),
             apiCall('/admin/advanced/modality-quotas'),
-            
+            apiCall('/admin/advanced/comment-rule'),
         ]);
         advRoutingRules = routing || [];
         advExclusiveRules = exclusive || [];
         advModalityQuotas = quotas || [];
+        advCommentRuleEnabled = commentRule ? Boolean(commentRule.enabled) : true;
         
         renderAdvancedOptions();
     } catch (e) {
@@ -3339,7 +3343,43 @@ async function loadAdvancedOptions() {
     }
 }
 
+async function toggleCommentAutoAssignRule(explicitState) {
+    try {
+        const targetState = explicitState !== undefined ? Boolean(explicitState) : !advCommentRuleEnabled;
+        const res = await apiCall('/admin/advanced/comment-rule', 'POST', { enabled: targetState });
+        if (res && res.enabled !== undefined) {
+            advCommentRuleEnabled = res.enabled;
+            renderAdvancedOptions();
+            showToast(res.message || (advCommentRuleEnabled ? 'Ο κανόνας σχολίων ενεργοποιήθηκε' : 'Ο κανόνας σχολίων απενεργοποιήθηκε'), 'success');
+        }
+    } catch (err) {
+        showToast('Σφάλμα κατά την αλλαγή της ρύθμισης: ' + err.message, 'error');
+        renderAdvancedOptions();
+    }
+}
+
 function renderAdvancedOptions() {
+    // 0. Comment Rule Toggle State
+    const commentBadge = document.getElementById('comment-rule-status-badge');
+    const commentChk = document.getElementById('chk-comment-rule');
+
+    if (commentChk) {
+        commentChk.checked = advCommentRuleEnabled;
+    }
+    if (commentBadge) {
+        if (advCommentRuleEnabled) {
+            commentBadge.textContent = 'ΕΝΕΡΓΟ';
+            commentBadge.style.background = 'rgba(16, 185, 129, 0.15)';
+            commentBadge.style.color = '#10b981';
+            commentBadge.style.border = '1px solid rgba(16, 185, 129, 0.35)';
+        } else {
+            commentBadge.textContent = 'ΑΠΕΝΕΡΓΟΠΟΙΗΜΕΝΟ';
+            commentBadge.style.background = 'rgba(239, 68, 68, 0.15)';
+            commentBadge.style.color = '#ef4444';
+            commentBadge.style.border = '1px solid rgba(239, 68, 68, 0.35)';
+        }
+    }
+
     const getLabName = (id) => {
         if (!id) return 'Όλα';
         if (id === 1) return 'ΚΟΛΙΑΤΣΟΥ';

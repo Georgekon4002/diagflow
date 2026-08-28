@@ -119,10 +119,14 @@ The pipeline processes each pending medical exam through four distinct stages:
 ```
 Pending Exam
     │
-    ├─ Stage 0: Exclusive Partnership or Dynamic Routing Rule matched? ──yes──► Auto-Assignment
+    ├─ Stage 0: Comment Name Mention? ──yes──► Auto-Assignment ("Όνομα Διαγνώστη αναφέρθηκε στα σχόλια")
+    │          (Matches exact names, inflections, consonant skeletons e.g. 'ΝΤΣΚ', typos)
+    │          ('ΟΧΙ' exclusions suppress all subsequent auto-assignment rules)
+    │
+    ├─ Stage 0.5: Exclusive Partnership or Dynamic Routing Rule matched? ──yes──► Auto-Assignment
     │
     ▼
-Stage 1: Hard Filters (Availability → Capacity → Modality Quotas → Modality → Skills → Exclusive Labs)
+Stage 1: Hard Filters (Comment Exclusion → Availability → Capacity → Modality Quotas → Modality → Skills → Exclusive Labs)
     │
     ▼
 Stage 2: Weighted Scoring (Partnership + Patient History + Skills Bonus + Lab Preference + Capacity Ratio)
@@ -137,14 +141,20 @@ Stage 4: Solver (Greedy pick rank #1 for single exam, CP-SAT for batch optimizat
 Assignment Suggestion + Score Breakdown + Alternatives List + Audit Trail Log
 ```
 
-#### Stage 0: Direct Routing & Exclusive Partnerships
-Exams issued by doctors with an **active exclusive partnership** or matching a **dynamic exam routing rule** bypass scoring and are assigned directly to the target diagnostician.
+#### Stage 0: Comment Mentions & 'ΟΧΙ' Exclusions (Highest Priority)
+- **Positive Mention:** If an active diagnostician's name or variation (exact, inflections, consonant skeleton like `ΝΤΣΚ` $\to$ ΝΑΤΣΙΚΑ, `ΜΠΡΤ` $\to$ ΜΠΕΡΕΤΗΣ, `ΣΓΛ` $\to$ ΣΙΓΑΛΑΣ, `ΚΛΓΡΓ` $\to$ ΚΟΥΛΟΓΙΩΡΓΑ, or typos `Νατσκα`) appears in comments, the exam is **immediately auto-assigned** with `rule_desc = "Όνομα Διαγνώστη αναφέρθηκε στα σχόλια"`.
+- **Negative Exclusion ('ΟΧΙ'):** If preceded by `'ΟΧΙ'` (e.g. `ΟΧΙ ΝΑΤΣΙΚΑ`), that diagnostician is completely excluded from all auto-assignments and suggestions.
+- **Admin Switch:** Toggleable via checkbox in Admin Panel -> **Για Προχωρημένους**.
+
+#### Stage 0.5: Direct Routing & Exclusive Partnerships
+Exams issued by doctors with an **active exclusive partnership** or matching a **dynamic exam routing rule** (provided they are not excluded by comment) bypass scoring and are assigned directly to the target diagnostician.
 
 #### Stage 1: Hard Filters (Must Pass)
 Candidates failing any hard filter are marked as **eliminated** for that exam. *Crucially, eliminated candidates are NOT hidden from the user*; they are presented in the UI alternatives modal with a red box and human-readable elimination reason so the operator can manually override if necessary.
 
 | Filter | Description | Rejection Reason Example |
 |--------|-------------|--------------------------|
+| `filter_by_comment_exclusion` (Priority 0) | Checks exclusion from comments ('ΟΧΙ [Name]') | `Αποκλείστηκε λόγω σχολίου` |
 | `filter_by_exclusive_lab_dynamic` | Checks if diagnostician is bound exclusively to a specific lab | `Αποκλειστικό εργαστήριο (ΚΟΛΙΑΤΣΟΥ)` |
 | `filter_by_availability` | Verifies diagnostician is active, working today, and not on leave | `Σε άδεια` / `Εκτός προγράμματος` |
 | `filter_by_capacity` | Checks if current daily count reached the weekday quota limit | `Έχει συμπληρώσει το ημερήσιο όριο (15/15)` |
@@ -177,7 +187,14 @@ To prevent the same top-scoring diagnostician from receiving all sequential reco
 
 ---
 
-### 2. Auto-Assignment System
+### 2. Auto-Assignment System (Priority Hierarchy)
+
+1. **Comment Name Mentions & 'ΟΧΙ' Exclusions (Top Priority):** Direct auto-assignment when diagnostician name or consonant skeleton (`ΝΤΣΚ`, `ΜΠΡΤ`, `ΣΓΛ`, `ΚΛΓΡΓ`) is found in comments; complete suppression when preceded by `'ΟΧΙ'`.
+2. **Exclusive Doctor Partnerships:** Active doctor-diagnostician pairs auto-assign directly.
+3. **Dynamic Exam Routing Rules:** Specific exam codes (Arthrograms, Spectroscopies, TMJ) routed to specialized diagnosticians.
+4. **Παμμακάριστος On-Call:** Exams from Παμμακάριστος routed to daily on-call diagnostician.
+
+Exams appear in the **Assigned** tab with a `⚡ Auto` badge and detailed hover tooltip.
 
 DiagFlow automates routine assignments upon pulling pending exams:
 1. **Exclusive Partnerships:** Active doctor-diagnostician exclusive pairs are auto-assigned.

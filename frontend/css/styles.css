@@ -3024,6 +3024,8 @@ body.dark-theme {
 }
 
 .workload-gauge-track {
+    display: inline-block;
+    vertical-align: middle;
     width: 52px;
     height: 7px;
     background: rgba(0, 0, 0, 0.08);
@@ -3049,6 +3051,7 @@ body.dark-theme {
 }
 
 .workload-gauge-fill {
+    display: block;
     height: 100%;
     border-radius: 3px;
     transition: width 0.3s ease;
@@ -3125,6 +3128,148 @@ body.dark-theme {
     background: rgba(15, 23, 42, 0.92) !important;
     border: 1px solid rgba(99, 102, 241, 0.3) !important;
     box-shadow: 0 24px 54px -8px rgba(0, 0, 0, 0.75), 0 0 0 1px rgba(255, 255, 255, 0.08) !important;
+}
+
+/* ── Dashboard Multi-Day Sub-Tabs ── */
+.dashboard-subtabs-container {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-bottom: 20px;
+    padding: 8px 12px;
+    background: var(--bg-secondary, rgba(255, 255, 255, 0.6));
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid var(--border-color, rgba(255, 255, 255, 0.15));
+    border-radius: 12px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.04);
+}
+
+[data-theme="dark"] .dashboard-subtabs-container {
+    background: rgba(30, 41, 59, 0.6);
+    border-color: rgba(255, 255, 255, 0.08);
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+}
+
+.dashboard-subtabs {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+
+.dashboard-subtab-btn {
+    padding: 7px 14px;
+    border-radius: 8px;
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--text-secondary);
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    user-select: none;
+}
+
+.dashboard-subtab-btn:hover {
+    background: var(--bg-tertiary, rgba(255, 255, 255, 0.1));
+    color: var(--text-primary);
+}
+
+.dashboard-subtab-btn.active {
+    background: var(--accent-primary, #3B82F6) !important;
+    color: #FFFFFF !important;
+    border-color: var(--accent-primary, #3B82F6) !important;
+    box-shadow: 0 2px 10px rgba(59, 130, 246, 0.35);
+}
+
+.dashboard-date-picker-wrap {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.dashboard-custom-date-wrapper {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+}
+
+.dashboard-date-input {
+    padding: 6px 34px 6px 12px;
+    border-radius: 8px;
+    border: 1px solid var(--border-color, rgba(0, 0, 0, 0.15));
+    background: var(--bg-primary, #FFFFFF);
+    color: var(--text-primary);
+    font-size: 13px;
+    font-weight: 600;
+    cursor: text;
+    transition: all 0.2s ease;
+    font-family: inherit;
+    width: 145px;
+    box-sizing: border-box;
+    letter-spacing: 0.5px;
+    text-align: left;
+}
+
+[data-theme="dark"] .dashboard-date-input {
+    background: rgba(15, 23, 42, 0.8);
+    border-color: rgba(255, 255, 255, 0.15);
+    color: #F8FAFC;
+}
+
+.dashboard-date-input:focus {
+    outline: none;
+    border-color: var(--accent-primary, #3B82F6);
+    box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.25);
+}
+
+.dashboard-calendar-btn {
+    position: absolute;
+    right: 6px;
+    top: 50%;
+    transform: translateY(-50%);
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    font-size: 14px;
+    padding: 3px 4px;
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: opacity 0.2s;
+    opacity: 0.75;
+}
+
+.dashboard-calendar-btn:hover {
+    opacity: 1;
+    background: rgba(0, 0, 0, 0.05);
+}
+
+[data-theme="dark"] .dashboard-calendar-btn:hover {
+    background: rgba(255, 255, 255, 0.1);
+}
+
+.dashboard-empty-state {
+    column-span: all;
+    -webkit-column-span: all;
+    width: 100%;
+    text-align: center;
+    padding: 36px 20px;
+    color: var(--text-secondary);
+    font-size: 14px;
+    font-weight: 500;
+    background: var(--bg-card);
+    border: 1px dashed var(--border-color);
+    border-radius: 12px;
+    box-sizing: border-box;
+    margin: 8px 0;
 }
 
 /* ── Circular Dashboard Gauges (Masonry Layout) ── */
