@@ -147,6 +147,7 @@ def ensure_slis_exams_table(con: sqlite3.Connection) -> None:
             name TEXT,
             notes TEXT,
             category TEXT,
+            stat INTEGER DEFAULT 0,
             slis_synced_at TEXT DEFAULT NULL
         )
     """)
@@ -155,6 +156,8 @@ def ensure_slis_exams_table(con: sqlite3.Connection) -> None:
         con.execute("ALTER TABLE slis_exams ADD COLUMN slis_synced_at TEXT DEFAULT NULL")
     if "age" not in cols:
         con.execute("ALTER TABLE slis_exams ADD COLUMN age INTEGER DEFAULT NULL")
+    if "stat" not in cols:
+        con.execute("ALTER TABLE slis_exams ADD COLUMN stat INTEGER DEFAULT 0")
     con.commit()
 
 
@@ -620,6 +623,7 @@ def search_slis_exams(
             "status": status,
             "pending_slis_update": pending_slis_update,
             "notes": r.get("notes") or "",
+            "stat": int(r.get("stat")) if r.get("stat") is not None and str(r.get("stat")).isdigit() else 0,
         })
 
     logger.info("search_slis_complete", total_found=len(rows), filtered=len(filtered))

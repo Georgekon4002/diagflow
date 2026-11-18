@@ -81,6 +81,7 @@ def seed_all():
             name TEXT,
             notes TEXT,
             category TEXT,
+            stat INTEGER DEFAULT 0,
             slis_synced_at TEXT DEFAULT NULL
         )
     """)
@@ -350,7 +351,7 @@ def seed_all():
         "notes": "ΜΠΡΤ - Άμεση προτεραιότητα", "category": "MRI", "slis_synced_at": None
     })
 
-    # 5.6 Negative exclusion: 'ΟΧΙ ΝΑΤΣΙΚΑ' -> ΝΑΤΣΙΚΑ excluded ('Αποκλείστηκε λόγω σχολίου')
+    # 5.6 Negative exclusion: 'ΟΧΙ ΝΑΤΣΙΚΑ' -> ΝΑΤΣΙΚΑ excluded ('Αποκλείστηκε λόγω σχολίου') + STAT (1)
     exams.append({
         "exammoreid": 5006,
         "oldvisit": 0, "oldorder": "", "oldpers": None, "olddiagnostis": None,
@@ -360,10 +361,10 @@ def seed_all():
         "visitdate": today_str, "labcodeid": 2, "laboratoryname": "ΜΑΓΝΗΤΙΚΟΣ ΤΟΜΟΓΡΑΦΟΣ 1.5T",
         "wardid": 18, "wcode": "DOC-70", "wname": "ΟΡΘΟΠΕΔΙΚΟ",
         "diagnostis": None, "personelid": None, "code": None, "name": None,
-        "notes": "ΟΧΙ ΝΑΤΣΙΚΑ", "category": "MRI", "slis_synced_at": None
+        "notes": "ΟΧΙ ΝΑΤΣΙΚΑ", "category": "MRI", "stat": 1, "slis_synced_at": None
     })
 
-    # 5.7 Negative exclusion overriding Exclusive Partner:
+    # 5.7 Negative exclusion overriding Exclusive Partner + EMERGENCY (2):
     # Doctor ΚΟΥΤΣΕΛΙΝΗΣ (wcode '570859') is exclusive to ΝΑΤΣΙΚΑ (14), BUT comment has 'ΟΧΙ ΝΑΤΣΙΚΑ'
     exams.append({
         "exammoreid": 5007,
@@ -374,7 +375,7 @@ def seed_all():
         "visitdate": today_str, "labcodeid": 2, "laboratoryname": "ΜΑΓΝΗΤΙΚΟΣ ΤΟΜΟΓΡΑΦΟΣ 1.5T",
         "wardid": 21, "wcode": "570859", "wname": "ΚΟΥΤΣΕΛΙΝΗΣ NEΚΤΑΡΙΟΣ",
         "diagnostis": None, "personelid": None, "code": None, "name": None,
-        "notes": "όχι νάτσικα - ασθενής ζήτησε άλλον ιατρό", "category": "MRI", "slis_synced_at": None
+        "notes": "όχι νάτσικα - ασθενής ζήτησε άλλον ιατρό", "category": "MRI", "stat": 2, "slis_synced_at": None
     })
 
     # 5.8 Negative exclusion combined with positive match: 'ΟΧΙ ΜΠΕΡΕΤΗΣ - ΝΑΤΣΙΚΑ'
@@ -457,7 +458,7 @@ def seed_all():
         "visitdate": yesterday_str, "labcodeid": 1, "laboratoryname": "ΑΞΟΝΙΚΟΣ ΤΟΜΟΓΡΑΦΟΣ 64",
         "wardid": 10, "wcode": "DOC-12", "wname": "ΠΝΕΥΜΟΝΟΛΟΓΙΚΟ",
         "diagnostis": None, "personelid": None, "code": None, "name": None,
-        "notes": "", "category": "CT", "slis_synced_at": None
+        "notes": "", "category": "CT", "stat": 1, "slis_synced_at": None
     })
     exams.append({
         "exammoreid": 7002,
@@ -468,7 +469,7 @@ def seed_all():
         "visitdate": yesterday_str, "labcodeid": 2, "laboratoryname": "ΜΑΓΝΗΤΙΚΟΣ ΤΟΜΟΓΡΑΦΟΣ 1.5T",
         "wardid": 10, "wcode": "DOC-13", "wname": "ΠΑΘΟΛΟΓΙΚΟ",
         "diagnostis": None, "personelid": None, "code": None, "name": None,
-        "notes": "", "category": "MRI", "slis_synced_at": None
+        "notes": "", "category": "MRI", "stat": 2, "slis_synced_at": None
     })
     exams.append({
         "exammoreid": 7003,
@@ -479,24 +480,221 @@ def seed_all():
         "visitdate": two_days_ago_str, "labcodeid": 1, "laboratoryname": "ΑΞΟΝΙΚΟΣ ΤΟΜΟΓΡΑΦΟΣ 64",
         "wardid": 10, "wcode": "DOC-14", "wname": "ΟΡΘΟΠΕΔΙΚΟ",
         "diagnostis": None, "personelid": None, "code": None, "name": None,
-        "notes": "", "category": "CT", "slis_synced_at": None
+        "notes": "", "category": "CT", "stat": 0, "slis_synced_at": None
     })
+    exams.append({
+        "exammoreid": 7004,
+        "oldvisit": 0, "oldorder": "", "oldpers": None, "olddiagnostis": None,
+        "aa": 4, "extracode": "ORD-2AGO-02", "visitid": 9204, "demogid": 8604,
+        "fname": "ΓΕΩΡΓΙΑ", "lname": "ΠΑΠΑΧΡΗΣΤΟΥ", "age": 68,
+        "examid": 323, "examnumcode": "21010", "examname": "CT ΘΩΡΑΚΟΣ",
+        "visitdate": two_days_ago_str, "labcodeid": 3, "laboratoryname": "ΠΑΜΜΑΚΑΡΙΣΤΟΣ - ΑΚΤΙΝΟΔΙΑΓΝΩΣΤΙΚΟ",
+        "wardid": 30, "wcode": "PAM-03", "wname": "ΠΑΜΜΑΚΑΡΙΣΤΟΣ",
+        "diagnostis": None, "personelid": None, "code": None, "name": None,
+        "notes": "Επανέλεγχος Παμμακαρίστου", "category": "CT", "stat": 0, "slis_synced_at": None
+    })
+
+    # ─────────────────────────────────────────────────────────────────────────────
+    # SCENARIO 8: Realistic Bulk Clinical Volume (Pending & Varied Cases)
+    # ─────────────────────────────────────────────────────────────────────────────
+    bulk_patients = [
+        ("ΑΝΑΣΤΑΣΙΟΣ", "ΠΑΠΑΔΑΚΗΣ", 54),
+        ("ΔΗΜΗΤΡΑ", "ΟΙΚΟΝΟΜΟΥ", 32),
+        ("ΓΕΩΡΓΙΑ", "ΚΑΡΑΓΙΑΝΝΗ", 8),    # Pediatric
+        ("ΠΑΝΑΓΙΩΤΗΣ", "ΔΗΜΗΤΡΙΟΥ", 45),
+        ("ΚΩΝΣΤΑΝΤΙΝΟΣ", "ΒΑΣΙΛΟΠΟΥΛΟΣ", 14), # Pediatric
+        ("ΕΥΑΓΓΕΛΙΑ", "ΣΤΑΥΡΟΠΟΥΛΟΥ", 62),
+        ("ΣΟΦΙΑ", "ΜΑΚΡΗ", 28),
+        ("ΧΡΗΣΤΟΣ", "ΑΛΕΞΙΟΥ", 17),       # Pediatric
+        ("ΜΙΧΑΗΛ", "ΑΝΤΩΝΙΟΥ", 71),
+        ("ΙΩΑΝΝΑ", "ΘΕΟΔΩΡΟΥ", 39),
+        ("ΑΝΔΡΕΑΣ", "ΣΠΥΡΟΥ", 58),
+        ("ΜΑΡΙΑ", "ΚΟΝΤΟΥ", 11),         # Pediatric
+        ("ΘΕΟΔΩΡΟΣ", "ΠΑΠΑΪΩΑΝΝΟΥ", 66),
+        ("ΚΑΛΛΙΟΠΗ", "ΖΑΧΑΡΙΑΔΟΥ", 43),
+        ("ΣΠΥΡΙΔΩΝ", "ΛΑΜΠΡΟΥ", 77),
+        ("ΧΡΙΣΤΙΝΑ", "ΜΕΛΑ", 24),
+        ("ΔΗΜΗΤΡΙΟΣ", "ΧΑΤΖΗΣ", 52),
+        ("ΑΛΕΞΑΝΔΡΑ", "ΒΛΑΧΟΥ", 60),
+        ("ΦΩΤΙΟΣ", "ΓΕΩΡΓΑΚΟΠΟΥΛΟΣ", 48),
+        ("ΕΛΙΣΑΒΕΤ", "ΡΟΥΣΣΟΥ", 35),
+        ("ΝΙΚΟΛΑΟΣ", "ΜΙΧΑΛΟΠΟΥΛΟΣ", 15), # Pediatric
+        ("ΕΛΕΝΗ", "ΣΩΤΗΡΟΠΟΥΛΟΥ", 50),
+        ("ΠΕΤΡΟΣ", "ΚΑΛΛΕΡΓΗΣ", 69),
+        ("ΒΑΣΙΛΙΚΗ", "ΑΠΟΣΤΟΛΙΔΟΥ", 41),
+        ("ΙΩΑΝΝΗΣ", "ΜΑΝΩΛΗΣ", 57),
+        ("ΜΑΡΓΑΡΙΤΑ", "ΦΩΤΙΟΥ", 16),      # Pediatric
+        ("ΑΘΑΝΑΣΙΟΣ", "ΚΩΣΤΟΠΟΥΛΟΣ", 74),
+        ("ΕΙΡΗΝΗ", "ΠΑΝΑΓΙΩΤΟΠΟΥΛΟΥ", 38),
+        ("ΣΤΕΦΑΝΟΣ", "ΜΑΡΙΝΟΣ", 63),
+        ("ΑΓΓΕΛΙΚΗ", "ΔΙΑΜΑΝΤΗ", 29),
+        ("ΕΜΜΑΝΟΥΗΛ", "ΤΖΑΝΕΤΟΣ", 55),
+        ("ΟΥΡΑΝΙΑ", "ΚΑΡΑΛΗ", 46),
+        ("ΛΑΜΠΡΟΣ", "ΧΡΗΣΤΙΔΗΣ", 82),
+        ("ΑΦΡΟΔΙΤΗ", "ΣΙΜΟΥ", 33),
+        ("ΓΡΗΓΟΡΙΟΣ", "ΚΟΥΡΤΗΣ", 67),
+        ("ΕΥΔΟΚΙΑ", "ΠΑΥΛΙΔΟΥ", 51),
+        ("ΠΑΥΛΟΣ", "ΜΠΙΛΙΑΣ", 70),
+        ("ΖΩΗ", "ΠΑΝΟΥ", 22),
+        ("ΛΕΩΝΙΔΑΣ", "ΣΤΑΜΑΤΙΟΥ", 44),
+        ("ΜΑΡΘΑ", "ΤΡΙΑΝΤΗ", 59),
+        ("ΚΥΡΙΑΚΟΣ", "ΚΑΠΕΤΑΝΙΟΣ", 65),
+        ("ΠΗΝΕΛΟΠΗ", "ΑΡΓΥΡΙΟΥ", 37),
+        ("ΣΩΤΗΡΙΟΣ", "ΜΠΑΛΑΤΣΟΣ", 76),
+        ("ΠΑΡΑΣΚΕΥΗ", "ΜΠΟΤΣΗ", 40),
+        ("ΑΝΤΩΝΙΟΣ", "ΓΙΑΝΝΑΚΟΠΟΥΛΟΣ", 53),
+        ("ΒΙΚΤΩΡΙΑ", "ΣΑΒΒΑ", 31),
+        ("ΣΤΑΥΡΟΣ", "ΓΚΙΚΑΣ", 64),
+        ("ΑΣΠΑΣΙΑ", "ΜΑΡΚΟΥ", 10),        # Pediatric
+        ("ΓΕΡΑΣΙΜΟΣ", "ΤΣΟΥΚΑΛΑΣ", 72),
+        ("ΑΝΝΑ", "ΚΑΡΑΧΑΛΙΟΥ", 27),
+    ]
+
+    exam_catalogs = [
+        {"examid": 350, "examnumcode": "22010", "examname": "MRI ΕΓΚΕΦΑΛΟΥ", "category": "MRI", "labcodeid": 2, "laboratoryname": "ΜΑΓΝΗΤΙΚΟΣ ΤΟΜΟΓΡΑΦΟΣ 1.5T"},
+        {"examid": 351, "examnumcode": "22015", "examname": "MRI ΟΣΦΥΪΚΗΣ ΜΟΙΡΑΣ (ΟΜΣΣ)", "category": "MRI", "labcodeid": 2, "laboratoryname": "ΜΑΓΝΗΤΙΚΟΣ ΤΟΜΟΓΡΑΦΟΣ 1.5T"},
+        {"examid": 352, "examnumcode": "22020", "examname": "MRI ΓΟΝΑΤΟΣ ΔΕ", "category": "MRI", "labcodeid": 2, "laboratoryname": "ΜΑΓΝΗΤΙΚΟΣ ΤΟΜΟΓΡΑΦΟΣ 1.5T"},
+        {"examid": 353, "examnumcode": "22025", "examname": "MRI ΩΜΟΥ ΑΡ", "category": "MRI", "labcodeid": 2, "laboratoryname": "ΜΑΓΝΗΤΙΚΟΣ ΤΟΜΟΓΡΑΦΟΣ 1.5T"},
+        {"examid": 354, "examnumcode": "22030", "examname": "MRI ΑΝΩ ΚΟΙΛΙΑΣ", "category": "MRI", "labcodeid": 2, "laboratoryname": "ΜΑΓΝΗΤΙΚΟΣ ΤΟΜΟΓΡΑΦΟΣ 1.5T"},
+        {"examid": 355, "examnumcode": "22035", "examname": "MRI ΑΥΧΕΝΙΚΗΣ ΜΟΙΡΑΣ (ΑΜΣΣ)", "category": "MRI", "labcodeid": 2, "laboratoryname": "ΜΑΓΝΗΤΙΚΟΣ ΤΟΜΟΓΡΑΦΟΣ 1.5T"},
+        {"examid": 356, "examnumcode": "22040", "examname": "MRI ΙΣΧΙΩΝ", "category": "MRI", "labcodeid": 6, "laboratoryname": "ΑΝΩ ΠΑΤΗΣΙΑ - ΜΑΓΝΗΤΙΚΟΣ"},
+        {"examid": 357, "examnumcode": "21000", "examname": "CT ΕΓΚΕΦΑΛΟΥ", "category": "CT", "labcodeid": 1, "laboratoryname": "ΑΞΟΝΙΚΟΣ ΤΟΜΟΓΡΑΦΟΣ 64"},
+        {"examid": 358, "examnumcode": "21010", "examname": "CT ΘΩΡΑΚΟΣ", "category": "CT", "labcodeid": 1, "laboratoryname": "ΑΞΟΝΙΚΟΣ ΤΟΜΟΓΡΑΦΟΣ 64"},
+        {"examid": 359, "examnumcode": "21020", "examname": "CT ΚΟΙΛΙΑΣ & ΟΠΙΣΘΟΠΕΡΙΤΟΝΑΙΟΥ", "category": "CT", "labcodeid": 1, "laboratoryname": "ΑΞΟΝΙΚΟΣ ΤΟΜΟΓΡΑΦΟΣ 64"},
+        {"examid": 360, "examnumcode": "21030", "examname": "CT ΣΠΟΝΔΥΛΙΚΗΣ ΣΤΗΛΗΣ", "category": "CT", "labcodeid": 1, "laboratoryname": "ΑΞΟΝΙΚΟΣ ΤΟΜΟΓΡΑΦΟΣ 64"},
+        {"examid": 361, "examnumcode": "21050", "examname": "CT ΤΡΑΧΗΛΟΥ", "category": "CT", "labcodeid": 1, "laboratoryname": "ΑΞΟΝΙΚΟΣ ΤΟΜΟΓΡΑΦΟΣ 64"},
+    ]
+
+    ward_catalogs = [
+        ("DOC-CLI-01", "ΠΑΘΟΛΟΓΙΚΗ ΚΛΙΝΙΚΗ"),
+        ("DOC-CLI-02", "ΧΕΙΡΟΥΡΓΙΚΗ ΚΛΙΝΙΚΗ"),
+        ("DOC-CLI-03", "ΟΡΘΟΠΕΔΙΚΟ ΤΜΗΜΑ"),
+        ("DOC-CLI-04", "ΝΕΥΡΟΛΟΓΙΚΟ ΤΜΗΜΑ"),
+        ("DOC-CLI-05", "ΠΝΕΥΜΟΝΟΛΟΓΙΚΗ ΚΛΙΝΙΚΗ"),
+        ("DOC-CLI-06", "ΟΥΡΟΛΟΓΙΚΗ ΚΛΙΝΙΚΗ"),
+        ("DOC-CLI-07", "ΠΑΙΔΙΑΤΡΙΚΗ ΚΛΙΝΙΚΗ"),
+        ("DOC-CLI-08", "ΓΕΝΙΚΗ ΙΑΤΡΙΚΗ"),
+    ]
+
+    notes_catalogs = [
+        "Διερεύνηση άλγους",
+        "Τακτικός επανέλεγχος",
+        "Εμμένουσα κεφαλαλγία",
+        "Οσφυαλγία με αντανάκλαση στο κάτω άκρο",
+        "Χρόνιος βήχας και δύσπνοια",
+        "Μετεγχειρητικός έλεγχος",
+        "Πτώση εξ ιδίου ύψους",
+        "Εμπύρετο",
+        "",
+        "",
+        "Πυρετός και απώλεια βάρους",
+        "Έλεγχος μετά από τραυματισμό",
+    ]
+
+    dates_pool = [today_str, today_str, today_str, yesterday_str, yesterday_str, two_days_ago_str]
+
+    curr_eid = 8001
+    curr_vid = 10001
+    curr_did = 9001
+    curr_ord = 100
+
+    # 8.1 Multi-Exam Orders (5 orders = 11 exams)
+    multi_specs = [
+        (4, [0, 5], 0, today_str),                  # 14yo Pediatric, MRI Brain + MRI Cervical
+        (6, [8, 9, 10], 1, yesterday_str),          # 28yo, CT Chest + Abdomen + Spine (STAT 1)
+        (12, [1, 2], 2, today_str),                 # 66yo, MRI Lumbar + Knee (EMERGENCY 2)
+        (21, [7, 8], 0, two_days_ago_str),          # 50yo, CT Brain + CT Chest
+        (27, [0, 4], 1, today_str),                 # 38yo, MRI Brain + MRI Abdomen (STAT 1)
+    ]
+
+    for p_idx, cat_indices, order_stat, ord_date in multi_specs:
+        p_fname, p_lname, p_age = bulk_patients[p_idx]
+        ord_code = f"ORD-MUL-{curr_ord}"
+        w_code, w_name = ward_catalogs[curr_ord % len(ward_catalogs)]
+        for sub_i, cat_idx in enumerate(cat_indices):
+            tmpl = exam_catalogs[cat_idx]
+            sub_stat = order_stat if sub_i == 0 else 0
+            exams.append({
+                "exammoreid": curr_eid,
+                "oldvisit": 0, "oldorder": "", "oldpers": None, "olddiagnostis": None,
+                "aa": sub_i + 1,
+                "extracode": ord_code,
+                "visitid": curr_vid,
+                "demogid": curr_did,
+                "fname": p_fname, "lname": p_lname, "age": p_age,
+                "examid": tmpl["examid"],
+                "examnumcode": tmpl["examnumcode"],
+                "examname": tmpl["examname"],
+                "visitdate": ord_date,
+                "labcodeid": tmpl["labcodeid"],
+                "laboratoryname": tmpl["laboratoryname"],
+                "wardid": 10, "wcode": w_code, "wname": w_name,
+                "diagnostis": None, "personelid": None, "code": None, "name": None,
+                "notes": notes_catalogs[curr_eid % len(notes_catalogs)],
+                "category": tmpl["category"],
+                "stat": sub_stat,
+                "slis_synced_at": None
+            })
+            curr_eid += 1
+        curr_vid += 1
+        curr_did += 1
+        curr_ord += 1
+
+    # 8.2 Single-Exam Orders (50 exams)
+    for i, (p_fname, p_lname, p_age) in enumerate(bulk_patients):
+        tmpl = exam_catalogs[i % len(exam_catalogs)]
+        w_code, w_name = ward_catalogs[i % len(ward_catalogs)]
+        ex_date = dates_pool[i % len(dates_pool)]
+
+        if i in (2, 9, 20):
+            ex_stat = 2 # Emergency
+        elif i in (7, 15, 25, 33, 42):
+            ex_stat = 1 # Stat
+        else:
+            ex_stat = 0 # Normal
+
+        exams.append({
+            "exammoreid": curr_eid,
+            "oldvisit": 0, "oldorder": "", "oldpers": None, "olddiagnostis": None,
+            "aa": 1,
+            "extracode": f"ORD-SGL-{curr_ord}",
+            "visitid": curr_vid,
+            "demogid": curr_did,
+            "fname": p_fname, "lname": p_lname, "age": p_age,
+            "examid": tmpl["examid"],
+            "examnumcode": tmpl["examnumcode"],
+            "examname": tmpl["examname"],
+            "visitdate": ex_date,
+            "labcodeid": tmpl["labcodeid"],
+            "laboratoryname": tmpl["laboratoryname"],
+            "wardid": 10, "wcode": w_code, "wname": w_name,
+            "diagnostis": None, "personelid": None, "code": None, "name": None,
+            "notes": notes_catalogs[i % len(notes_catalogs)],
+            "category": tmpl["category"],
+            "stat": ex_stat,
+            "slis_synced_at": None
+        })
+        curr_eid += 1
+        curr_vid += 1
+        curr_did += 1
+        curr_ord += 1
 
     # Insert all generated mock rows
     for e in exams:
+        e.setdefault("stat", 0)
         con.execute("""
             INSERT INTO slis_exams (
                 exammoreid, oldexam, oldvisit, oldorder, oldpers, olddiagnostis,
                 aa, extracode, visitid, demogid, fname, lname, age,
                 examid, examnumcode, examname, visitdate, labcodeid, laboratoryname,
                 wardid, wcode, wname, diagnostis, personelid, code, name,
-                notes, category, slis_synced_at
+                notes, category, stat, slis_synced_at
             ) VALUES (
                 :exammoreid, :oldvisit, :oldvisit, :oldorder, :oldpers, :olddiagnostis,
                 :aa, :extracode, :visitid, :demogid, :fname, :lname, :age,
                 :examid, :examnumcode, :examname, :visitdate, :labcodeid, :laboratoryname,
                 :wardid, :wcode, :wname, :diagnostis, :personelid, :code, :name,
-                :notes, :category, :slis_synced_at
+                :notes, :category, :stat, :slis_synced_at
             )
         """, e)
 

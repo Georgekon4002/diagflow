@@ -848,8 +848,63 @@ function applyFilters() {
 }
 
 function isPammakristos(exam) {
+    if (!exam) return false;
+    if (exam.is_pamakristos === true) return true;
     const wname = (exam.wname || exam.issuing_doctor_name || '').toUpperCase();
-    return wname.includes('ΠΑΜΜΑΚΑΡΙΣΤΟΣ');
+    const lab = (exam.lab_name || exam.laboratoryname || '').toUpperCase();
+    return wname.includes('ΠΑΜΜΑΚΑΡΙΣΤ') || wname.includes('ΠΑΜΑΚΑΡΙΣΤ') ||
+           lab.includes('ΠΑΜΜΑΚΑΡΙΣΤ') || lab.includes('ΠΑΜΑΚΑΡΙΣΤ');
+}
+
+function isEmergency(exam) {
+    return Number(exam && exam.stat) === 2;
+}
+
+function isUrgent(exam) {
+    const s = Number(exam && exam.stat) || 0;
+    return s === 1 || s === 2;
+}
+
+function getExamPriority(exam) {
+    if (!exam) return 0;
+    const s = Number(exam.stat) || 0;
+    if (s === 2) return 3; // Emergency (Άκρως Επείγουσα)
+    if (s === 1) return 2; // Stat (Επείγουσα)
+    if (isPammakristos(exam)) return 1; // Παμμακάριστος
+    return 0; // Κανονική
+}
+
+function getOrderGroupPriority(grp) {
+    let maxPrio = 0;
+    if (grp.exams && grp.exams.length > 0) {
+        for (const ex of grp.exams) {
+            const p = getExamPriority(ex);
+            if (p > maxPrio) maxPrio = p;
+        }
+    } else if (grp.primaryExam) {
+        maxPrio = getExamPriority(grp.primaryExam);
+    }
+    return maxPrio;
+}
+
+function getStatInfo(exam) {
+    const statVal = Number(exam.stat) || 0;
+    if (statVal === 2) {
+        return {
+            isUrgent: true,
+            isEmergency: true,
+            class: 'urgent-row emergency-row',
+            badge: '<span class="stat-badge stat-badge-emergency" title="Άκρως Επείγουσα (Emergency)">🚨 ΕΠΕΙΓΟΝ</span>'
+        };
+    } else if (statVal === 1) {
+        return {
+            isUrgent: true,
+            isEmergency: false,
+            class: 'urgent-row stat-row',
+            badge: '<span class="stat-badge stat-badge-stat" title="Επείγουσα (Stat)">⚡ STAT</span>'
+        };
+    }
+    return { isUrgent: false, isEmergency: false, class: '', badge: '' };
 }
 
 function sortExams(exams) {
@@ -869,6 +924,7 @@ function sortExams(exams) {
                 key: orderKey,
                 exams: [],
                 hasPammakristos: false,
+                maxStat: 0,
                 minDate: '',
                 maxDate: '',
                 primaryExam: ex
@@ -879,12 +935,18 @@ function sortExams(exams) {
 
         const grp = groupMap.get(orderKey);
         grp.exams.push(ex);
+        const s = Number(ex.stat) || 0;
+        if (s > grp.maxStat) grp.maxStat = s;
         if (isPammakristos(ex)) grp.hasPammakristos = true;
     });
 
-    // Sort exams internally by visitdate (descending) & compute minDate / maxDate
+    // Sort exams internally within each order group:
+    // Highest priority exam first (Emergency -> Stat -> Pammakaristos -> Normal), then newest visitdate
     groupOrder.forEach(grp => {
         grp.exams.sort((a, b) => {
+            const prioA = getExamPriority(a);
+            const prioB = getExamPriority(b);
+            if (prioA !== prioB) return prioB - prioA;
             const dA = a.visitdate || a.request_date || '';
             const dB = b.visitdate || b.request_date || '';
             if (dA < dB) return 1;
@@ -904,7 +966,7 @@ function sortExams(exams) {
         grp.primaryExam = grp.exams[0];
     });
 
-    // 2. Sort the order groups based on sortConfig
+    // 2. Base sort order groups
     if (sortConfig.key && sortConfig.direction) {
         groupOrder.sort((a, b) => {
             let valA, valB;
@@ -914,8 +976,8 @@ function sortExams(exams) {
                     valB = b.primaryExam.extracode || b.primaryExam.exam_id || '';
                     break;
                 case 'date':
-                    valA = a.minDate;
-                    valB = b.minDate;
+                    valA = a.maxDate || a.minDate || '';
+                    valB = b.maxDate || b.minDate || '';
                     break;
                 case 'lab':
                     valA = a.primaryExam.lab_name || a.primaryExam.laboratoryname || '';
@@ -948,13 +1010,24 @@ function sortExams(exams) {
             if (valA > valB) return sortConfig.direction === 'asc' ? 1 : -1;
             return 0;
         });
+    } else {
+        // Default sort: Newest visitdate first (descending)
+        groupOrder.sort((a, b) => {
+            const dA = a.maxDate || a.minDate || '';
+            const dB = b.maxDate || b.minDate || '';
+            if (dA < dB) return 1;
+            if (dA > dB) return -1;
+            const extA = Number(a.primaryExam.extracode) || 0;
+            const extB = Number(b.primaryExam.extracode) || 0;
+            return extB - extA;
+        });
     }
 
-    // 3. Always keep Pammakristos order groups at the top
+    // 3. Always keep Emergency (stat 2), Stat (stat 1), and Pammakristos order groups at the top despite their date
     groupOrder.sort((a, b) => {
-        const aIsPam = a.hasPammakristos ? 1 : 0;
-        const bIsPam = b.hasPammakristos ? 1 : 0;
-        return bIsPam - aIsPam;
+        const prioA = getOrderGroupPriority(a);
+        const prioB = getOrderGroupPriority(b);
+        return prioB - prioA;
     });
 
     // 4. Flatten order groups back into single exams array
@@ -1206,7 +1279,11 @@ function groupExamsByOrder(exams) {
 }
 
 function renderPendingTable() {
-    renderPendingRows(pendingExams);
+    if (currentTab === 'pending') {
+        applyFilters();
+    } else {
+        renderPendingRows(sortExams(pendingExams));
+    }
 }
 
 function renderPendingRows(rawExams) {
@@ -1220,7 +1297,7 @@ function renderPendingRows(rawExams) {
     }
 
     emptyState.style.display = 'none';
-    const exams = groupExamsByOrder(rawExams);
+    const exams = groupExamsByOrder(sortExams(rawExams));
 
     // Pre-calculate order group info & sub-spans for Date, Lab, and Doctor
     const orderGroupInfos = new Array(exams.length);
@@ -1309,6 +1386,8 @@ function renderPendingRows(rawExams) {
         const isSelected = selectedExams.has(exam.exam_id) ? 'checked' : '';
         const rowClass = isSelected ? 'selected-row' : '';
         const pamClass = isPammakristos(exam) ? 'pammakristos-row' : '';
+        const statInfo = getStatInfo(exam);
+        const urgentClass = statInfo.class;
         const span = info.groupSize;
 
         // Grouped columns: Εντολή & Ασθενής (DEMOGID + Patient Name) + Ηλικία
@@ -1341,7 +1420,7 @@ function renderPendingRows(rawExams) {
             <td class="comment-cell" rowspan="${span}">${notesHtml}</td>` : '';
 
         return `
-            <tr id="row-${exam.exam_id}" class="${info.groupClass} ${rowClass} ${pamClass}">
+            <tr id="row-${exam.exam_id}" class="${info.groupClass} ${rowClass} ${pamClass} ${urgentClass}">
                 <td class="frozen-col-1" style="width: 48px; min-width: 48px; padding: 0; text-align: center;">
                     <input type="checkbox" class="row-checkbox" value="${exam.exam_id}" onclick="handlePendingCheckboxClick(event, '${exam.exam_id}')" onchange="toggleSelectExam('${exam.exam_id}')" ${isSelected}>
                 </td>
@@ -1350,6 +1429,7 @@ ${dateCol}
 ${labCol}
                 <td style="border-left: 1px solid rgba(255, 255, 255, 0.2);">
                     <span class="modality-badge ${catClass}">${normCat}</span>
+                    ${statInfo.badge}
                 </td>
                 <td class="examnumcode-cell">${exam.examnumcode || '—'}</td>
                 <td class="exam-name-cell" style="border-right: 1px solid rgba(255, 255, 255, 0.2);"><span class="body-part-tag" title="${escapeHtmlFull(exam.examname || '')}">${cleanName || '—'}</span></td>
@@ -1459,7 +1539,11 @@ function invalidatePendingSuggestions() {
 // ══════════════════════════════════════════════
 
 function renderAssignedTable() {
-    renderAssignedRows(assignedExams);
+    if (currentTab === 'assigned') {
+        applyFilters();
+    } else {
+        renderAssignedRows(sortExams(assignedExams));
+    }
 }
 
 function renderAssignedRows(rawExams) {
@@ -1473,7 +1557,7 @@ function renderAssignedRows(rawExams) {
     }
 
     emptyState.style.display = 'none';
-    const exams = groupExamsByOrder(rawExams);
+    const exams = groupExamsByOrder(sortExams(rawExams));
 
     // Pre-calculate order group info & sub-spans for Date, Lab, and Doctor
     const orderGroupInfos = new Array(exams.length);
@@ -1561,6 +1645,8 @@ function renderAssignedRows(rawExams) {
         const isSelected = selectedAssignedExams.has(exam.exam_id);
         const rowClass = isSelected ? 'selected-row' : '';
         const pamClass = isPammakristos(exam) ? 'pammakristos-row' : '';
+        const statInfo = getStatInfo(exam);
+        const urgentClass = statInfo.class;
         const exammoreid = exam.exammoreid || '';
         const span = info.groupSize;
 
@@ -1601,7 +1687,7 @@ function renderAssignedRows(rawExams) {
             </div>` : '';
 
         return `
-            <tr id="assigned-row-${exam.exam_id}" class="${info.groupClass} ${rowClass} ${pamClass}">
+            <tr id="assigned-row-${exam.exam_id}" class="${info.groupClass} ${rowClass} ${pamClass} ${urgentClass}">
                 <td class="frozen-col-1" style="width: 48px; min-width: 48px; padding: 0; text-align: center;">
                     <input type="checkbox" class="assigned-row-checkbox" value="${exam.exam_id}"
                         data-exammoreid="${exammoreid}"
@@ -1612,6 +1698,7 @@ ${dateCol}
 ${labCol}
                 <td style="border-left: 1px solid rgba(255, 255, 255, 0.2);">
                     <span class="modality-badge ${catClass}">${normCat}</span>
+                    ${statInfo.badge}
                 </td>
                 <td class="examnumcode-cell">${exam.examnumcode || '—'}</td>
                 <td class="exam-name-cell" style="border-right: 1px solid rgba(255, 255, 255, 0.2);"><span class="body-part-tag" title="${escapeHtmlFull(exam.examname || '')}">${cleanName || '—'}</span></td>
@@ -4227,6 +4314,11 @@ function sortAndRenderSlisSearchResults() {
         });
 
         sorted.sort((a, b) => {
+            // 0. Priority: Emergency (stat 2) -> Stat (stat 1) -> Pammakaristos -> Normal
+            const prioA = getExamPriority(a);
+            const prioB = getExamPriority(b);
+            if (prioB !== prioA) return prioB - prioA;
+
             const extA = String(a.extracode || a.exammoreid || '');
             const extB = String(b.extracode || b.exammoreid || '');
 
@@ -4249,6 +4341,13 @@ function sortAndRenderSlisSearchResults() {
             return Number(a.exammoreid || 0) - Number(b.exammoreid || 0);
         });
     }
+
+    // Always keep Emergency, Stat, and Pammakaristos at top in search results as well
+    sorted.sort((a, b) => {
+        const prioA = getExamPriority(a);
+        const prioB = getExamPriority(b);
+        return prioB - prioA;
+    });
 
     renderSlisSearchResults(sorted);
 }
@@ -4635,6 +4734,8 @@ function renderSlisSearchResults(results) {
         const normCat = normalizeModalityCode(exam.category || exam.modality);
         const catClass = normCat.toLowerCase();
         const cleanName = cleanExamName(exam.examname || exam.exam_title || '');
+        const statInfo = getStatInfo(exam);
+        const urgentClass = statInfo.class;
 
         let diagHtml = '';
         if (isPendingSlis) {
@@ -4659,7 +4760,7 @@ function renderSlisSearchResults(results) {
         const previewDiagName = pendingSelection ? escapeHtmlFull(pendingSelection.name) : '';
 
         return `
-            <tr>
+            <tr class="${urgentClass}">
                 <td class="frozen-col-1" style="width: 44px; text-align: center;">
                     <input type="checkbox" class="slis-search-row-checkbox" value="${eid}" onchange="toggleSelectSlisSearchExam(${eid})" ${isSelectedRow ? 'checked' : ''}>
                 </td>
@@ -4684,6 +4785,7 @@ function renderSlisSearchResults(results) {
                 <td>
                     <div style="font-weight: 500; margin-bottom: 4px;">${escapeHtmlFull(cleanName || exam.examname || '—')}</div>
                     <span class="modality-badge ${catClass}">${normCat}</span>
+                    ${statInfo.badge}
                 </td>
                 <td>${escapeHtmlFull(exam.issuing_doctor_name || '—')}</td>
                 <td>

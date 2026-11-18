@@ -141,6 +141,7 @@ class ExamResponse(BaseModel):
     request_date: str
     status: str
     comments: str
+    stat: Optional[int] = 0
 
     # Populated after suggestion is generated
     suggestion: Optional[SuggestionResponse] = None

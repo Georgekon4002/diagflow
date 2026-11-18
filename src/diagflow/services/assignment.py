@@ -49,6 +49,12 @@ def _get_mock_db() -> sqlite3.Connection:
     return con
 
 
+def _is_pamakristos_row(r: dict) -> bool:
+    wname = (r.get("wname") or "").upper()
+    lab = (r.get("laboratoryname") or r.get("lab_name") or "").upper()
+    return "ΠΑΜΜΑΚΑΡΙΣΤ" in wname or "ΠΑΜΑΚΑΡΙΣΤ" in wname or "ΠΑΜΜΑΚΑΡΙΣΤ" in lab or "ΠΑΜΑΚΑΡΙΣΤ" in lab
+
+
 def _row_to_exam_dict(row: sqlite3.Row | dict) -> dict:
     """
     Convert an exam row (sqlite3.Row or dict) into the standardized exam dict format
@@ -59,6 +65,14 @@ def _row_to_exam_dict(row: sqlite3.Row | dict) -> dict:
     fname = r.get("fname") or ""
     lname = r.get("lname") or ""
     pat_name = f"{fname} {lname}".strip() or (r.get("patient_name") or "")
+
+    raw_stat = r.get("stat")
+    stat_val = 0
+    if raw_stat is not None:
+        try:
+            stat_val = int(raw_stat)
+        except (ValueError, TypeError):
+            stat_val = 0
 
     return {
         # ── Identifiers ──
@@ -83,6 +97,7 @@ def _row_to_exam_dict(row: sqlite3.Row | dict) -> dict:
         "category":       r.get("category") or "MRI",
         "body_part":      "",
         "visitdate":      str(r.get("visitdate"))[:10] if r.get("visitdate") else "",
+        "stat":           stat_val,
 
         # ── Laboratory ──
         "labcodeid":      r.get("labcodeid"),
@@ -116,7 +131,7 @@ def _row_to_exam_dict(row: sqlite3.Row | dict) -> dict:
 
         # ── Extras ──
         "suggestion":     None,
-        "is_pamakristos": "ΠΑΜΜΑΚΑΡΙΣΤΟΣ" in (r.get("wname") or "").upper(),
+        "is_pamakristos": _is_pamakristos_row(r),
     }
 
 
@@ -379,6 +394,14 @@ def _get_pending_exams_from_db() -> list[dict]:
         for r in raw_exam_rows:
             exam_id = int(r["exammoreid"])
             exam_vdate = str(r.get("visitdate") or "")[:10]
+            raw_stat = r.get("stat")
+            stat_val = 0
+            if raw_stat is not None:
+                try:
+                    stat_val = int(raw_stat)
+                except (ValueError, TypeError):
+                    stat_val = 0
+
             _exam_details_cache[exam_id] = {
                 "exammoreid": exam_id,
                 "extracode": r.get("extracode"),
@@ -388,6 +411,7 @@ def _get_pending_exams_from_db() -> list[dict]:
                 "examnumcode": r.get("examnumcode"),
                 "patient_name": f"{r.get('fname') or ''} {r.get('lname') or ''}".strip(),
                 "visitdate": exam_vdate,
+                "stat": stat_val,
             }
             if exam_id in local_assignments:
                 continue  # already handled (staged in df_local_assignments)
@@ -462,7 +486,7 @@ def _get_pending_exams_from_db() -> list[dict]:
             # Check 2: Dynamic Exam Routing Rules (suppressed if target is excluded by comment)
             exam_code_str = str(r.get("examnumcode") or "").strip()
             lab_id_val = r.get("labcodeid")
-            is_pam = "ΠΑΜΜΑΚΑΡΙΣΤΟΣ" in (r.get("wname") or "").upper()
+            is_pam = _is_pamakristos_row(r)
             
             routed = False
             for rule in routing_rules:
@@ -561,6 +585,13 @@ def _get_assigned_exams_from_db() -> list[dict]:
                         if r_dict.get("exammoreid"):
                             eid = int(r_dict["exammoreid"])
                             exam_metadata[eid] = r_dict
+                            raw_s = r_dict.get("stat")
+                            s_val = 0
+                            if raw_s is not None:
+                                try:
+                                    s_val = int(raw_s)
+                                except (ValueError, TypeError):
+                                    s_val = 0
                             _exam_details_cache[eid] = {
                                 "exammoreid": eid,
                                 "extracode": r_dict.get("extracode"),
@@ -568,6 +599,7 @@ def _get_assigned_exams_from_db() -> list[dict]:
                                 "modality": normalize_modality(r_dict.get("category")),
                                 "examname": r_dict.get("examname") or r_dict.get("exam_name") or "",
                                 "examnumcode": r_dict.get("examnumcode"),
+                                "stat": s_val,
                             }
             except Exception as e:
                 logger.warning("failed_to_fetch_mssql_assigned_metadata", error=str(e))
@@ -606,6 +638,15 @@ def _get_assigned_exams_from_db() -> list[dict]:
             pat_name = f"{fname} {lname}".strip() or (meta.get("patient_name") or "")
             norm_mod = normalize_modality(loc.get("modality") or meta.get("category"))
 
+            meta_stat = 0
+            if meta.get("stat") is not None:
+                try:
+                    meta_stat = int(meta["stat"])
+                except (ValueError, TypeError):
+                    meta_stat = 0
+            elif eid in _exam_details_cache and "stat" in _exam_details_cache[eid]:
+                meta_stat = _exam_details_cache[eid]["stat"]
+
             rows.append({
                 "exam_id": str(eid),
                 "exammoreid": eid,
@@ -641,9 +682,10 @@ def _get_assigned_exams_from_db() -> list[dict]:
                 "oldorder": meta.get("oldorder") or "",
                 "olddiagnostis": meta.get("olddiagnostis") or "",
                 "oldpers": meta.get("oldpers"),
+                "stat": meta_stat,
                 "slis_synced_at": None,
                 "suggestion": None,
-                "is_pamakristos": "ΠΑΜΜΑΚΑΡΙΣΤΟΣ" in (meta.get("wname") or "").upper(),
+                "is_pamakristos": _is_pamakristos_row(meta),
                 "is_auto_assigned": bool(loc.get("is_auto", False)),
                 "rule_desc": loc.get("rule_desc", ""),
             })

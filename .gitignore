@@ -42,6 +42,7 @@ db/seed_central_tables.sql
 *.db-shm
 *.db-wal
 db/prev
+db/procedure.sql
 
 ## Office Temporary Lock Files
 ~$*

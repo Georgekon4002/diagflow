@@ -2200,6 +2200,87 @@ tr.selected-row td {
     background-color: #B91C1C !important;
 }
 
+/* ── Urgent / Stat Row Highlighting (Purple line & row coverage) ── */
+.exams-table tbody tr.urgent-row,
+.exams-table tbody tr.urgent-row > td,
+.exams-table tbody tr.urgent-row > td[rowspan],
+.exams-table tbody tr.urgent-row td.frozen-col-1,
+.exams-table tbody tr.urgent-row td.frozen-col-2 {
+    background-color: #581C87 !important;
+}
+
+.exams-table tbody tr.urgent-row td.frozen-col-1 {
+    border-left: 4px solid #A855F7 !important;
+}
+
+.exams-table tbody tr.urgent-row.order-group-alt,
+.exams-table tbody tr.urgent-row.order-group-alt > td,
+.exams-table tbody tr.urgent-row.order-group-alt > td[rowspan],
+.exams-table tbody tr.urgent-row.order-group-alt td.frozen-col-1,
+.exams-table tbody tr.urgent-row.order-group-alt td.frozen-col-2 {
+    background-color: #6B21A8 !important;
+}
+
+.exams-table tbody tr.urgent-row:hover > td,
+.exams-table tbody tr.urgent-row:hover td.frozen-col-1,
+.exams-table tbody tr.urgent-row:hover td.frozen-col-2 {
+    background-color: #7E22CE !important;
+}
+
+/* Emergency (stat=2) Highlighting */
+.exams-table tbody tr.emergency-row,
+.exams-table tbody tr.emergency-row > td,
+.exams-table tbody tr.emergency-row > td[rowspan],
+.exams-table tbody tr.emergency-row td.frozen-col-1,
+.exams-table tbody tr.emergency-row td.frozen-col-2 {
+    background-color: #701A75 !important;
+}
+
+.exams-table tbody tr.emergency-row td.frozen-col-1 {
+    border-left: 4px solid #F43F5E !important;
+}
+
+.exams-table tbody tr.emergency-row.order-group-alt,
+.exams-table tbody tr.emergency-row.order-group-alt > td,
+.exams-table tbody tr.emergency-row.order-group-alt > td[rowspan],
+.exams-table tbody tr.emergency-row.order-group-alt td.frozen-col-1,
+.exams-table tbody tr.emergency-row.order-group-alt td.frozen-col-2 {
+    background-color: #86198F !important;
+}
+
+.exams-table tbody tr.emergency-row:hover > td,
+.exams-table tbody tr.emergency-row:hover td.frozen-col-1,
+.exams-table tbody tr.emergency-row:hover td.frozen-col-2 {
+    background-color: #A21CAF !important;
+}
+
+/* Stat & Emergency Badges */
+.stat-badge {
+    display: inline-block;
+    padding: 2px 6px;
+    font-size: 10px;
+    font-weight: 800;
+    border-radius: 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    vertical-align: middle;
+    margin-left: 6px;
+    white-space: nowrap;
+}
+
+.stat-badge-stat {
+    background-color: #9333EA;
+    color: #FFFFFF;
+    border: 1px solid #C084FC;
+}
+
+.stat-badge-emergency {
+    background-color: #C026D3;
+    color: #FFFFFF;
+    border: 1px solid #F472B6;
+    box-shadow: 0 0 6px rgba(192, 38, 211, 0.6);
+}
+
 /* Comment Button Alert */
 .comment-btn.comment-btn-alert {
     background-color: #DB241E !important;
@@ -2381,6 +2462,87 @@ tr.selected-row td {
 .exams-table tbody tr.pammakristos-row:hover td.frozen-col-1,
 .exams-table tbody tr.pammakristos-row:hover td.frozen-col-2 {
     background-color: #B91C1C !important;
+}
+
+/* ── Urgent / Stat Row Highlighting (Purple line & row coverage) ── */
+.exams-table tbody tr.urgent-row,
+.exams-table tbody tr.urgent-row > td,
+.exams-table tbody tr.urgent-row > td[rowspan],
+.exams-table tbody tr.urgent-row td.frozen-col-1,
+.exams-table tbody tr.urgent-row td.frozen-col-2 {
+    background-color: #581C87 !important;
+}
+
+.exams-table tbody tr.urgent-row td.frozen-col-1 {
+    border-left: 4px solid #A855F7 !important;
+}
+
+.exams-table tbody tr.urgent-row.order-group-alt,
+.exams-table tbody tr.urgent-row.order-group-alt > td,
+.exams-table tbody tr.urgent-row.order-group-alt > td[rowspan],
+.exams-table tbody tr.urgent-row.order-group-alt td.frozen-col-1,
+.exams-table tbody tr.urgent-row.order-group-alt td.frozen-col-2 {
+    background-color: #6B21A8 !important;
+}
+
+.exams-table tbody tr.urgent-row:hover > td,
+.exams-table tbody tr.urgent-row:hover td.frozen-col-1,
+.exams-table tbody tr.urgent-row:hover td.frozen-col-2 {
+    background-color: #7E22CE !important;
+}
+
+/* Emergency (stat=2) Highlighting */
+.exams-table tbody tr.emergency-row,
+.exams-table tbody tr.emergency-row > td,
+.exams-table tbody tr.emergency-row > td[rowspan],
+.exams-table tbody tr.emergency-row td.frozen-col-1,
+.exams-table tbody tr.emergency-row td.frozen-col-2 {
+    background-color: #701A75 !important;
+}
+
+.exams-table tbody tr.emergency-row td.frozen-col-1 {
+    border-left: 4px solid #F43F5E !important;
+}
+
+.exams-table tbody tr.emergency-row.order-group-alt,
+.exams-table tbody tr.emergency-row.order-group-alt > td,
+.exams-table tbody tr.emergency-row.order-group-alt > td[rowspan],
+.exams-table tbody tr.emergency-row.order-group-alt td.frozen-col-1,
+.exams-table tbody tr.emergency-row.order-group-alt td.frozen-col-2 {
+    background-color: #86198F !important;
+}
+
+.exams-table tbody tr.emergency-row:hover > td,
+.exams-table tbody tr.emergency-row:hover td.frozen-col-1,
+.exams-table tbody tr.emergency-row:hover td.frozen-col-2 {
+    background-color: #A21CAF !important;
+}
+
+/* Stat & Emergency Badges */
+.stat-badge {
+    display: inline-block;
+    padding: 2px 6px;
+    font-size: 10px;
+    font-weight: 800;
+    border-radius: 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    vertical-align: middle;
+    margin-left: 6px;
+    white-space: nowrap;
+}
+
+.stat-badge-stat {
+    background-color: #9333EA;
+    color: #FFFFFF;
+    border: 1px solid #C084FC;
+}
+
+.stat-badge-emergency {
+    background-color: #C026D3;
+    color: #FFFFFF;
+    border: 1px solid #F472B6;
+    box-shadow: 0 0 6px rgba(192, 38, 211, 0.6);
 }
 
 /* Comment Button Alert */

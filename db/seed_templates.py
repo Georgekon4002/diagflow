@@ -304,6 +304,7 @@ CREATE TABLE IF NOT EXISTS slis_exams (
     exammoreid      INTEGER PRIMARY KEY,
     category        TEXT,
     slis_synced_at  TEXT DEFAULT NULL,
+    stat            INTEGER DEFAULT 0,
     FOREIGN KEY (examnumcode) REFERENCES exam_categories (examnumcode)
 );
 
@@ -365,60 +366,60 @@ INSERT INTO doctors (DOCTORID, CODE, DOCNAME, SPECIALID, RELATEDDOC, ISENABLED) 
 (104, 104, 'ΔΡ. ΠΑΡΑΠΕΜΠΩΝ Δ', 4, NULL, 1);
 
 -- SLIS Exams (Comprehensive Demo Dataset covering all Use Cases)
-INSERT INTO slis_exams (exammoreid, extracode, fname, lname, examnumcode, examname, category, visitdate, labcodeid, laboratoryname, wcode, wname, diagnostis, notes, oldpers, olddiagnostis) VALUES
+INSERT INTO slis_exams (exammoreid, extracode, fname, lname, examnumcode, examname, category, visitdate, labcodeid, laboratoryname, wcode, wname, diagnostis, notes, oldpers, olddiagnostis, stat) VALUES
 -- 1. Unassigned CT Chest (Order 5001 — Part 1)
-(1001, 5001, 'ΔΟΚΙΜΑΣΤΙΚΟΣ', 'ΑΣΘΕΝΗΣ 01', 22140, 'ΑΞΟΝΙΚΗ ΤΟΜΟΓΡΑΦΙΑ ΘΩΡΑΚΑ', 'CT', '{today_iso}', 1, 'Κηφισιά', 'DOC104', 'ΔΡ. ΠΑΡΑΠΕΜΠΩΝ Δ', NULL, NULL, NULL, NULL),
+(1001, 5001, 'ΔΟΚΙΜΑΣΤΙΚΟΣ', 'ΑΣΘΕΝΗΣ 01', 22140, 'ΑΞΟΝΙΚΗ ΤΟΜΟΓΡΑΦΙΑ ΘΩΡΑΚΑ', 'CT', '{today_iso}', 1, 'Κηφισιά', 'DOC104', 'ΔΡ. ΠΑΡΑΠΕΜΠΩΝ Δ', NULL, NULL, NULL, NULL, 0),
 
 -- 2. Unassigned CT Abdomen (Order 5001 — Part 2: Shared Order ID demo)
-(1003, 5001, 'ΔΟΚΙΜΑΣΤΙΚΟΣ', 'ΑΣΘΕΝΗΣ 01', 22141, 'ΑΞΟΝΙΚΗ ΤΟΜΟΓΡΑΦΙΑ ΚΟΙΛΙΑΣ', 'CT', '{today_iso}', 1, 'Κηφισιά', 'DOC104', 'ΔΡ. ΠΑΡΑΠΕΜΠΩΝ Δ', NULL, NULL, NULL, NULL),
+(1003, 5001, 'ΔΟΚΙΜΑΣΤΙΚΟΣ', 'ΑΣΘΕΝΗΣ 01', 22141, 'ΑΞΟΝΙΚΗ ΤΟΜΟΓΡΑΦΙΑ ΚΟΙΛΙΑΣ', 'CT', '{today_iso}', 1, 'Κηφισιά', 'DOC104', 'ΔΡ. ΠΑΡΑΠΕΜΠΩΝ Δ', NULL, NULL, NULL, NULL, 0),
 
--- 3. Unassigned MRI Brain (Order 5002 — Part 1)
-(1002, 5002, 'ΔΟΚΙΜΑΣΤΙΚΟΣ', 'ΑΣΘΕΝΗΣ 02', 22150, 'ΜΑΓΝΗΤΙΚΗ ΤΟΜΟΓΡΑΦΙΑ ΕΓΚΕΦΑΛΟΥ', 'MRI', '{today_iso}', 2, 'Αμπελόκηποι', 'DOC104', 'ΔΡ. ΠΑΡΑΠΕΜΠΩΝ Δ', NULL, NULL, NULL, NULL),
+-- 3. Unassigned MRI Brain (Order 5002 — Part 1: STAT)
+(1002, 5002, 'ΔΟΚΙΜΑΣΤΙΚΟΣ', 'ΑΣΘΕΝΗΣ 02', 22150, 'ΜΑΓΝΗΤΙΚΗ ΤΟΜΟΓΡΑΦΙΑ ΕΓΚΕΦΑΛΟΥ', 'MRI', '{today_iso}', 2, 'Αμπελόκηποι', 'DOC104', 'ΔΡ. ΠΑΡΑΠΕΜΠΩΝ Δ', NULL, NULL, NULL, NULL, 1),
 
 -- 4. Unassigned MRI Spine (Order 5002 — Part 2: Shared Order ID demo)
-(1008, 5002, 'ΔΟΚΙΜΑΣΤΙΚΟΣ', 'ΑΣΘΕΝΗΣ 02', 22151, 'ΜΑΓΝΗΤΙΚΗ ΤΟΜΟΓΡΑΦΙΑ ΣΠΟΝΔΥΛΙΚΗΣ ΣΤΗΛΗΣ', 'MRI', '{today_iso}', 2, 'Αμπελόκηποι', 'DOC102', 'ΔΡ. ΠΑΡΑΠΕΜΠΩΝ Β', NULL, 'ΠΡΟΤΙΜΗΣΗ: ΔΙΑΓΝΩΣΤΗΣ Γ', NULL, NULL),
+(1008, 5002, 'ΔΟΚΙΜΑΣΤΙΚΟΣ', 'ΑΣΘΕΝΗΣ 02', 22151, 'ΜΑΓΝΗΤΙΚΗ ΤΟΜΟΓΡΑΦΙΑ ΣΠΟΝΔΥΛΙΚΗΣ ΣΤΗΛΗΣ', 'MRI', '{today_iso}', 2, 'Αμπελόκηποι', 'DOC102', 'ΔΡ. ΠΑΡΑΠΕΜΠΩΝ Β', NULL, 'ΠΡΟΤΙΜΗΣΗ: ΔΙΑΓΝΩΣΤΗΣ Γ', NULL, NULL, 0),
 
 -- 5. Exclusive Partnership Auto-Assignment (Doctor DOC101 -> Diagnostician 1 ΔΙΑΓΝΩΣΤΗΣ Α)
-(1004, 5003, 'ΔΟΚΙΜΑΣΤΙΚΟΣ', 'ΑΣΘΕΝΗΣ 03', 22140, 'ΑΞΟΝΙΚΗ ΤΟΜΟΓΡΑΦΙΑ ΘΩΡΑΚΑ', 'CT', '{today_iso}', 1, 'Κηφισιά', 'DOC101', 'ΔΡ. ΠΑΡΑΠΕΜΠΩΝ Α', NULL, NULL, NULL, NULL),
+(1004, 5003, 'ΔΟΚΙΜΑΣΤΙΚΟΣ', 'ΑΣΘΕΝΗΣ 03', 22140, 'ΑΞΟΝΙΚΗ ΤΟΜΟΓΡΑΦΙΑ ΘΩΡΑΚΑ', 'CT', '{today_iso}', 1, 'Κηφισιά', 'DOC101', 'ΔΡ. ΠΑΡΑΠΕΜΠΩΝ Α', NULL, NULL, NULL, NULL, 0),
 
 -- 6. Dynamic Routing Rule Auto-Assignment (22705 Pamakristos -> Diagnostician 3 ΔΙΑΓΝΩΣΤΗΣ Γ)
-(1005, 5004, 'ΔΟΚΙΜΑΣΤΙΚΟΣ', 'ΑΣΘΕΝΗΣ 04', 22705, 'ΜΑΓΝΗΤΙΚΗ ΦΑΣΜΑΤΟΣΚΟΠΙΑ (MRS)', 'MRI', '{today_iso}', 1, 'Κηφισιά', 'PAM01', 'ΠΑΜΜΑΚΑΡΙΣΤΟΣ', NULL, NULL, NULL, NULL),
+(1005, 5004, 'ΔΟΚΙΜΑΣΤΙΚΟΣ', 'ΑΣΘΕΝΗΣ 04', 22705, 'ΜΑΓΝΗΤΙΚΗ ΦΑΣΜΑΤΟΣΚΟΠΙΑ (MRS)', 'MRI', '{today_iso}', 1, 'Κηφισιά', 'PAM01', 'ΠΑΜΜΑΚΑΡΙΣΤΟΣ', NULL, NULL, NULL, NULL, 0),
 
 -- 7. Pamakristos General On-Call Auto-Assignment (Ward Pamakristos)
-(1006, 5005, 'ΔΟΚΙΜΑΣΤΙΚΟΣ', 'ΑΣΘΕΝΗΣ 05', 22140, 'ΑΞΟΝΙΚΗ ΤΟΜΟΓΡΑΦΙΑ ΘΩΡΑΚΑ', 'CT', '{today_iso}', 1, 'Κηφισιά', 'PAM01', 'ΠΑΜΜΑΚΑΡΙΣΤΟΣ', NULL, NULL, NULL, NULL),
+(1006, 5005, 'ΔΟΚΙΜΑΣΤΙΚΟΣ', 'ΑΣΘΕΝΗΣ 05', 22140, 'ΑΞΟΝΙΚΗ ΤΟΜΟΓΡΑΦΙΑ ΘΩΡΑΚΑ', 'CT', '{today_iso}', 1, 'Κηφισιά', 'PAM01', 'ΠΑΜΜΑΚΑΡΙΣΤΟΣ', NULL, NULL, NULL, NULL, 0),
 
--- 8. Constraint Comment Exclusion "ΟΧΙ ΔΙΑΓΝΩΣΤΗΣ Α" (Rule Engine Exclusion Demo)
-(1007, 5006, 'ΔΟΚΙΜΑΣΤΙΚΟΣ', 'ΑΣΘΕΝΗΣ 06', 22150, 'ΜΑΓΝΗΤΙΚΗ ΤΟΜΟΓΡΑΦΙΑ ΕΓΚΕΦΑΛΟΥ', 'MRI', '{today_iso}', 1, 'Κηφισιά', 'DOC104', 'ΔΡ. ΠΑΡΑΠΕΜΠΩΝ Δ', NULL, 'ΠΡΟΣΟΧΗ: ΟΧΙ ΔΙΑΓΝΩΣΤΗΣ Α', NULL, NULL),
+-- 8. Constraint Comment Exclusion "ΟΧΙ ΔΙΑΓΝΩΣΤΗΣ Α" + STAT (Rule Engine Exclusion Demo)
+(1007, 5006, 'ΔΟΚΙΜΑΣΤΙΚΟΣ', 'ΑΣΘΕΝΗΣ 06', 22150, 'ΜΑΓΝΗΤΙΚΗ ΤΟΜΟΓΡΑΦΙΑ ΕΓΚΕΦΑΛΟΥ', 'MRI', '{today_iso}', 1, 'Κηφισιά', 'DOC104', 'ΔΡ. ΠΑΡΑΠΕΜΠΩΝ Δ', NULL, 'ΠΡΟΣΟΧΗ: ΟΧΙ ΔΙΑΓΝΩΣΤΗΣ Α', NULL, NULL, 1),
 
--- 9. General Clinical Comment WITHOUT Diagnostician Name (Standard comment display)
-(1011, 5007, 'ΔΟΚΙΜΑΣΤΙΚΟΣ', 'ΑΣΘΕΝΗΣ 07', 22140, 'ΑΞΟΝΙΚΗ ΤΟΜΟΓΡΑΦΙΑ ΘΩΡΑΚΑ', 'CT', '{today_iso}', 1, 'Κηφισιά', 'DOC104', 'ΔΡ. ΠΑΡΑΠΕΜΠΩΝ Δ', NULL, 'ΠΡΟΣΟΧΗ: ΕΠΕΙΓΟΝ - ΑΣΘΕΝΗΣ ΜΕ ΣΚΙΑΓΡΑΦΙΚΟ IV', NULL, NULL),
+-- 9. General Clinical Comment WITHOUT Diagnostician Name — EMERGENCY
+(1011, 5007, 'ΔΟΚΙΜΑΣΤΙΚΟΣ', 'ΑΣΘΕΝΗΣ 07', 22140, 'ΑΞΟΝΙΚΗ ΤΟΜΟΓΡΑΦΙΑ ΘΩΡΑΚΑ', 'CT', '{today_iso}', 1, 'Κηφισιά', 'DOC104', 'ΔΡ. ΠΑΡΑΠΕΜΠΩΝ Δ', NULL, 'ΠΡΟΣΟΧΗ: ΕΠΕΙΓΟΝ - ΑΣΘΕΝΗΣ ΜΕ ΣΚΙΑΓΡΑΦΙΚΟ IV', NULL, NULL, 2),
 
 -- 10. General Clinical Comment WITHOUT Diagnostician Name (Comparison note)
-(1012, 5008, 'ΔΟΚΙΜΑΣΤΙΚΟΣ', 'ΑΣΘΕΝΗΣ 08', 22150, 'ΜΑΓΝΗΤΙΚΗ ΤΟΜΟΓΡΑΦΙΑ ΕΓΚΕΦΑΛΟΥ', 'MRI', '{today_iso}', 2, 'Αμπελόκηποι', 'DOC103', 'ΔΡ. ΠΑΡΑΠΕΜΠΩΝ Γ', NULL, 'ΣΥΓΚΡΙΣΗ ΜΕ ΠΡΟΗΓΟΥΜΕΝΗ ΕΞΕΤΑΣΗ ΑΠΟ 15/05/2026 - ΘΑ ΣΤΑΛΕΙ ΜΕ EMAIL', NULL, NULL),
+(1012, 5008, 'ΔΟΚΙΜΑΣΤΙΚΟΣ', 'ΑΣΘΕΝΗΣ 08', 22150, 'ΜΑΓΝΗΤΙΚΗ ΤΟΜΟΓΡΑΦΙΑ ΕΓΚΕΦΑΛΟΥ', 'MRI', '{today_iso}', 2, 'Αμπελόκηποι', 'DOC103', 'ΔΡ. ΠΑΡΑΠΕΜΠΩΝ Γ', NULL, 'ΣΥΓΚΡΙΣΗ ΜΕ ΠΡΟΗΓΟΥΜΕΝΗ ΕΞΕΤΑΣΗ ΑΠΟ 15/05/2026 - ΘΑ ΣΤΑΛΕΙ ΜΕ EMAIL', NULL, NULL, 0),
 
 -- 11. Patient History Match (oldpers=3 ΔΙΑΓΝΩΣΤΗΣ Γ — Skilled & Available)
-(1013, 5009, 'ΔΟΚΙΜΑΣΤΙΚΟΣ', 'ΑΣΘΕΝΗΣ 09', 22150, 'ΜΑΓΝΗΤΙΚΗ ΤΟΜΟΓΡΑΦΙΑ ΕΓΚΕΦΑΛΟΥ', 'MRI', '{today_iso}', 2, 'Αμπελόκηποι', 'DOC104', 'ΔΡ. ΠΑΡΑΠΕΜΠΩΝ Δ', NULL, 'ΕΠΑΝΕΛΕΓΧΟΣ ΜΕΤΑ ΑΠΟ 6 ΜΗΝΕΣ', 3, 'ΔΙΑΓΝΩΣΤΗΣ Γ'),
+(1013, 5009, 'ΔΟΚΙΜΑΣΤΙΚΟΣ', 'ΑΣΘΕΝΗΣ 09', 22150, 'ΜΑΓΝΗΤΙΚΗ ΤΟΜΟΓΡΑΦΙΑ ΕΓΚΕΦΑΛΟΥ', 'MRI', '{today_iso}', 2, 'Αμπελόκηποι', 'DOC104', 'ΔΡ. ΠΑΡΑΠΕΜΠΩΝ Δ', NULL, 'ΕΠΑΝΕΛΕΓΧΟΣ ΜΕΤΑ ΑΠΟ 6 ΜΗΝΕΣ', 3, 'ΔΙΑΓΝΩΣΤΗΣ Γ', 0),
 
 -- 12. Patient History Match (oldpers=1 ΔΙΑΓΝΩΣΤΗΣ Α — Skilled & Available)
-(1014, 5010, 'ΔΟΚΙΜΑΣΤΙΚΟΣ', 'ΑΣΘΕΝΗΣ 10', 22140, 'ΑΞΟΝΙΚΗ ΤΟΜΟΓΡΑΦΙΑ ΘΩΡΑΚΑ', 'CT', '{today_iso}', 1, 'Κηφισιά', 'DOC103', 'ΔΡ. ΠΑΡΑΠΕΜΠΩΝ Γ', NULL, 'ΕΠΑΝΕΛΕΓΧΟΣ CT ΘΩΡΑΚΑ', 1, 'ΔΙΑΓΝΩΣΤΗΣ Α'),
+(1014, 5010, 'ΔΟΚΙΜΑΣΤΙΚΟΣ', 'ΑΣΘΕΝΗΣ 10', 22140, 'ΑΞΟΝΙΚΗ ΤΟΜΟΓΡΑΦΙΑ ΘΩΡΑΚΑ', 'CT', '{today_iso}', 1, 'Κηφισιά', 'DOC103', 'ΔΡ. ΠΑΡΑΠΕΜΠΩΝ Γ', NULL, 'ΕΠΑΝΕΛΕΓΧΟΣ CT ΘΩΡΑΚΑ', 1, 'ΔΙΑΓΝΩΣΤΗΣ Α', 0),
 
--- 13. Non-Exclusive Preferred Doctor Partnership (Doctor DOC102 -> Diagnostician 3 ΔΙΑΓΝΩΣΤΗΣ Γ)
-(1015, 5011, 'ΔΟΚΙΜΑΣΤΙΚΟΣ', 'ΑΣΘΕΝΗΣ 11', 22150, 'ΜΑΓΝΗΤΙΚΗ ΤΟΜΟΓΡΑΦΙΑ ΕΓΚΕΦΑΛΟΥ', 'MRI', '{today_iso}', 2, 'Αμπελόκηποι', 'DOC102', 'ΔΡ. ΠΑΡΑΠΕΜΠΩΝ Β', NULL, NULL, NULL, NULL),
+-- 13. Non-Exclusive Preferred Doctor Partnership — EMERGENCY
+(1015, 5011, 'ΔΟΚΙΜΑΣΤΙΚΟΣ', 'ΑΣΘΕΝΗΣ 11', 22150, 'ΜΑΓΝΗΤΙΚΗ ΤΟΜΟΓΡΑΦΙΑ ΕΓΚΕΦΑΛΟΥ', 'MRI', '{today_iso}', 2, 'Αμπελόκηποι', 'DOC102', 'ΔΡ. ΠΑΡΑΠΕΜΠΩΝ Β', NULL, NULL, NULL, NULL, 2),
 
--- 14. Dynamic Lab Routing Rule (Lab 2 MRI Spine -> Diagnostician 5 ΔΙΑΓΝΩΣΤΗΣ Ε)
-(1016, 5012, 'ΔΟΚΙΜΑΣΤΙΚΟΣ', 'ΑΣΘΕΝΗΣ 12', 22151, 'ΜΑΓΝΗΤΙΚΗ ΤΟΜΟΓΡΑΦΙΑ ΣΠΟΝΔΥΛΙΚΗΣ ΣΤΗΛΗΣ', 'MRI', '{today_iso}', 2, 'Αμπελόκηποι', 'DOC103', 'ΔΡ. ΠΑΡΑΠΕΜΠΩΝ Γ', NULL, NULL, NULL, NULL),
+-- 14. Dynamic Lab Routing Rule — STAT
+(1016, 5012, 'ΔΟΚΙΜΑΣΤΙΚΟΣ', 'ΑΣΘΕΝΗΣ 12', 22151, 'ΜΑΓΝΗΤΙΚΗ ΤΟΜΟΓΡΑΦΙΑ ΣΠΟΝΔΥΛΙΚΗΣ ΣΤΗΛΗΣ', 'MRI', '{today_iso}', 2, 'Αμπελόκηποι', 'DOC103', 'ΔΡ. ΠΑΡΑΠΕΜΠΩΝ Γ', NULL, NULL, NULL, NULL, 1),
 
 -- 15. Additional CT Abdomen
-(1009, 5013, 'ΔΟΚΙΜΑΣΤΙΚΟΣ', 'ΑΣΘΕΝΗΣ 13', 22141, 'ΑΞΟΝΙΚΗ ΤΟΜΟΓΡΑΦΙΑ ΚΟΙΛΙΑΣ', 'CT', '{yesterday_iso}', 1, 'Κηφισιά', 'DOC103', 'ΔΡ. ΠΑΡΑΠΕΜΠΩΝ Γ', NULL, NULL, NULL, NULL),
+(1009, 5013, 'ΔΟΚΙΜΑΣΤΙΚΟΣ', 'ΑΣΘΕΝΗΣ 13', 22141, 'ΑΞΟΝΙΚΗ ΤΟΜΟΓΡΑΦΙΑ ΚΟΙΛΙΑΣ', 'CT', '{yesterday_iso}', 1, 'Κηφισιά', 'DOC103', 'ΔΡ. ΠΑΡΑΠΕΜΠΩΝ Γ', NULL, NULL, NULL, NULL, 0),
 
 -- 16. Additional MRI Brain
-(1010, 5014, 'ΔΟΚΙΜΑΣΤΙΚΟΣ', 'ΑΣΘΕΝΗΣ 14', 22150, 'ΜΑΓΝΗΤΙΚΗ ΤΟΜΟΓΡΑΦΙΑ ΕΓΚΕΦΑΛΟΥ', 'MRI', '{yesterday_iso}', 2, 'Αμπελόκηποι', 'DOC104', 'ΔΡ. ΠΑΡΑΠΕΜΠΩΝ Δ', NULL, NULL, NULL, NULL),
+(1010, 5014, 'ΔΟΚΙΜΑΣΤΙΚΟΣ', 'ΑΣΘΕΝΗΣ 14', 22150, 'ΜΑΓΝΗΤΙΚΗ ΤΟΜΟΓΡΑΦΙΑ ΕΓΚΕΦΑΛΟΥ', 'MRI', '{yesterday_iso}', 2, 'Αμπελόκηποι', 'DOC104', 'ΔΡ. ΠΑΡΑΠΕΜΠΩΝ Δ', NULL, NULL, NULL, NULL, 0),
 
 -- Already Assigned / Synced Exams (Capacity & History Demo with Order Grouping)
-(2001, 6001, 'ΔΟΚΙΜΑΣΤΙΚΟΣ', 'ΑΣΘΕΝΗΣ 15', 22140, 'ΑΞΟΝΙΚΗ ΤΟΜΟΓΡΑΦΙΑ ΘΩΡΑΚΑ', 'CT', '{today_iso}', 1, 'Κηφισιά', 'DOC103', 'ΔΡ. ΠΑΡΑΠΕΜΠΩΝ Γ', 1, NULL, NULL, NULL),
-(2002, 6002, 'ΔΟΚΙΜΑΣΤΙΚΟΣ', 'ΑΣΘΕΝΗΣ 16', 22150, 'ΜΑΓΝΗΤΙΚΗ ΤΟΜΟΓΡΑΦΙΑ ΕΓΚΕΦΑΛΟΥ', 'MRI', '{today_iso}', 2, 'Αμπελόκηποι', 'DOC104', 'ΔΡ. ΠΑΡΑΠΕΜΠΩΝ Δ', 2, NULL, NULL, NULL),
-(2004, 6002, 'ΔΟΚΙΜΑΣΤΙΚΟΣ', 'ΑΣΘΕΝΗΣ 16', 22151, 'ΜΑΓΝΗΤΙΚΗ ΤΟΜΟΓΡΑΦΙΑ ΣΠΟΝΔΥΛΙΚΗΣ ΣΤΗΛΗΣ', 'MRI', '{today_iso}', 2, 'Αμπελόκηποι', 'DOC104', 'ΔΡ. ΠΑΡΑΠΕΜΠΩΝ Δ', 2, NULL, NULL, NULL),
-(2003, 6003, 'ΔΟΚΙΜΑΣΤΙΚΟΣ', 'ΑΣΘΕΝΗΣ 17', 22151, 'ΜΑΓΝΗΤΙΚΗ ΤΟΜΟΓΡΑΦΙΑ ΣΠΟΝΔΥΛΙΚΗΣ ΣΤΗΛΗΣ', 'MRI', '{today_iso}', 2, 'Αμπελόκηποι', 'DOC102', 'ΔΡ. ΠΑΡΑΠΕΜΠΩΝ Β', 5, NULL, NULL, NULL);
+(2001, 6001, 'ΔΟΚΙΜΑΣΤΙΚΟΣ', 'ΑΣΘΕΝΗΣ 15', 22140, 'ΑΞΟΝΙΚΗ ΤΟΜΟΓΡΑΦΙΑ ΘΩΡΑΚΑ', 'CT', '{today_iso}', 1, 'Κηφισιά', 'DOC103', 'ΔΡ. ΠΑΡΑΠΕΜΠΩΝ Γ', 1, NULL, NULL, NULL, 0),
+(2002, 6002, 'ΔΟΚΙΜΑΣΤΙΚΟΣ', 'ΑΣΘΕΝΗΣ 16', 22150, 'ΜΑΓΝΗΤΙΚΗ ΤΟΜΟΓΡΑΦΙΑ ΕΓΚΕΦΑΛΟΥ', 'MRI', '{today_iso}', 2, 'Αμπελόκηποι', 'DOC104', 'ΔΡ. ΠΑΡΑΠΕΜΠΩΝ Δ', 2, NULL, NULL, NULL, 0),
+(2004, 6002, 'ΔΟΚΙΜΑΣΤΙΚΟΣ', 'ΑΣΘΕΝΗΣ 16', 22151, 'ΜΑΓΝΗΤΙΚΗ ΤΟΜΟΓΡΑΦΙΑ ΣΠΟΝΔΥΛΙΚΗΣ ΣΤΗΛΗΣ', 'MRI', '{today_iso}', 2, 'Αμπελόκηποι', 'DOC104', 'ΔΡ. ΠΑΡΑΠΕΜΠΩΝ Δ', 2, NULL, NULL, NULL, 0),
+(2003, 6003, 'ΔΟΚΙΜΑΣΤΙΚΟΣ', 'ΑΣΘΕΝΗΣ 17', 22151, 'ΜΑΓΝΗΤΙΚΗ ΤΟΜΟΓΡΑΦΙΑ ΣΠΟΝΔΥΛΙΚΗΣ ΣΤΗΛΗΣ', 'MRI', '{today_iso}', 2, 'Αμπελόκηποι', 'DOC102', 'ΔΡ. ΠΑΡΑΠΕΜΠΩΝ Β', 5, NULL, NULL, NULL, 0);
 
 COMMIT;
 """
