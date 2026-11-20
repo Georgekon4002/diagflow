@@ -274,6 +274,9 @@ def filter_by_web_lab(
 def apply_hard_filters(
     candidates: list[CandidateDiagnostician],
     exam: ExamContext,
+    exclusive_rules: list[dict] | None = None,
+    modality_quotas: list[dict] | None = None,
+    comment_rule_enabled: bool | None = None,
 ) -> tuple[list[CandidateDiagnostician], dict[int, list[FilterResult]]]:
     """
     Apply all active hard filters to the candidate list.
@@ -290,9 +293,12 @@ def apply_hard_filters(
     import diagflow.db.diagflow_db as cfg_db
     from diagflow.engine.comment_rules import parse_comment_diagnosticians
 
-    exclusive_rules = cfg_db.get_all_exclusive_lab_rules()
-    modality_quotas = cfg_db.get_all_modality_quotas()
-    comment_rule_enabled = cfg_db.get_comment_auto_assign_enabled()
+    if exclusive_rules is None:
+        exclusive_rules = cfg_db.get_all_exclusive_lab_rules()
+    if modality_quotas is None:
+        modality_quotas = cfg_db.get_all_modality_quotas()
+    if comment_rule_enabled is None:
+        comment_rule_enabled = cfg_db.get_comment_auto_assign_enabled()
 
     excluded_by_comment: set[int] = set()
     if comment_rule_enabled and exam.comments:

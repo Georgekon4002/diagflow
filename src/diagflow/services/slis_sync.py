@@ -67,15 +67,18 @@ def cleanup_mock_data() -> dict[str, Any]:
 
         # Clear in-memory caches
         try:
-            from diagflow.services.assignment import _exam_details_cache
+            from diagflow.services.assignment import _exam_details_cache, _slis_assigned_cache, invalidate_slis_period_cache
             _exam_details_cache.clear()
+            _slis_assigned_cache.clear()
+            invalidate_slis_period_cache()
         except Exception:
             pass
 
         try:
-            from diagflow.api.routes import _suggestion_cache, _session_suggestion_counts
+            from diagflow.api.routes import _suggestion_cache, _session_suggestion_counts, _session_suggestions_by_exam
             _suggestion_cache.clear()
             _session_suggestion_counts.clear()
+            _session_suggestions_by_exam.clear()
         except Exception:
             pass
 
@@ -217,7 +220,7 @@ def pull_from_slis() -> dict:
 
     if not settings.use_mock_slis_db:
         from diagflow.services.assignment import _get_pending_exams_from_db
-        pending_list = _get_pending_exams_from_db()
+        pending_list = _get_pending_exams_from_db(force_refresh=True)
         return {
             "pulled": len(pending_list),
             "expired": 0,
@@ -315,13 +318,22 @@ def push_exam_to_slis(
     exammoreid: int,
     diagnostician_id: int,
     diagnostician_name: str,
-    force: bool = False
+    force: bool = False,
+    slis_conn: Any = None,
+    local_assign: dict | None = None,
+    defer_config_db: bool = False,
 ) -> dict:
     """
     Execute the SQL update required to update a single exam in Slis (or mock_slis.db).
     Updates the database and records local assignment sync timestamp.
     When force=False, implements Optimistic Locking to prevent concurrent overwrite.
     When force=True (e.g. from Slis Search / Reassign tab), directly overrides Slis assignment.
+
+    Optional batch parameters (used by push_all_to_slis / push_selected_to_slis):
+      - slis_conn: Pre-opened pooled SQLAlchemy connection for MSSQL mode.
+      - local_assign: Pre-fetched local_assignments row dict to avoid N+1 reads.
+      - defer_config_db: When True, skips per-exam config DB writes and returns `_log_entry`
+        so the caller can finalize the entire batch in a single transaction.
 
     Returns:
         dict with success, exammoreid, diagnostician_id, sql (or conflict, error)
@@ -332,9 +344,12 @@ def push_exam_to_slis(
     
     try:
         if not settings.use_mock_slis_db:
-            from sqlalchemy import create_engine, text
-            engine = create_engine(settings.slis_db_connection_string, connect_args={"timeout": 10})
-            with engine.connect() as conn:
+            from contextlib import nullcontext
+            from sqlalchemy import text
+            from diagflow.db.engines import get_slis_engine
+
+            conn_ctx = nullcontext(slis_conn) if slis_conn is not None else get_slis_engine().connect()
+            with conn_ctx as conn:
                 if force:
                     # Direct override: Update without optimistic locking
                     result = conn.execute(
@@ -394,61 +409,101 @@ def push_exam_to_slis(
         cat = None
         extra = None
         vdate = None
-        local_assign = cfg_db.get_all_local_assignments().get(exammoreid)
+        if local_assign is None:
+            local_assign = cfg_db.get_all_local_assignments().get(exammoreid)
         if local_assign:
             cat = local_assign.get("modality")
             extra = local_assign.get("extracode")
             vdate = local_assign.get("visitdate")
 
+        # Fallback to in-memory exam details cache (critical for Slis Search reassignments in production)
         try:
-            con = _get_db()
-            row = con.execute("SELECT category, extracode, diagnostis, code, slis_synced_at, visitdate FROM slis_exams WHERE exammoreid = ?", (exammoreid,)).fetchone()
-            if row:
-                cat = cat or (row["category"] if "category" in row.keys() else None)
-                extra = extra or (str(row["extracode"]) if ("extracode" in row.keys() and row["extracode"]) else None)
-                if not vdate and "visitdate" in row.keys() and row["visitdate"]:
-                    vdate = str(row["visitdate"])[:10]
+            from diagflow.services.assignment import _exam_details_cache
+            cached_meta = _exam_details_cache.get(exammoreid)
+            if cached_meta:
+                cat = cat or cached_meta.get("category") or cached_meta.get("modality")
+                extra = extra or (str(cached_meta["extracode"]) if cached_meta.get("extracode") else None)
+                vdate = vdate or cached_meta.get("visitdate")
+        except Exception:
+            pass
 
-                # Mock Mode Optimistic Locking: check if already assigned to someone else
-                if (not force and
-                    settings.use_mock_slis_db and 
-                    row["diagnostis"] is not None and 
-                    str(row["diagnostis"]).strip() not in ("", "0", "None", str(diagnostician_id)) and 
-                    row["slis_synced_at"] is not None):
-                    current_name = row["code"] or f"ID {row['diagnostis']}"
+        # Only touch local SQLite mock_slis.db when running in mock mode
+        if settings.use_mock_slis_db:
+            try:
+                con = _get_db()
+                row = con.execute("SELECT category, extracode, diagnostis, code, slis_synced_at, visitdate FROM slis_exams WHERE exammoreid = ?", (exammoreid,)).fetchone()
+                if row:
+                    cat = cat or (row["category"] if "category" in row.keys() else None)
+                    extra = extra or (str(row["extracode"]) if ("extracode" in row.keys() and row["extracode"]) else None)
+                    if not vdate and "visitdate" in row.keys() and row["visitdate"]:
+                        vdate = str(row["visitdate"])[:10]
+
+                    # Mock Mode Optimistic Locking: check if already assigned to someone else
+                    if (not force and
+                        row["diagnostis"] is not None and 
+                        str(row["diagnostis"]).strip() not in ("", "0", "None", str(diagnostician_id)) and 
+                        row["slis_synced_at"] is not None):
+                        current_name = row["code"] or f"ID {row['diagnostis']}"
+                        con.close()
+                        logger.warning("optimistic_lock_conflict_mock", exammoreid=exammoreid, current_diag=current_name)
+                        return {
+                            "success": False,
+                            "conflict": True,
+                            "cancelled_in_slis": False,
+                            "exammoreid": exammoreid,
+                            "current_diagnostician": current_name,
+                            "error": f"Η εξέταση #{exammoreid} έχει ήδη ανατεθεί στον/στην {current_name} στο Slis από άλλον χρήστη.",
+                        }
+                else:
                     con.close()
-                    logger.warning("optimistic_lock_conflict_mock", exammoreid=exammoreid, current_diag=current_name)
+                    logger.warning("exam_not_found_in_mock_slis_auto_purging", exammoreid=exammoreid)
+                    cfg_db.delete_local_assignment(exammoreid)
                     return {
                         "success": False,
-                        "conflict": True,
-                        "cancelled_in_slis": False,
+                        "conflict": False,
+                        "cancelled_in_slis": True,
                         "exammoreid": exammoreid,
-                        "current_diagnostician": current_name,
-                        "error": f"Η εξέταση #{exammoreid} έχει ήδη ανατεθεί στον/στην {current_name} στο Slis από άλλον χρήστη.",
+                        "error": f"Η εξέταση #{exammoreid} δεν βρέθηκε στο Slis (έχει ακυρωθεί/διαγραφεί) και αφαιρέθηκε αυτόματα από τις αναθέσεις.",
                     }
-            elif settings.use_mock_slis_db:
+
+                con.execute(
+                    "UPDATE slis_exams SET diagnostis = ?, code = ?, slis_synced_at = ? WHERE exammoreid = ?",
+                    (diagnostician_id, diagnostician_name, now_iso, exammoreid)
+                )
+                con.commit()
                 con.close()
-                logger.warning("exam_not_found_in_mock_slis_auto_purging", exammoreid=exammoreid)
-                cfg_db.delete_local_assignment(exammoreid)
-                return {
-                    "success": False,
-                    "conflict": False,
-                    "cancelled_in_slis": True,
-                    "exammoreid": exammoreid,
-                    "error": f"Η εξέταση #{exammoreid} δεν βρέθηκε στο Slis (έχει ακυρωθεί/διαγραφεί) και αφαιρέθηκε αυτόματα από τις αναθέσεις.",
+            except Exception as cache_exc:
+                logger.warning("failed_to_update_local_slis_cache", exammoreid=exammoreid, error=str(cache_exc))
+
+        if cat:
+            cat = normalize_modality(cat)
+        vdate = cfg_db._normalize_date_str(vdate)
+
+        if not settings.use_mock_slis_db:
+            try:
+                from diagflow.services.assignment import _slis_assigned_cache, invalidate_slis_period_cache
+                _slis_assigned_cache[exammoreid] = {
+                    "diagnostician_id": diagnostician_id,
+                    "extracode": extra,
+                    "category": cat,
+                    "visitdate": vdate,
                 }
+                if not defer_config_db:
+                    invalidate_slis_period_cache()
+            except Exception:
+                pass
 
-            con.execute(
-                "UPDATE slis_exams SET diagnostis = ?, code = ?, slis_synced_at = ? WHERE exammoreid = ?",
-                (diagnostician_id, diagnostician_name, now_iso, exammoreid)
-            )
-            con.commit()
-            con.close()
-        except Exception as cache_exc:
-            logger.warning("failed_to_update_local_slis_cache", exammoreid=exammoreid, error=str(cache_exc))
-
-        cfg_db.mark_local_assignment_synced(exammoreid, now_iso)
-        cfg_db.log_assignment(exammoreid, diagnostician_id, now_iso, cat, extra, visitdate=vdate)
+        log_entry = {
+            "exammoreid": exammoreid,
+            "diagnostician_id": diagnostician_id,
+            "assigned_at": now_iso,
+            "modality": cat,
+            "extracode": extra,
+            "visitdate": vdate,
+        }
+        if not defer_config_db:
+            cfg_db.mark_local_assignment_synced(exammoreid, now_iso)
+            cfg_db.log_assignment(exammoreid, diagnostician_id, now_iso, cat, extra, visitdate=vdate)
 
         logger.info(
             "push_to_slis_success",
@@ -456,7 +511,7 @@ def push_exam_to_slis(
             diagnostician_id=diagnostician_id,
             synced_at=now_iso,
         )
-        return {
+        res_dict = {
             "success": True,
             "exammoreid": exammoreid,
             "diagnostician_id": diagnostician_id,
@@ -464,6 +519,9 @@ def push_exam_to_slis(
             "synced_at": now_iso,
             "sql": sql_cmd,
         }
+        if defer_config_db:
+            res_dict["_log_entry"] = log_entry
+        return res_dict
     except Exception as exc:
         logger.error(
             "push_to_slis_error",
@@ -502,8 +560,9 @@ def search_slis_exams(
     rows = []
     if not settings.use_mock_slis_db:
         try:
-            from sqlalchemy import create_engine, text
-            engine = create_engine(settings.slis_db_connection_string, connect_args={"timeout": 10})
+            from sqlalchemy import text
+            from diagflow.db.engines import get_slis_engine
+            engine = get_slis_engine()
             with engine.connect() as conn:
                 query = text(f"EXEC getExamsListForPeriod_V1 '{start_date}', '{end_date}'")
                 res = conn.execute(query)
@@ -597,6 +656,41 @@ def search_slis_exams(
 
         raw_cat = r.get("category")
         norm_cat = normalize_modality(raw_cat)
+        norm_vdate = cfg_db._normalize_date_str(r.get("visitdate")) or ""
+        stat_val = int(r.get("stat")) if r.get("stat") is not None and str(r.get("stat")).isdigit() else 0
+
+        # Cache metadata so subsequent reassignments & bulk eligibility checks know the exact visitdate
+        if exam_more_id is not None:
+            try:
+                from diagflow.services.assignment import _exam_details_cache, _slis_assigned_cache
+                eid_i = int(exam_more_id)
+                _exam_details_cache[eid_i] = {
+                    "exammoreid": eid_i,
+                    "extracode": r.get("extracode"),
+                    "category": norm_cat,
+                    "modality": norm_cat,
+                    "examname": r.get("examname") or "",
+                    "examnumcode": r.get("examnumcode"),
+                    "patient_name": f"{r.get('fname') or ''} {r.get('lname') or ''}".strip(),
+                    "demogid": r.get("demogid"),
+                    "visitdate": norm_vdate,
+                    "labcodeid": r.get("labcodeid"),
+                    "lab_name": (r.get("laboratoryname") or "").strip(),
+                    "wcode": r.get("wcode"),
+                    "wname": r.get("wname") or "",
+                    "notes": r.get("notes") or "",
+                    "oldpers": r.get("oldpers"),
+                    "stat": stat_val,
+                }
+                if not settings.use_mock_slis_db and slis_diag_id is not None:
+                    _slis_assigned_cache[eid_i] = {
+                        "diagnostician_id": slis_diag_id,
+                        "extracode": r.get("extracode"),
+                        "category": norm_cat,
+                        "visitdate": norm_vdate,
+                    }
+            except Exception:
+                pass
 
         filtered.append({
             "exam_id": str(r.get("exammoreid")),
@@ -613,7 +707,7 @@ def search_slis_exams(
             "examname": r.get("examname") or "",
             "modality": norm_cat,
             "category": norm_cat,
-            "visitdate": str(r.get("visitdate"))[:10] if r.get("visitdate") else "",
+            "visitdate": norm_vdate,
             "labcodeid": r.get("labcodeid"),
             "lab_name": (r.get("laboratoryname") or "").strip(),
             "wcode": r.get("wcode"),
@@ -623,12 +717,70 @@ def search_slis_exams(
             "status": status,
             "pending_slis_update": pending_slis_update,
             "notes": r.get("notes") or "",
-            "stat": int(r.get("stat")) if r.get("stat") is not None and str(r.get("stat")).isdigit() else 0,
+            "stat": stat_val,
         })
 
     logger.info("search_slis_complete", total_found=len(rows), filtered=len(filtered))
     return filtered
 
+
+
+def _push_batch_rows_to_slis(rows: list[dict]) -> tuple[list[int], list[dict], list[str]]:
+    """Push a list of local_assignment row dicts using ONE shared Slis connection & ONE config DB commit."""
+    import diagflow.db.diagflow_db as cfg_db
+    from contextlib import nullcontext
+
+    succeeded: list[int] = []
+    failed: list[dict] = []
+    queries: list[str] = []
+    batch_log_entries: list[dict] = []
+
+    if not rows:
+        return succeeded, failed, queries
+
+    slis_ctx = nullcontext(None)
+    if not settings.use_mock_slis_db:
+        from diagflow.db.engines import get_slis_engine
+        slis_ctx = get_slis_engine().connect()
+
+    with slis_ctx as shared_slis_conn:
+        for row in rows:
+            exammoreid = row["exammoreid"]
+            diagnostician_id = row["diagnostician_id"]
+            diagnostician_name = row.get("diagnostician_name") or ""
+            result = push_exam_to_slis(
+                exammoreid,
+                diagnostician_id,
+                diagnostician_name,
+                slis_conn=shared_slis_conn,
+                local_assign=row,
+                defer_config_db=True,
+            )
+            if result.get("success"):
+                succeeded.append(exammoreid)
+                if "sql" in result:
+                    queries.append(result["sql"])
+                if "_log_entry" in result:
+                    batch_log_entries.append(result["_log_entry"])
+            else:
+                failed.append({
+                    "exammoreid": exammoreid,
+                    "conflict": result.get("conflict", False),
+                    "cancelled_in_slis": result.get("cancelled_in_slis", False),
+                    "error": result.get("error", "Failed to update"),
+                })
+
+    if batch_log_entries:
+        cfg_db.finalize_synced_assignments_batch(batch_log_entries)
+
+    if not settings.use_mock_slis_db:
+        try:
+            from diagflow.services.assignment import invalidate_slis_period_cache
+            invalidate_slis_period_cache()
+        except Exception:
+            pass
+
+    return succeeded, failed, queries
 
 
 def push_all_to_slis() -> dict:
@@ -642,25 +794,7 @@ def push_all_to_slis() -> dict:
     local_assignments = cfg_db.get_all_local_assignments()
     rows = list(local_assignments.values())
 
-    succeeded = []
-    failed = []
-    queries = []
-    for row in rows:
-        exammoreid       = row["exammoreid"]
-        diagnostician_id = row["diagnostician_id"]
-        diagnostician_name = row["diagnostician_name"] or ""
-        result = push_exam_to_slis(exammoreid, diagnostician_id, diagnostician_name)
-        if result.get("success"):
-            succeeded.append(exammoreid)
-            if "sql" in result:
-                queries.append(result["sql"])
-        else:
-            failed.append({
-                "exammoreid": exammoreid,
-                "conflict": result.get("conflict", False),
-                "cancelled_in_slis": result.get("cancelled_in_slis", False),
-                "error": result.get("error", "Failed to update")
-            })
+    succeeded, failed, queries = _push_batch_rows_to_slis(rows)
 
     script_lines = ["BEGIN TRANSACTION;"] + [f"  {q}" for q in queries] + ["COMMIT;"]
     formatted_script = "\n".join(script_lines)
@@ -685,37 +819,22 @@ def push_selected_to_slis(exammoreid_list: list[int]) -> dict:
     Returns:
         dict with total, succeeded, failed lists, queries, and sql_script
     """
-    succeeded = []
-    failed = []
-    queries = []
-
     if not exammoreid_list:
         return {"total": 0, "succeeded": [], "failed": [], "queries": [], "sql_script": "-- No exams selected"}
 
     import diagflow.db.diagflow_db as cfg_db
     local_assignments = cfg_db.get_all_local_assignments()
 
+    rows_to_push: list[dict] = []
+    missing_failed: list[dict] = []
     for exammoreid in exammoreid_list:
         if exammoreid not in local_assignments:
-            failed.append({"exammoreid": exammoreid, "error": "Not locally assigned or already pushed."})
-            continue
-
-        row = local_assignments[exammoreid]
-        diagnostician_id = row["diagnostician_id"]
-        diagnostician_name = row["diagnostician_name"] or ""
-        
-        result = push_exam_to_slis(exammoreid, diagnostician_id, diagnostician_name)
-        if result.get("success"):
-            succeeded.append(exammoreid)
-            if "sql" in result:
-                queries.append(result["sql"])
+            missing_failed.append({"exammoreid": exammoreid, "error": "Not locally assigned or already pushed."})
         else:
-            failed.append({
-                "exammoreid": exammoreid,
-                "conflict": result.get("conflict", False),
-                "cancelled_in_slis": result.get("cancelled_in_slis", False),
-                "error": result.get("error", "Failed to update")
-            })
+            rows_to_push.append(local_assignments[exammoreid])
+
+    succeeded, batch_failed, queries = _push_batch_rows_to_slis(rows_to_push)
+    failed = missing_failed + batch_failed
 
     script_lines = ["BEGIN TRANSACTION;"] + [f"  {q}" for q in queries] + ["COMMIT;"]
     formatted_script = "\n".join(script_lines)

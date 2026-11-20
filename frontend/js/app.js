@@ -207,7 +207,8 @@ function handleSlisDiagAutocomplete(query) {
 
     box.innerHTML = matches.slice(0, 10).map((d, idx) => {
         const count = d.current_day_count !== undefined ? d.current_day_count : 0;
-        const qMax = d.quota_monday || d.quotas?.daily_max || '∞';
+        const rawQ = getTodayQuota(d);
+        const qMax = rawQ === 999 ? '∞' : rawQ;
         const lastName = (d.name || '').trim().split(/\s+/)[0];
         return `
             <div class="autocomplete-item" data-idx="${idx}" onclick="selectSlisDiag('${escapeHtml(d.name)}')">
@@ -907,8 +908,19 @@ function getStatInfo(exam) {
     return { isUrgent: false, isEmergency: false, class: '', badge: '' };
 }
 
-function sortExams(exams) {
+function hasActiveFiltersOrSort() {
+    const searchEl = document.getElementById('search-input');
+    const hasSearch = Boolean(searchEl && searchEl.value.trim());
+    const hasModalities = document.querySelectorAll('#modality-dropdown input[type="checkbox"]:checked').length > 0;
+    const hasLabs = document.querySelectorAll('#lab-dropdown input[type="checkbox"]:checked').length > 0;
+    const hasDateRange = Boolean(dateRangePicker && dateRangePicker.selectedDates && dateRangePicker.selectedDates.length > 0);
+    const hasColumnSort = Boolean(sortConfig && sortConfig.key && sortConfig.direction);
+    return Boolean(hasSearch || hasModalities || hasLabs || hasDateRange || filterOnlyComments || filterOnlyHistory || hasColumnSort);
+}
+
+function sortExams(exams, prioritizeSpecial = null) {
     if (!exams || exams.length === 0) return [];
+    const shouldPrioritize = prioritizeSpecial !== null ? Boolean(prioritizeSpecial) : !hasActiveFiltersOrSort();
 
     // 1. Group exams into order groups (same order ID & patient)
     const groupMap = new Map();
@@ -941,7 +953,8 @@ function sortExams(exams) {
     });
 
     // Sort exams internally within each order group:
-    // Highest priority exam first (Emergency -> Stat -> Pammakaristos -> Normal), then newest visitdate
+    // Always place the highest-priority exam first (Emergency -> Stat -> Pammakaristos -> Normal)
+    // so merged rowspan cells consistently inherit the order's highlight color even when filtered.
     groupOrder.forEach(grp => {
         grp.exams.sort((a, b) => {
             const prioA = getExamPriority(a);
@@ -1023,12 +1036,14 @@ function sortExams(exams) {
         });
     }
 
-    // 3. Always keep Emergency (stat 2), Stat (stat 1), and Pammakristos order groups at the top despite their date
-    groupOrder.sort((a, b) => {
-        const prioA = getOrderGroupPriority(a);
-        const prioB = getOrderGroupPriority(b);
-        return prioB - prioA;
-    });
+    // 3. Keep Emergency (stat 2), Stat (stat 1), and Pammakristos order groups at the top ONLY when no filtering/sorting is active
+    if (shouldPrioritize) {
+        groupOrder.sort((a, b) => {
+            const prioA = getOrderGroupPriority(a);
+            const prioB = getOrderGroupPriority(b);
+            return prioB - prioA;
+        });
+    }
 
     // 4. Flatten order groups back into single exams array
     const result = [];
@@ -1875,6 +1890,11 @@ function renderWorkloadGaugeHtml(diagId, diagsList = diagnosticians, examDate = 
             trackClass = 'track-good';
             dotClass = 'dot-good';
         }
+    } else if (count > 0) {
+        pct = 100;
+        fillClass = 'workload-full';
+        trackClass = 'track-full';
+        dotClass = 'dot-full';
     }
 
     // Minimum fill display of 10% so the vibrant color is always immediately visible
@@ -2045,10 +2065,10 @@ async function refreshExams() {
     } finally {
         hideBackgroundWork();
     }
+    await loadDiagnosticians();
     await Promise.all([
         loadPendingExams(),
-        loadAssignedExams(),
-        loadDiagnosticians()
+        loadAssignedExams()
     ]);
     if (currentTab === 'dashboard') {
         loadDashboard();
@@ -2227,6 +2247,7 @@ async function confirmAssignment() {
         assignedExams.unshift(updatedExam);
     }
 
+    await loadDiagnosticians();
     renderPendingTable();
     renderAssignedTable();
     updateTabCounts();
@@ -2300,6 +2321,7 @@ async function overrideAssignment() {
         assignedExams.unshift(updatedExam);
     }
 
+    await loadDiagnosticians();
     renderPendingTable();
     renderAssignedTable();
     updateTabCounts();
@@ -3241,13 +3263,38 @@ document.addEventListener('click', (e) => {
     }
 });
 
+function normalizeDateISO(dateStr) {
+    if (!dateStr) return null;
+    const clean = String(dateStr).trim();
+    if (!clean) return null;
+    // Match YYYY-MM-DD (with optional time)
+    const ymd = clean.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})/);
+    if (ymd) {
+        return `${ymd[1]}-${ymd[2].padStart(2, '0')}-${ymd[3].padStart(2, '0')}`;
+    }
+    // Match DD/MM/YYYY or DD-MM-YYYY or DD.MM.YYYY
+    const dmy = clean.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})/);
+    if (dmy) {
+        return `${dmy[3]}-${dmy[2].padStart(2, '0')}-${dmy[1].padStart(2, '0')}`;
+    }
+    return null;
+}
+
+function parseLocalDate(dateStr) {
+    const iso = normalizeDateISO(dateStr);
+    if (!iso) return null;
+    const [y, m, d] = iso.split('-').map(Number);
+    const dt = new Date(y, m - 1, d);
+    return isNaN(dt.getTime()) ? null : dt;
+}
+
 function getQuotaForDate(d, dateStr = null) {
     if (!d) return 0;
     const days = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
     let dayIndex;
     if (dateStr) {
-        const parsed = new Date(dateStr);
-        if (!isNaN(parsed.getTime())) {
+        const parsed = parseLocalDate(dateStr);
+        if (parsed) {
             dayIndex = parsed.getDay();
         }
     }
@@ -3264,10 +3311,10 @@ function getTodayQuota(d) {
 
 function getDiagnosticianCountForDate(d, dateStr = null) {
     if (!d) return 0;
-    if (dateStr && d.counts_by_date) {
-        const cleanDate = String(dateStr).slice(0, 10);
-        if (d.counts_by_date[cleanDate] !== undefined) {
-            return d.counts_by_date[cleanDate];
+    if (dateStr) {
+        const cleanDate = normalizeDateISO(dateStr);
+        if (cleanDate && d.counts_by_date) {
+            return d.counts_by_date[cleanDate] !== undefined ? d.counts_by_date[cleanDate] : 0;
         }
     }
     return d.current_day_count !== undefined ? d.current_day_count : 0;
@@ -3585,6 +3632,7 @@ async function handleRefreshClick() {
 
     try {
         await apiCall('/slis/pull', 'POST');
+        await loadDiagnosticians();
         await Promise.all([
             loadPendingExams(),
             loadAssignedExams()
@@ -4076,8 +4124,10 @@ async function loadDashboard(targetDate = null) {
         }
 
         grid.innerHTML = data.map(d => {
-            const diagInfo = diagnosticians.find(x => x.id === d.diagnostician_id);
-            let quota = diagInfo ? getQuotaForDate(diagInfo, targetDate) : 0;
+            const diagInfo = diagnosticians.find(x => String(x.id) === String(d.diagnostician_id));
+            let quota = d.daily_quota !== undefined && d.daily_quota !== null
+                ? Number(d.daily_quota)
+                : (diagInfo ? getQuotaForDate(diagInfo, targetDate) : 0);
             let quotaStr = quota === 999 ? '∞' : quota;
             let count = (d.assigned_exam_ids && d.assigned_exam_ids.length > 0) ? d.assigned_exam_ids.length : d.assigned_orders.length;
 
@@ -4096,6 +4146,9 @@ async function loadDashboard(targetDate = null) {
                 } else {
                     colorClass = 'gauge-good';
                 }
+            } else if (count > 0) {
+                pct = 100;
+                colorClass = 'gauge-full';
             }
 
             // Circle circumference for r=34 is 213.6
@@ -4313,11 +4366,21 @@ function sortAndRenderSlisSearchResults() {
             }
         });
 
+        const hasSlisFilters = Boolean(
+            (document.getElementById('slis-search-extracode')?.value || '').trim() ||
+            (document.getElementById('slis-search-patient')?.value || '').trim() ||
+            (document.getElementById('slis-search-doctor')?.value || '').trim() ||
+            (document.getElementById('slis-search-diagnostis')?.value || '').trim() ||
+            (slisSearchDateRangePicker && slisSearchDateRangePicker.selectedDates && slisSearchDateRangePicker.selectedDates.length > 0)
+        );
+
         sorted.sort((a, b) => {
-            // 0. Priority: Emergency (stat 2) -> Stat (stat 1) -> Pammakaristos -> Normal
-            const prioA = getExamPriority(a);
-            const prioB = getExamPriority(b);
-            if (prioB !== prioA) return prioB - prioA;
+            // 0. Priority: Emergency (stat 2) -> Stat (stat 1) -> Pammakaristos -> Normal ONLY with no filtering
+            if (!hasSlisFilters) {
+                const prioA = getExamPriority(a);
+                const prioB = getExamPriority(b);
+                if (prioB !== prioA) return prioB - prioA;
+            }
 
             const extA = String(a.extracode || a.exammoreid || '');
             const extB = String(b.extracode || b.exammoreid || '');
@@ -4567,8 +4630,10 @@ function populateSlisSearchFabDiagnosticians() {
 
     const isLoading = slisFabEligibilityLoading;
 
-    // Fallback checks for modalities of selected exams while API loads
+    // Fallback checks for modalities and exam date of selected exams while API loads
     const selectedExams = (rawSlisSearchResults || []).filter(e => selectedSlisSearchExams.has(Number(e.exammoreid)));
+    const selectedDates = [...new Set(selectedExams.map(e => normalizeDateISO(e.visitdate || e.request_date)).filter(Boolean))];
+    const targetDate = selectedDates.length === 1 ? selectedDates[0] : null;
     const hasCt = selectedExams.some(e => {
         const mod = (e.modality || e.category || '').toUpperCase();
         return mod.includes('CT');
@@ -4598,11 +4663,12 @@ function populateSlisSearchFabDiagnosticians() {
                 isEligible = false;
                 rejectReason = 'Δεν αξιολογεί MRIs';
             } else {
-                const quota = getTodayQuota(d);
+                const quota = getQuotaForDate(d, targetDate);
+                const count = getDiagnosticianCountForDate(d, targetDate);
                 if (quota === 0) {
                     isEligible = false;
                     rejectReason = 'Μη διαθέσιμος';
-                } else if (quota !== 999 && d.current_day_count >= quota) {
+                } else if (quota !== 999 && count >= quota) {
                     isEligible = false;
                     rejectReason = 'Έχει συμπληρώσει το ημερήσιο όριο';
                 }
@@ -4642,7 +4708,8 @@ function populateSlisSearchFabDiagnosticians() {
     }
 
     list.innerHTML = headerHtml + filtered.map(d => {
-        const quota = getTodayQuota(d);
+        const quota = getQuotaForDate(d, targetDate);
+        const count = getDiagnosticianCountForDate(d, targetDate);
         const quotaStr = quota === 999 ? '∞' : quota;
         const isError = !d.isEligible && !d.isCalculating;
         const isCalc = d.isCalculating;
@@ -4662,7 +4729,7 @@ function populateSlisSearchFabDiagnosticians() {
             <div class="fab-diag-item" onclick="bulkSetSlisSearchDiagnostician(${d.id}, '${escapeHtml(d.name)}')" style="${style}">
                 <div style="display: flex; justify-content: space-between; align-items: center; gap: 8px;">
                     <span style="font-weight: 600;">${escapeHtmlFull(d.name)}</span>
-                    <span style="font-size: 11px; opacity: ${isError ? '0.9' : '0.6'};">(${d.current_day_count}/${quotaStr})</span>
+                    <span style="font-size: 11px; opacity: ${isError ? '0.9' : '0.6'};">(${count}/${quotaStr})</span>
                 </div>
                 ${reasonHtml}
             </div>
@@ -4980,6 +5047,7 @@ function populateSlisReassignDropdown(exammoreid) {
     const cachedMap = slisEligibilityCache.get(exammoreid);
 
     const mod = (exam?.modality || exam?.category || '').toUpperCase();
+    const examDate = normalizeDateISO(exam?.visitdate || exam?.request_date);
     const isCt = mod.includes('CT');
     const isMri = mod.includes('MRI') || mod.includes('MRA');
 
@@ -5005,11 +5073,12 @@ function populateSlisReassignDropdown(exammoreid) {
                 isEligible = false;
                 rejectReason = 'Δεν αξιολογεί MRIs';
             } else {
-                const quota = getTodayQuota(d);
+                const quota = getQuotaForDate(d, examDate);
+                const count = getDiagnosticianCountForDate(d, examDate);
                 if (quota === 0) {
                     isEligible = false;
                     rejectReason = 'Μη διαθέσιμος';
-                } else if (quota !== 999 && d.current_day_count >= quota) {
+                } else if (quota !== 999 && count >= quota) {
                     isEligible = false;
                     rejectReason = 'Έχει συμπληρώσει το ημερήσιο όριο';
                 }
@@ -5049,7 +5118,8 @@ function populateSlisReassignDropdown(exammoreid) {
     }
 
     list.innerHTML = headerHtml + filtered.map(d => {
-        const quota = getTodayQuota(d);
+        const quota = getQuotaForDate(d, examDate);
+        const count = getDiagnosticianCountForDate(d, examDate);
         const quotaStr = quota === 999 ? '∞' : quota;
         const isError = !d.isEligible && !d.isCalculating;
         const isCalc = d.isCalculating;
@@ -5069,7 +5139,7 @@ function populateSlisReassignDropdown(exammoreid) {
             <div class="slis-diag-item" onclick="selectSlisReassignDiag(${exammoreid}, ${d.id}, '${escapeHtml(d.name)}')" style="${style}">
                 <div style="display: flex; justify-content: space-between; align-items: center; gap: 8px;">
                     <span style="font-weight: 600;">${escapeHtmlFull(d.name)}</span>
-                    <span style="font-size: 11px; opacity: ${isError ? '0.9' : '0.6'};">(${d.current_day_count}/${quotaStr})</span>
+                    <span style="font-size: 11px; opacity: ${isError ? '0.9' : '0.6'};">(${count}/${quotaStr})</span>
                 </div>
                 ${reasonHtml}
             </div>
@@ -5116,10 +5186,10 @@ async function triggerSlisReassign(exammoreid) {
             delete slisSelectedDiagMap[exammoreid];
             selectedSlisSearchExams.delete(Number(exammoreid));
             await performSlisSearch(); // Refresh search results while retaining choices on other rows
+            await loadDiagnosticians();
             await Promise.all([
                 loadPendingExams(),
                 loadAssignedExams(),
-                loadDiagnosticians(),
                 loadDashboard()
             ]);
         } else {
@@ -5184,10 +5254,10 @@ async function triggerBatchSlisReassign() {
         }
 
         await performSlisSearch();
+        await loadDiagnosticians();
         await Promise.all([
             loadPendingExams(),
             loadAssignedExams(),
-            loadDiagnosticians(),
             loadDashboard()
         ]);
     } finally {
@@ -5457,10 +5527,10 @@ window.addEventListener('keydown', function (e) {
                             diagnostician_id: exam.suggestion.suggested_diagnostician_id
                         });
                         showToast(`✅ Η εξέταση ανατέθηκε στον/στην ${exam.suggestion.suggested_diagnostician_name}`, 'success');
+                        await loadDiagnosticians();
                         await Promise.all([
                             loadPendingExams(),
-                            loadAssignedExams(),
-                            loadDiagnosticians()
+                            loadAssignedExams()
                         ]);
                     } catch (err) {
                         showToast(`Σφάλμα: ${err.message}`, 'error');

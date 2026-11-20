@@ -43,6 +43,7 @@ db/seed_central_tables.sql
 *.db-wal
 db/prev
 db/procedure.sql
+db/procedure_new.sql
 
 ## Office Temporary Lock Files
 ~$*
@@ -60,3 +61,11 @@ scratch*
 docs/
 db/server.txt
 niki/
+
+## Agent Local Instructions & Handoff
+GEMINI.md
+HANDOFF.md
+
+## Agent Local Instructions & Handoff
+GEMINI.md
+HANDOFF.md

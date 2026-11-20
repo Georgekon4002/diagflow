@@ -2210,7 +2210,7 @@ tr.selected-row td {
 }
 
 .exams-table tbody tr.urgent-row td.frozen-col-1 {
-    border-left: 4px solid #A855F7 !important;
+    border-left: none !important;
 }
 
 .exams-table tbody tr.urgent-row.order-group-alt,
@@ -2237,7 +2237,7 @@ tr.selected-row td {
 }
 
 .exams-table tbody tr.emergency-row td.frozen-col-1 {
-    border-left: 4px solid #F43F5E !important;
+    border-left: none !important;
 }
 
 .exams-table tbody tr.emergency-row.order-group-alt,
@@ -2474,7 +2474,7 @@ tr.selected-row td {
 }
 
 .exams-table tbody tr.urgent-row td.frozen-col-1 {
-    border-left: 4px solid #A855F7 !important;
+    border-left: none !important;
 }
 
 .exams-table tbody tr.urgent-row.order-group-alt,
@@ -2501,7 +2501,7 @@ tr.selected-row td {
 }
 
 .exams-table tbody tr.emergency-row td.frozen-col-1 {
-    border-left: 4px solid #F43F5E !important;
+    border-left: none !important;
 }
 
 .exams-table tbody tr.emergency-row.order-group-alt,

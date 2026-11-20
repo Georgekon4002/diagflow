@@ -282,6 +282,7 @@ def compute_candidate_score(
 def score_all_candidates(
     candidates: list[CandidateDiagnostician],
     exam: ExamContext,
+    weights: dict | None = None,
 ) -> list[CandidateScore]:
     """
     Score all candidates and return sorted by total_score (highest first).
@@ -298,8 +299,9 @@ def score_all_candidates(
     import math
     import random
     from diagflow.db.diagflow_db import get_system_weights
-    
-    weights = get_system_weights()
+
+    if weights is None:
+        weights = get_system_weights()
     scored_pairs = []
     
     for c in candidates:

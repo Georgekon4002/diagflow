@@ -63,10 +63,11 @@ async def lifespan(app: FastAPI):
                 except Exception as exc:
                     logger.warning("mock_slis_startup_warning", error=str(exc))
             else:
-                # Production: test real Slis DB connection
+                # Production: test real Slis DB connection using pooled engine
                 try:
-                    from sqlalchemy import create_engine, text
-                    engine = create_engine(settings.slis_db_connection_string, connect_args={"timeout": 10})
+                    from sqlalchemy import text
+                    from diagflow.db.engines import get_slis_engine
+                    engine = get_slis_engine()
                     with engine.connect() as conn:
                         conn.execute(text("SELECT 1"))
                     
@@ -119,10 +120,9 @@ async def lifespan(app: FastAPI):
 
     # Cleanup
     scheduler.shutdown()
-    
-    # TODO: Dispose database engines
-    # from diagflow.db.engines import dispose_engines
-    # dispose_engines()
+
+    from diagflow.db.engines import dispose_engines
+    dispose_engines()
 
 
 app = FastAPI(

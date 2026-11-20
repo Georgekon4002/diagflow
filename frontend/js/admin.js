@@ -1107,7 +1107,7 @@ async function toggleDiagCT(id, newCanCT) {
     const d = diagnosticians.find(x => x.id === id);
     if (!d) return;
     d.can_ct = newCanCT;
-    try { await apiCall(`/admin/diagnosticians/${id}`, 'PUT', d); } catch { /* mock mode */ }
+    try { await apiCall(`/admin/diagnosticians/${id}`, 'PUT', _buildDiagnosticianPayload(d)); } catch { /* mock mode */ }
     populateDiagnosticianSelects();
     showToast(`Η ικανότητα CT ενημερώθηκε: ${d.name}`, 'success');
 }
@@ -1116,7 +1116,7 @@ async function toggleDiagMRI(id, newCanMRI) {
     const d = diagnosticians.find(x => x.id === id);
     if (!d) return;
     d.can_mri = newCanMRI;
-    try { await apiCall(`/admin/diagnosticians/${id}`, 'PUT', d); } catch { /* mock mode */ }
+    try { await apiCall(`/admin/diagnosticians/${id}`, 'PUT', _buildDiagnosticianPayload(d)); } catch { /* mock mode */ }
     populateDiagnosticianSelects();
     showToast(`Η ικανότητα MRI ενημερώθηκε: ${d.name}`, 'success');
 }
@@ -1957,7 +1957,7 @@ async function toggleDiagActive(id, newActive) {
     d.active = newActive;
 
     try {
-        await apiCall(`/admin/diagnosticians/${id}`, 'PUT', { ...d, active: newActive });
+        await apiCall(`/admin/diagnosticians/${id}`, 'PUT', _buildDiagnosticianPayload(d));
     } catch { /* mock mode */ }
 
     renderDiagnosticians();
@@ -2216,28 +2216,53 @@ async function updatePreferredLab(id, val) {
     d.preferred_lab_id = val ? parseInt(val) : null;
 
     try {
-        await apiCall(`/admin/diagnosticians/${id}`, 'PUT', d);
+        await apiCall(`/admin/diagnosticians/${id}`, 'PUT', _buildDiagnosticianPayload(d));
     } catch { /* mock mode */ }
 
     showToast(`✅ Προτίμηση εργαστηρίου ενημερώθηκε: ${d.name}`, 'success');
 }
 
+function _buildDiagnosticianPayload(d) {
+    return {
+        name: d.name,
+        active: Boolean(d.active),
+        can_ct: Boolean(d.can_ct),
+        can_mri: Boolean(d.can_mri),
+        quota_monday: Number(d.quota_monday ?? 15),
+        quota_tuesday: Number(d.quota_tuesday ?? 15),
+        quota_wednesday: Number(d.quota_wednesday ?? 15),
+        quota_thursday: Number(d.quota_thursday ?? 15),
+        quota_friday: Number(d.quota_friday ?? 15),
+        quota_saturday: Number(d.quota_saturday ?? 0),
+        quota_sunday: Number(d.quota_sunday ?? 0),
+        preferred_lab_id: d.preferred_lab_id !== undefined && d.preferred_lab_id !== '' ? d.preferred_lab_id : null,
+    };
+}
+
 async function updateWeeklyQuota(diagId, quotaField, value) {
-    const newQuota = parseInt(value);
-    if (isNaN(newQuota) || newQuota < 0) return;
+    const raw = String(value ?? '').trim();
+    const newQuota = raw === '∞' ? 999 : parseInt(raw, 10);
+    if (isNaN(newQuota) || newQuota < 0) {
+        renderWeeklyScheduleGrid();
+        return;
+    }
 
     const d = diagnosticians.find(x => x.id === diagId);
     if (!d) return;
 
+    const prevQuota = d[quotaField];
     d[quotaField] = newQuota;
 
     renderAvailability();
     renderWeeklyScheduleGrid();
 
     try {
-        await apiCall(`/admin/diagnosticians/${diagId}`, 'PUT', d);
-        showToast('✅ Το όριο αποθηκεύτηκε', 'success');
+        await apiCall(`/admin/diagnosticians/${diagId}`, 'PUT', _buildDiagnosticianPayload(d));
+        showToast(newQuota === 999 ? '✅ Ορίστηκε απεριόριστο όριο (∞)' : `✅ Το όριο ενημερώθηκε σε ${newQuota}`, 'success');
     } catch {
+        d[quotaField] = prevQuota;
+        renderAvailability();
+        renderWeeklyScheduleGrid();
         showToast('Σφάλμα κατά την αποθήκευση του ορίου', 'error');
     }
 }
@@ -3295,17 +3320,29 @@ function renderWeeklyScheduleGrid() {
         for (let day = 0; day < 7; day++) {
             const quotaVal = d[quotaKeys[day]] !== undefined ? d[quotaKeys[day]] : 0;
             const isZero = quotaVal === 0;
+            const isInfinite = quotaVal === 999;
+            const displayVal = isInfinite ? '∞' : quotaVal;
+            const fontSize = isInfinite ? '16px' : '13px';
             const badgeStyle = isZero
                 ? 'background:rgba(239, 68, 68, 0.1); color:#EF4444; border:1px solid rgba(239, 68, 68, 0.3); font-weight:700;'
-                : 'background:rgba(99, 102, 241, 0.08); color:var(--accent-primary); border:1px solid rgba(99, 102, 241, 0.25); font-weight:700;';
+                : isInfinite
+                    ? 'background:rgba(16, 185, 129, 0.12); color:#10B981; border:1px solid rgba(16, 185, 129, 0.35); font-weight:700;'
+                    : 'background:rgba(99, 102, 241, 0.08); color:var(--accent-primary); border:1px solid rgba(99, 102, 241, 0.25); font-weight:700;';
+            const tooltip = isZero
+                ? 'Κλειστό / 0 όριο'
+                : isInfinite
+                    ? 'Απεριόριστο όριο (∞) — πληκτρολογήστε 999 για άπειρο ή άλλο αριθμό για αλλαγή'
+                    : `Ημερήσιο όριο: ${quotaVal} (πληκτρολογήστε 999 για άπειρο)`;
             cells += `
                 <td style="text-align:center; padding:6px 8px;">
-                    <input type="number" 
+                    <input type="text"
+                           inputmode="numeric"
                            class="form-input quota-daily-input"
-                           style="width:56px; padding:6px 4px; text-align:center; border-radius:8px; font-size:13px; transition:all 0.2s; ${badgeStyle}" 
-                           value="${quotaVal}"
-                           min="0"
-                           title="${quotaVal === 0 ? 'Κλειστό / 0 όριο' : 'Ημερήσιο όριο: ' + quotaVal}"
+                           style="width:56px; padding:6px 4px; text-align:center; border-radius:8px; font-size:${fontSize}; transition:all 0.2s; ${badgeStyle}" 
+                           value="${displayVal}"
+                           title="${tooltip}"
+                           onfocus="this.select()"
+                           onkeydown="if(event.key==='Enter'){this.blur();}"
                            onchange="updateWeeklyQuota(${d.id}, '${quotaKeys[day]}', this.value)">
                 </td>
             `;

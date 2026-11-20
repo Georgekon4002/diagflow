@@ -63,16 +63,8 @@ class DiagnosticianService:
         """
         self._current_exam_oldpers = oldpers
         
-        target_dt = date.today()
-        if isinstance(exam_date, str) and len(exam_date) >= 10:
-            try:
-                target_dt = date.fromisoformat(exam_date[:10])
-            except Exception:
-                target_dt = date.today()
-        elif isinstance(exam_date, date):
-            target_dt = exam_date
-
-        target_date_str = str(target_dt)
+        target_dt = cfg_db._parse_date_safe(exam_date) if exam_date is not None else date.today()
+        target_date_str = target_dt.isoformat()
 
         all_diags = cfg_db.get_all_diagnosticians()
         absent_ids = cfg_db.get_absent_diagnostician_ids(target_date_str)
@@ -97,9 +89,9 @@ class DiagnosticianService:
 
         candidates = []
 
-        # Pre-compute weekday key for target exam date
-        weekday_str = target_dt.strftime("%A").lower()
-        quota_key = f"quota_{weekday_str}"
+        # Pre-compute locale-independent weekday quota column for target exam date
+        quota_key = cfg_db.get_weekday_quota_key(target_dt)
+        weekday_str = quota_key.replace("quota_", "")
 
         for diag in all_diags:
             if not diag["active"]:
@@ -203,13 +195,11 @@ class DiagnosticianService:
         # Gather distinct exam dates across the batch
         unique_dates: set[str] = set()
         for e in exams:
-            if e.request_date:
-                unique_dates.add(str(e.request_date)[:10])
-            else:
-                unique_dates.add(str(date.today()))
+            dt_obj = cfg_db._parse_date_safe(e.request_date) if e.request_date else date.today()
+            unique_dates.add(dt_obj.isoformat())
 
         absent_ids_by_date = {dt: cfg_db.get_absent_diagnostician_ids(dt) for dt in unique_dates}
-        daily_counts_by_date = {dt: cfg_db.get_daily_assignment_counts(dt) for dt in unique_dates}
+        daily_counts_by_date = cfg_db.get_daily_assignment_counts_for_dates(unique_dates)
 
         # Gather all unique doctor IDs across the batch
         doctor_ids = [e.issuing_doctor_id for e in exams if e.issuing_doctor_id]
@@ -228,15 +218,9 @@ class DiagnosticianService:
             clean_exam_code = str(exam.exam_code or "").strip()
             exam_code_has_skills = clean_exam_code in all_configured_exam_codes
 
-            target_dt_str = str(exam.request_date or date.today())[:10]
-            try:
-                target_dt = date.fromisoformat(target_dt_str)
-            except Exception:
-                target_dt = date.today()
-                target_dt_str = str(target_dt)
-
-            weekday_str = target_dt.strftime("%A").lower()
-            quota_key = f"quota_{weekday_str}"
+            target_dt = cfg_db._parse_date_safe(exam.request_date) if exam.request_date else date.today()
+            target_dt_str = target_dt.isoformat()
+            quota_key = cfg_db.get_weekday_quota_key(target_dt)
 
             absent_ids = absent_ids_by_date.get(target_dt_str, set())
             daily_counts = daily_counts_by_date.get(target_dt_str, {})
@@ -320,9 +304,8 @@ class DiagnosticianService:
     async def get_all_diagnosticians(self) -> list[dict]:
         """Get all active diagnosticians for the UI dropdown/list with counts_by_date."""
         diags = cfg_db.get_all_diagnosticians()
-        counts = cfg_db.get_daily_assignment_counts()
         counts_by_date_map = cfg_db.get_all_assignment_counts_by_date()
-        today = str(date.today())
+        today = date.today().isoformat()
         absent_ids = cfg_db.get_absent_diagnostician_ids(today)
 
         return [
@@ -338,11 +321,7 @@ class DiagnosticianService:
                 "quota_friday": d["quota_friday"],
                 "quota_saturday": d["quota_saturday"],
                 "quota_sunday": d["quota_sunday"],
-                "current_day_count": (
-                    counts.get(d["id"], {}).get("total", 0)
-                    if isinstance(counts.get(d["id"]), dict)
-                    else (counts.get(d["id"]) or 0)
-                ),
+                "current_day_count": counts_by_date_map.get(d["id"], {}).get(today, 0),
                 "counts_by_date": counts_by_date_map.get(d["id"], {}),
                 "available": bool(d["active"]) and (d["id"] not in absent_ids),
             }

@@ -84,6 +84,7 @@ class AssignmentPipeline:
         self,
         exam: ExamContext,
         candidates: list[CandidateDiagnostician],
+        preloaded_config: dict | None = None,
     ) -> AssignmentSuggestion | None:
         """
         Run the full assignment pipeline for a single exam.
@@ -91,6 +92,8 @@ class AssignmentPipeline:
         Args:
             exam: The exam to assign
             candidates: All potentially eligible diagnosticians
+            preloaded_config: Optional pre-fetched dict with exclusive_rules,
+                modality_quotas, comment_rule_enabled, and weights to avoid N+1 DB reads.
 
         Returns:
             AssignmentSuggestion with the proposed assignment, or None if no candidates remain
@@ -103,8 +106,16 @@ class AssignmentPipeline:
             candidates=len(candidates),
         )
 
+        cfg = preloaded_config or {}
+
         # ── Step 1: Hard filters (including comment exclusions) ──
-        filtered_candidates, filter_results = apply_hard_filters(candidates, exam)
+        filtered_candidates, filter_results = apply_hard_filters(
+            candidates,
+            exam,
+            exclusive_rules=cfg.get("exclusive_rules"),
+            modality_quotas=cfg.get("modality_quotas"),
+            comment_rule_enabled=cfg.get("comment_rule_enabled"),
+        )
 
         # ── Step 0.5: Exclusive Partnerships (only if not excluded by hard filters) ──
         exclusive_partner = next((c for c in filtered_candidates if c.is_partnership_exclusive), None)
@@ -118,7 +129,7 @@ class AssignmentPipeline:
             # Generate alternatives so the user can override if needed
             scored_candidates = []
             if filtered_candidates:
-                scored_candidates = score_all_candidates(filtered_candidates, exam)
+                scored_candidates = score_all_candidates(filtered_candidates, exam, weights=cfg.get("weights"))
                 
             alternatives = self._build_alternatives(
                 exclusive_partner.id,
@@ -138,7 +149,7 @@ class AssignmentPipeline:
             return None
 
         # ── Step 2: Weighted scoring (on passed candidates only) ──
-        scored_candidates = score_all_candidates(filtered_candidates, exam)
+        scored_candidates = score_all_candidates(filtered_candidates, exam, weights=cfg.get("weights"))
 
         # ── Step 3: Solver (greedy for single exam) ──
         solver_result: SolverResult = solve_single_assignment(exam, scored_candidates)

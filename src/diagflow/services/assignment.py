@@ -11,6 +11,7 @@ Handles the full lifecycle of assignments:
 import json
 import sqlite3
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -25,8 +26,110 @@ logger = structlog.get_logger(__name__)
 
 # Global in-memory cache for fast suggestion generation and metadata resolution
 _exam_details_cache: dict[int, dict] = {}
+_slis_assigned_cache: dict[int, dict] = {}
 _pending_exams_cache_data: list[dict] | None = None
 _pending_exams_cache_time: float = 0.0
+_slis_period_cache_days: int = 0
+SLIS_PERIOD_CACHE_TTL_SECONDS: float = 15.0
+
+
+def invalidate_slis_period_cache() -> None:
+    """Invalidate the short-lived cached Slis stored-procedure snapshot."""
+    global _pending_exams_cache_data, _pending_exams_cache_time, _slis_period_cache_days
+    _pending_exams_cache_data = None
+    _pending_exams_cache_time = 0.0
+    _slis_period_cache_days = 0
+
+
+def _fetch_slis_period_rows(days_back: int = 7, force_refresh: bool = False) -> list[dict]:
+    """
+    Fetch exams from production MSSQL `EXEC getExamsListForPeriod_V1` with a short TTL cache.
+    Always pulls at least 7 days so a single stored-procedure execution serves:
+      - POST /api/slis/pull
+      - GET  /api/exams/pending   (3-day slice)
+      - GET  /api/exams/assigned  (7-day metadata)
+      - POST /api/assignments/suggest-batch
+    """
+    global _pending_exams_cache_data, _pending_exams_cache_time, _slis_period_cache_days
+    from datetime import date, timedelta
+    import diagflow.db.diagflow_db as cfg_db
+    from diagflow.db.engines import get_slis_engine
+    from sqlalchemy import text
+
+    effective_days = max(days_back, 7)
+    now_ts = time.monotonic()
+
+    if (
+        not force_refresh
+        and _pending_exams_cache_data is not None
+        and _slis_period_cache_days >= effective_days
+        and (now_ts - _pending_exams_cache_time) < SLIS_PERIOD_CACHE_TTL_SECONDS
+    ):
+        return _pending_exams_cache_data
+
+    today = date.today().isoformat()
+    start_date = (date.today() - timedelta(days=effective_days)).isoformat()
+
+    engine = get_slis_engine()
+    with engine.connect() as conn:
+        query = text(f"EXEC getExamsListForPeriod_V1 '{start_date}', '{today}'")
+        res = conn.execute(query)
+        keys = list(res.keys())
+        raw_pulled = [dict(zip(keys, r)) for r in res.fetchall()]
+
+    all_pulled = [{k.lower(): v for k, v in r.items()} for r in raw_pulled]
+
+    # Refresh metadata & Slis-assigned caches in one pass
+    _slis_assigned_cache.clear()
+    for r in all_pulled:
+        raw_eid = r.get("exammoreid")
+        if raw_eid is None:
+            continue
+        eid_i = int(raw_eid)
+        norm_cat = normalize_modality(r.get("category"))
+        r["category"] = norm_cat
+        vdate_i = cfg_db._normalize_date_str(r.get("visitdate")) or ""
+        raw_s = r.get("stat")
+        s_val = 0
+        if raw_s is not None:
+            try:
+                s_val = int(raw_s)
+            except (ValueError, TypeError):
+                s_val = 0
+        _exam_details_cache[eid_i] = {
+            "exammoreid": eid_i,
+            "extracode": r.get("extracode"),
+            "category": norm_cat,
+            "modality": norm_cat,
+            "examname": r.get("examname") or r.get("exam_name") or "",
+            "examnumcode": r.get("examnumcode"),
+            "patient_name": f"{r.get('fname') or ''} {r.get('lname') or ''}".strip(),
+            "demogid": r.get("demogid"),
+            "visitdate": vdate_i,
+            "labcodeid": r.get("labcodeid"),
+            "lab_name": (r.get("laboratoryname") or "").strip(),
+            "wcode": r.get("wcode"),
+            "wname": r.get("wname") or "",
+            "notes": r.get("notes") or "",
+            "oldpers": r.get("oldpers"),
+            "stat": s_val,
+        }
+        raw_d = r.get("diagnostis")
+        if raw_d is not None and str(raw_d).strip().lower() not in ("", "0", "none", "null"):
+            try:
+                _slis_assigned_cache[eid_i] = {
+                    "diagnostician_id": int(float(str(raw_d).strip())),
+                    "extracode": r.get("extracode"),
+                    "category": norm_cat,
+                    "visitdate": vdate_i,
+                }
+            except (ValueError, TypeError):
+                pass
+
+    _pending_exams_cache_data = all_pulled
+    _pending_exams_cache_time = now_ts
+    _slis_period_cache_days = effective_days
+    return all_pulled
 
 
 # ── Resolve mock DB path relative to the project root ─────────────
@@ -149,6 +252,7 @@ class AssignmentService:
         self,
         exam: ExamContext,
         candidates: list[CandidateDiagnostician],
+        preloaded_config: dict | None = None,
     ) -> AssignmentSuggestion | None:
         """
         Generate an assignment suggestion for a single exam.
@@ -156,11 +260,12 @@ class AssignmentService:
         Args:
             exam: The exam requiring assignment
             candidates: All potentially eligible diagnosticians
+            preloaded_config: Optional pre-fetched config dict for batch scoring
 
         Returns:
             AssignmentSuggestion or None if no valid candidates
         """
-        suggestion = self.pipeline.run(exam, candidates)
+        suggestion = self.pipeline.run(exam, candidates, preloaded_config=preloaded_config)
 
         if suggestion:
             logger.info(
@@ -236,15 +341,30 @@ class AssignmentService:
             if not mod or not ext or not ename or not vdate:
                 if not settings.use_mock_slis_db:
                     try:
-                        from sqlalchemy import create_engine, text
-                        engine = create_engine(settings.slis_db_connection_string, connect_args={"timeout": 5})
+                        from sqlalchemy import text
+                        from diagflow.db.engines import get_slis_engine
+                        engine = get_slis_engine()
                         with engine.connect() as conn:
-                            res = conn.execute(text("SELECT category, extracode, examname, visitdate FROM exammore e LEFT JOIN exams ex ON ex.examid = e.examid WHERE e.exammoreid = :id"), {"id": eid_int}).fetchone()
+                            res = conn.execute(
+                                text(
+                                    "SELECT "
+                                    "CASE WHEN X.KATEGORYID IN (21,22) THEN 'MRI' "
+                                    "WHEN X.KATEGORYID = 18 THEN 'CT' ELSE '' END AS category, "
+                                    "V.EXTRACODE AS extracode, "
+                                    "X.NAME AS examname, "
+                                    "COALESCE(V.DATE, E.ORDERDATE) AS visitdate "
+                                    "FROM LISKOSMO.DBO.EXAMMORE E "
+                                    "INNER JOIN LISKOSMO.DBO.VISIT V ON V.VISITID = E.VISITID "
+                                    "LEFT JOIN LISKOSMO.DBO.EXAM X ON X.EXAMNUMCODE = E.EXAMCODE "
+                                    "WHERE E.EXAMMOREID = :id"
+                                ),
+                                {"id": eid_int},
+                            ).fetchone()
                             if res:
                                 if not mod and res[0]: mod = normalize_modality(res[0])
                                 if not ext and res[1]: ext = str(res[1])
                                 if not ename and res[2]: ename = str(res[2])
-                                if not vdate and res[3]: vdate = str(res[3])[:10]
+                                if not vdate and res[3]: vdate = cfg_db._normalize_date_str(res[3])
                     except Exception:
                         pass
                 else:
@@ -291,10 +411,11 @@ class AssignmentService:
         )
 
 
-def _get_pending_exams_from_db() -> list[dict]:
+def _get_pending_exams_from_db(force_refresh: bool = False) -> list[dict]:
     """Fetch pending exams (unassigned in Slis and not yet staged in df_local_assignments).
 
-    In production: Direct MSSQL execution of getExamsListForPeriod_V1 for the last 3 days.
+    In production: Direct MSSQL execution of getExamsListForPeriod_V1 (cached 15s across
+    pull / pending / assigned / suggest-batch) sliced to the last 3 days.
     In mock mode: Reads from SQLite mock_slis.db.
 
     Auto-assignments applied directly to df_local_assignments (bypassing filters):
@@ -313,7 +434,6 @@ def _get_pending_exams_from_db() -> list[dict]:
         local_assignments = cfg_db.get_all_local_assignments()
         today = date.today().isoformat()
         start_date = (date.today() - timedelta(days=3)).isoformat()
-        end_date = today
 
         # Fetch today's Παμμακάριστος on-call diagnostician once
         pam_oncall = cfg_db.get_oncall_diagnostician(today)
@@ -331,17 +451,10 @@ def _get_pending_exams_from_db() -> list[dict]:
         raw_exam_rows = []
 
         if not settings.use_mock_slis_db:
-            # ── PRODUCTION MODE: Query Central MSSQL Directly ──
-            _exam_details_cache.clear()
-            from sqlalchemy import create_engine, text
-            engine = create_engine(settings.slis_db_connection_string, connect_args={"timeout": 10})
-            with engine.connect() as conn:
-                query = text(f"EXEC getExamsListForPeriod_V1 '{start_date}', '{end_date}'")
-                res = conn.execute(query)
-                keys = list(res.keys())
-                raw_pulled = [dict(zip(keys, r)) for r in res.fetchall()]
-
-            all_pulled = [{k.lower(): v for k, v in r.items()} for r in raw_pulled]
+            # ── PRODUCTION MODE: Use cached 7-day MSSQL snapshot (1 proc call per refresh) ──
+            if force_refresh:
+                _exam_details_cache.clear()
+            all_pulled = _fetch_slis_period_rows(days_back=7, force_refresh=force_refresh)
             all_pulled_eids = {r.get("exammoreid") for r in all_pulled if r.get("exammoreid") is not None}
 
             # Clean orphaned & already-synced local assignments in central DB
@@ -350,7 +463,7 @@ def _get_pending_exams_from_db() -> list[dict]:
                 if r.get("exammoreid") is not None and r.get("diagnostis") is not None
                 and str(r.get("diagnostis")).strip().lower() not in ("", "0", "none", "null")
             ]
-            # Also clean local assignments for exams no longer existing in the real period
+            # Also clean local assignments for exams no longer existing in the 7-day real period
             stale_or_mock_ids = [
                 eid for eid in local_assignments
                 if eid not in all_pulled_eids
@@ -364,14 +477,14 @@ def _get_pending_exams_from_db() -> list[dict]:
                     local_con.execute(f"DELETE FROM {tbl_local} WHERE exammoreid IN ({placeholders_assigned})", to_delete_local)
                 local_assignments = cfg_db.get_all_local_assignments()
 
-            # Filter for exams with no diagnostician in Slis
-            unassigned_rows = [
-                r for r in all_pulled
-                if r.get("diagnostis") is None or str(r.get("diagnostis")).strip().lower() in ("", "0", "none", "null")
-            ]
-
-            for r in unassigned_rows:
-                r["category"] = normalize_modality(r.get("category"))
+            # Filter for exams with no diagnostician in Slis within the 3-day pending window
+            for r in all_pulled:
+                raw_d = r.get("diagnostis")
+                if raw_d is not None and str(raw_d).strip().lower() not in ("", "0", "none", "null"):
+                    continue
+                vdate_s = cfg_db._normalize_date_str(r.get("visitdate")) or ""
+                if vdate_s and vdate_s < start_date:
+                    continue
                 raw_exam_rows.append(r)
         else:
             # ── MOCK MODE: Query Local SQLite mock_slis.db ──
@@ -572,35 +685,10 @@ def _get_assigned_exams_from_db() -> list[dict]:
         exam_metadata = {}
         if not settings.use_mock_slis_db:
             try:
-                from sqlalchemy import create_engine, text
-                engine = create_engine(settings.slis_db_connection_string, connect_args={"timeout": 10})
-                today = date.today().isoformat()
-                start_date = (date.today() - timedelta(days=7)).isoformat()
-                with engine.connect() as conn:
-                    query = text(f"EXEC getExamsListForPeriod_V1 '{start_date}', '{today}'")
-                    res = conn.execute(query)
-                    keys = list(res.keys())
-                    for r in res.fetchall():
-                        r_dict = {k.lower(): v for k, v in zip(keys, r)}
-                        if r_dict.get("exammoreid"):
-                            eid = int(r_dict["exammoreid"])
-                            exam_metadata[eid] = r_dict
-                            raw_s = r_dict.get("stat")
-                            s_val = 0
-                            if raw_s is not None:
-                                try:
-                                    s_val = int(raw_s)
-                                except (ValueError, TypeError):
-                                    s_val = 0
-                            _exam_details_cache[eid] = {
-                                "exammoreid": eid,
-                                "extracode": r_dict.get("extracode"),
-                                "category": normalize_modality(r_dict.get("category")),
-                                "modality": normalize_modality(r_dict.get("category")),
-                                "examname": r_dict.get("examname") or r_dict.get("exam_name") or "",
-                                "examnumcode": r_dict.get("examnumcode"),
-                                "stat": s_val,
-                            }
+                all_pulled = _fetch_slis_period_rows(days_back=7, force_refresh=False)
+                for r_dict in all_pulled:
+                    if r_dict.get("exammoreid"):
+                        exam_metadata[int(r_dict["exammoreid"])] = r_dict
             except Exception as e:
                 logger.warning("failed_to_fetch_mssql_assigned_metadata", error=str(e))
         else:
@@ -664,7 +752,7 @@ def _get_assigned_exams_from_db() -> list[dict]:
                 "modality": norm_mod,
                 "category": norm_mod,
                 "body_part": meta.get("body_part") or "",
-                "visitdate": str(meta.get("visitdate") or loc.get("assigned_at") or "")[:10],
+                "visitdate": cfg_db._normalize_date_str(meta.get("visitdate")) or cfg_db._normalize_date_str(loc.get("visitdate")) or cfg_db._normalize_date_str(loc.get("assigned_at")) or "",
                 "labcodeid": meta.get("labcodeid"),
                 "lab_id": str(meta["labcodeid"]) if meta.get("labcodeid") else None,
                 "lab_name": meta.get("laboratoryname") or meta.get("lab_name") or "",

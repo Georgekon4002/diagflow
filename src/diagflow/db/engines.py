@@ -17,7 +17,9 @@ from diagflow.config import settings
 
 # ── Engine instances (initialized lazily) ──
 _slis_engine = None
+_slis_engine_url: str | None = None
 _config_engine = None
+_config_engine_url: str | None = None
 _SlisSession = None
 _ConfigSession = None
 
@@ -27,25 +29,10 @@ def init_engines() -> None:
     Initialize both database engines.
     Call this during application startup (lifespan).
     """
-    global _slis_engine, _config_engine, _SlisSession, _ConfigSession
+    global _slis_engine, _slis_engine_url, _config_engine, _config_engine_url, _SlisSession, _ConfigSession
 
-    # Slis engine — read-only access to the existing Slis schema
-    _slis_engine = create_engine(
-        settings.slis_db_connection_string,
-        echo=(settings.app_env == "development"),
-        pool_pre_ping=True,
-        pool_size=5,
-        max_overflow=10,
-    )
-
-    # Config engine — DiagFlow's own tables (may be the same DB)
-    _config_engine = create_engine(
-        settings.config_db_connection_string,
-        echo=(settings.app_env == "development"),
-        pool_pre_ping=True,
-        pool_size=5,
-        max_overflow=10,
-    )
+    _slis_engine = get_slis_engine()
+    _config_engine = get_config_engine()
 
     _SlisSession = sessionmaker(bind=_slis_engine)
     _ConfigSession = sessionmaker(bind=_config_engine)
@@ -53,40 +40,67 @@ def init_engines() -> None:
 
 def dispose_engines() -> None:
     """Dispose both engines. Call this during application shutdown."""
-    global _slis_engine, _config_engine
+    global _slis_engine, _slis_engine_url, _config_engine, _config_engine_url
     if _slis_engine:
-        _slis_engine.dispose()
+        try:
+            _slis_engine.dispose()
+        except Exception:
+            pass
         _slis_engine = None
+        _slis_engine_url = None
     if _config_engine:
-        _config_engine.dispose()
+        try:
+            _config_engine.dispose()
+        except Exception:
+            pass
         _config_engine = None
+        _config_engine_url = None
 
 
 def get_config_engine():
-    """Get or lazily initialize the config database SQLAlchemy engine."""
-    global _config_engine
-    if _config_engine is None:
-        _config_engine = create_engine(
-            settings.config_db_connection_string,
+    """Get or lazily initialize the pooled config database SQLAlchemy engine."""
+    global _config_engine, _config_engine_url
+    import sqlalchemy
+    from sqlalchemy.engine import Engine
+
+    url = settings.config_db_connection_string
+    if _config_engine is None or _config_engine_url != url or not isinstance(_config_engine, Engine):
+        eng = sqlalchemy.create_engine(
+            url,
             echo=(settings.app_env == "development"),
-            pool_pre_ping=True,
+            pool_pre_ping=False,
+            pool_recycle=1800,
             pool_size=5,
             max_overflow=10,
         )
+        if isinstance(eng, Engine):
+            _config_engine = eng
+            _config_engine_url = url
+        return eng
     return _config_engine
 
 
 def get_slis_engine():
-    """Get or lazily initialize the Slis database SQLAlchemy engine."""
-    global _slis_engine
-    if _slis_engine is None:
-        _slis_engine = create_engine(
-            settings.slis_db_connection_string,
+    """Get or lazily initialize the pooled Slis database SQLAlchemy engine."""
+    global _slis_engine, _slis_engine_url
+    import sqlalchemy
+    from sqlalchemy.engine import Engine
+
+    url = settings.slis_db_connection_string
+    if _slis_engine is None or _slis_engine_url != url or not isinstance(_slis_engine, Engine):
+        eng = sqlalchemy.create_engine(
+            url,
             echo=(settings.app_env == "development"),
-            pool_pre_ping=True,
+            pool_pre_ping=False,
+            pool_recycle=1800,
             pool_size=5,
             max_overflow=10,
+            connect_args={"timeout": 10},
         )
+        if isinstance(eng, Engine):
+            _slis_engine = eng
+            _slis_engine_url = url
+        return eng
     return _slis_engine
 
 

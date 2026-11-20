@@ -31,7 +31,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Header
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 from diagflow.config import settings
 from diagflow.api.dependencies import (
@@ -82,11 +82,37 @@ router = APIRouter()
 # ── In-memory suggestion cache (for confirm/override flow) ──
 _suggestion_cache: dict = {}
 
-# ── Session suggestion counter — tracks how many times each diagnostician has been
-#    suggested since the last data reset. Used as a virtual workload offset so the
-#    load-balancing tie-breaker works across sequential API calls in the same session.
-#    Keys: diagnostician_id (int), Values: count (int)
+# ── Session suggestion counter — tracks virtual suggestions per (exam_id -> (diag_id, exam_date))
+#    so the load-balancing tie-breaker works per examination date across sequential API calls
+#    without bleeding counts across different dates or double-counting re-suggested/confirmed exams.
 _session_suggestion_counts: dict[int, int] = {}
+_session_suggestions_by_exam: dict[str, tuple[int, str]] = {}
+
+
+def _get_session_virtual_count(diag_id: int, exam_date_str: str, exclude_exam_id: str | None = None) -> int:
+    """Count pending in-session virtual suggestions for a diagnostician on a specific exam date."""
+    excl = str(exclude_exam_id) if exclude_exam_id is not None else None
+    return sum(
+        1
+        for eid, (did, dt_s) in _session_suggestions_by_exam.items()
+        if did == diag_id and dt_s == exam_date_str and (excl is None or eid != excl)
+    )
+
+
+def _clear_session_suggestion(exam_id: str | int) -> None:
+    """Remove an exam from virtual session suggestion tracking (e.g. after confirm/override/unassign)."""
+    _session_suggestions_by_exam.pop(str(exam_id), None)
+
+
+def _parse_exam_date(raw_val: Any) -> date | None:
+    """Parse an exam visitdate/request_date into a date object, or None if absent/invalid."""
+    norm = cfg_db._normalize_date_str(raw_val)
+    if norm:
+        try:
+            return date.fromisoformat(norm)
+        except ValueError:
+            return None
+    return None
 
 # ── Admin session & rate limit stores ──
 _admin_sessions: dict[str, dict] = {}
@@ -328,7 +354,7 @@ async def delete_admin_user(user_id: int, session: dict = Depends(_require_it_su
 # ─────────────────────────────────────────────────────
 
 @router.get("/exams/pending")
-async def get_pending_exams(
+def get_pending_exams(
     svc: AssignmentService = Depends(get_assignment_service),
 ):
     """Fetch all pending (unassigned) exams from Slis / mock DB."""
@@ -336,7 +362,7 @@ async def get_pending_exams(
 
 
 @router.get("/exams/assigned")
-async def get_assigned_exams(
+def get_assigned_exams(
     svc: AssignmentService = Depends(get_assignment_service),
 ):
     """Fetch assigned exams from Slis / mock DB."""
@@ -352,22 +378,11 @@ class SuggestBatchRequest(BaseModel):
     exam_ids: list[str]
 
 
-async def _generate_suggestion_for_exam(
-    exam_data: dict,
-    all_exams: list[dict],
-    assign_svc: AssignmentService,
-    diag_svc: DiagnosticianService,
-) -> AssignmentSuggestion | None:
-    """Core suggestion generator with multi-exam order alignment and virtual workload tracking."""
+def _build_exam_context(exam_data: dict) -> tuple[ExamContext, date | None]:
+    """Build an ExamContext and parsed request_date from a standardized exam dict."""
     raw_exam_date = exam_data.get("visitdate") or exam_data.get("request_date")
-    parsed_req_date = None
-    if raw_exam_date:
-        try:
-            parsed_req_date = date.fromisoformat(str(raw_exam_date)[:10])
-        except Exception:
-            parsed_req_date = None
-
-    exam = ExamContext(
+    parsed_req_date = _parse_exam_date(raw_exam_date)
+    ctx = ExamContext(
         exam_id=exam_data["exam_id"],
         patient_id=exam_data["patient_id"],
         patient_name=exam_data.get("patient_name", ""),
@@ -385,23 +400,44 @@ async def _generate_suggestion_for_exam(
         oldpers=exam_data.get("oldpers"),
         request_date=parsed_req_date,
     )
+    return ctx, parsed_req_date
 
-    candidates = await diag_svc.get_candidates_for_exam(
-        exam_id=exam.exam_id,
-        modality=exam.modality,
-        body_part=exam.body_part,
-        lab_id=exam.lab_id,
-        lab_name=exam.lab_name,
-        issuing_doctor_id=exam.issuing_doctor_id,
-        patient_id=exam.patient_id,
-        exam_code=exam.exam_code,
-        oldpers=exam.oldpers,
-        exam_date=parsed_req_date,
-    )
 
-    # Apply session-level virtual workload
+async def _generate_suggestion_for_exam(
+    exam_data: dict,
+    all_exams: list[dict],
+    assign_svc: AssignmentService,
+    diag_svc: DiagnosticianService,
+    preloaded_candidates_map: dict[str, list] | None = None,
+    preloaded_config: dict | None = None,
+) -> AssignmentSuggestion | None:
+    """Core suggestion generator with multi-exam order alignment and virtual workload tracking."""
+    import copy
+
+    exam, parsed_req_date = _build_exam_context(exam_data)
+    exam_date_key = (parsed_req_date or date.today()).isoformat()
+
+    if preloaded_candidates_map is not None and str(exam.exam_id) in preloaded_candidates_map:
+        candidates = [copy.copy(c) for c in preloaded_candidates_map[str(exam.exam_id)]]
+    else:
+        candidates = await diag_svc.get_candidates_for_exam(
+            exam_id=exam.exam_id,
+            modality=exam.modality,
+            body_part=exam.body_part,
+            lab_id=exam.lab_id,
+            lab_name=exam.lab_name,
+            issuing_doctor_id=exam.issuing_doctor_id,
+            patient_id=exam.patient_id,
+            exam_code=exam.exam_code,
+            oldpers=exam.oldpers,
+            exam_date=parsed_req_date,
+        )
+
+    # Apply date-scoped session-level virtual workload (excluding this exam itself)
     for c in candidates:
-        c.current_day_count += _session_suggestion_counts.get(c.id, 0)
+        c.current_day_count += _get_session_virtual_count(c.id, exam_date_key, exclude_exam_id=exam.exam_id)
+
+    cfg = preloaded_config or {}
 
     # Multi-exam order alignment check (same patient and same order/extracode)
     extracode_val = exam_data.get("extracode")
@@ -436,7 +472,13 @@ async def _generate_suggestion_for_exam(
         if existing_order_diag_id:
             target_cand = next((c for c in candidates if str(c.id) == str(existing_order_diag_id)), None)
             if target_cand:
-                passed_target, _ = apply_hard_filters([target_cand], exam)
+                passed_target, _ = apply_hard_filters(
+                    [target_cand],
+                    exam,
+                    exclusive_rules=cfg.get("exclusive_rules"),
+                    modality_quotas=cfg.get("modality_quotas"),
+                    comment_rule_enabled=cfg.get("comment_rule_enabled"),
+                )
                 if passed_target:
                     best_cand_id = target_cand.id
 
@@ -444,43 +486,22 @@ async def _generate_suggestion_for_exam(
         if not best_cand_id:
             order_contexts = []
             for e_dict in order_exams:
-                raw_e_date = e_dict.get("visitdate") or e_dict.get("request_date")
-                parsed_e_date = None
-                if raw_e_date:
-                    try:
-                        parsed_e_date = date.fromisoformat(str(raw_e_date)[:10])
-                    except Exception:
-                        parsed_e_date = None
-
-                e_ctx = ExamContext(
-                    exam_id=e_dict["exam_id"],
-                    patient_id=e_dict["patient_id"],
-                    patient_name=e_dict.get("patient_name", ""),
-                    modality=e_dict["modality"],
-                    body_part=e_dict["body_part"],
-                    exam_code=str(e_dict.get("examnumcode", "")),
-                    exam_name=e_dict.get("examname", ""),
-                    lab_id=e_dict["lab_id"],
-                    lab_name=e_dict["lab_name"],
-                    issuing_doctor_id=e_dict["issuing_doctor_id"],
-                    issuing_doctor_name=e_dict["issuing_doctor_name"],
-                    comments=e_dict.get("comments", ""),
-                    is_pamakristos="ΠΑΜΜΑΚΑΡΙΣΤΟΣ" in e_dict.get("issuing_doctor_name", "").upper(),
-                    oldpers=e_dict.get("oldpers"),
-                    request_date=parsed_e_date,
-                )
-                e_cands = await diag_svc.get_candidates_for_exam(
-                    exam_id=e_ctx.exam_id,
-                    modality=e_ctx.modality,
-                    body_part=e_ctx.body_part,
-                    lab_id=e_ctx.lab_id,
-                    lab_name=e_ctx.lab_name,
-                    issuing_doctor_id=e_ctx.issuing_doctor_id,
-                    patient_id=e_ctx.patient_id,
-                    exam_code=e_ctx.exam_code,
-                    oldpers=e_ctx.oldpers,
-                    exam_date=parsed_e_date,
-                )
+                e_ctx, parsed_e_date = _build_exam_context(e_dict)
+                if preloaded_candidates_map is not None and str(e_ctx.exam_id) in preloaded_candidates_map:
+                    e_cands = [copy.copy(c) for c in preloaded_candidates_map[str(e_ctx.exam_id)]]
+                else:
+                    e_cands = await diag_svc.get_candidates_for_exam(
+                        exam_id=e_ctx.exam_id,
+                        modality=e_ctx.modality,
+                        body_part=e_ctx.body_part,
+                        lab_id=e_ctx.lab_id,
+                        lab_name=e_ctx.lab_name,
+                        issuing_doctor_id=e_ctx.issuing_doctor_id,
+                        patient_id=e_ctx.patient_id,
+                        exam_code=e_ctx.exam_code,
+                        oldpers=e_ctx.oldpers,
+                        exam_date=parsed_e_date,
+                    )
                 for c in e_cands:
                     cand_info[c.id] = c
                 order_contexts.append((e_ctx, e_cands))
@@ -488,7 +509,13 @@ async def _generate_suggestion_for_exam(
             cand_totals = {}
             cand_eligible_all = {}
             for ex_ctx, cands in order_contexts:
-                passed, _ = apply_hard_filters(cands, ex_ctx)
+                passed, _ = apply_hard_filters(
+                    cands,
+                    ex_ctx,
+                    exclusive_rules=cfg.get("exclusive_rules"),
+                    modality_quotas=cfg.get("modality_quotas"),
+                    comment_rule_enabled=cfg.get("comment_rule_enabled"),
+                )
                 passed_ids = {p.id for p in passed}
                 for c in cands:
                     if c.id not in cand_eligible_all:
@@ -496,7 +523,7 @@ async def _generate_suggestion_for_exam(
                     if c.id not in passed_ids:
                         cand_eligible_all[c.id] = False
                 if passed:
-                    scored = score_all_candidates(passed, ex_ctx)
+                    scored = score_all_candidates(passed, ex_ctx, weights=cfg.get("weights"))
                     for sc in scored:
                         cand_totals[sc.diagnostician_id] = cand_totals.get(sc.diagnostician_id, 0.0) + sc.total_score
 
@@ -513,7 +540,7 @@ async def _generate_suggestion_for_exam(
                         if c1 and c2 and c1.current_day_count < c2.current_day_count:
                             best_cand_id = c_id
 
-        suggestion = await assign_svc.suggest_assignment(exam, candidates)
+        suggestion = await assign_svc.suggest_assignment(exam, candidates, preloaded_config=preloaded_config)
         if suggestion and best_cand_id:
             best_cand = next((c for c in candidates if c.id == best_cand_id), cand_info.get(best_cand_id))
             if best_cand and suggestion.suggested_diagnostician_id != best_cand_id:
@@ -522,12 +549,12 @@ async def _generate_suggestion_for_exam(
                 if "Multi-exam Order Alignment" not in suggestion.rules_fired:
                     suggestion.rules_fired.insert(0, "Multi-exam Order Alignment")
     else:
-        suggestion = await assign_svc.suggest_assignment(exam, candidates)
+        suggestion = await assign_svc.suggest_assignment(exam, candidates, preloaded_config=preloaded_config)
 
     if suggestion:
         if suggestion.suggested_diagnostician_id:
             diag_id = suggestion.suggested_diagnostician_id
-            _session_suggestion_counts[diag_id] = _session_suggestion_counts.get(diag_id, 0) + 1
+            _session_suggestions_by_exam[str(exam.exam_id)] = (diag_id, exam_date_key)
 
         _suggestion_cache[exam.exam_id] = suggestion
         _suggestion_cache[str(exam.exam_id)] = suggestion
@@ -547,13 +574,50 @@ async def suggest_batch_assignments(
     all_exams = pending + assigned
     exams_map = {str(e["exam_id"]): e for e in all_exams}
 
+    # Clear prior virtual suggestions for exams being re-evaluated in this batch
+    for exam_id_str in request.exam_ids:
+        _clear_session_suggestion(exam_id_str)
+
+    # Pre-load candidates and rule/weight configs ONCE for the entire batch (eliminates N+1 DB queries)
+    batch_exam_dicts: dict[str, dict] = {}
+    target_order_keys: set[tuple[str, str]] = set()
+    for exam_id_str in request.exam_ids:
+        ed = exams_map.get(exam_id_str)
+        if ed:
+            batch_exam_dicts[str(ed["exam_id"])] = ed
+            if ed.get("extracode") and ed.get("patient_id"):
+                target_order_keys.add((str(ed["patient_id"]), str(ed["extracode"])))
+
+    # Include multi-exam order siblings so order alignment also hits the pre-loaded batch map
+    if target_order_keys:
+        for e in all_exams:
+            if e.get("extracode") and e.get("patient_id"):
+                if (str(e["patient_id"]), str(e["extracode"])) in target_order_keys:
+                    batch_exam_dicts.setdefault(str(e["exam_id"]), e)
+
+    batch_contexts = [_build_exam_context(ed)[0] for ed in batch_exam_dicts.values()]
+    preloaded_candidates_map = await diag_svc.get_candidates_for_exams_batch(batch_contexts) if batch_contexts else {}
+    preloaded_config = {
+        "exclusive_rules": cfg_db.get_all_exclusive_lab_rules(),
+        "modality_quotas": cfg_db.get_all_modality_quotas(),
+        "comment_rule_enabled": cfg_db.get_comment_auto_assign_enabled(),
+        "weights": cfg_db.get_system_weights(),
+    }
+
     results = {}
     for exam_id_str in request.exam_ids:
         exam_data = exams_map.get(exam_id_str)
         if not exam_data:
             continue
 
-        suggestion = await _generate_suggestion_for_exam(exam_data, all_exams, assign_svc, diag_svc)
+        suggestion = await _generate_suggestion_for_exam(
+            exam_data,
+            all_exams,
+            assign_svc,
+            diag_svc,
+            preloaded_candidates_map=preloaded_candidates_map,
+            preloaded_config=preloaded_config,
+        )
         if suggestion:
             results[str(suggestion.exam_id)] = {
                 "exam_id": suggestion.exam_id,
@@ -652,6 +716,7 @@ async def confirm_assignment(
     )
     _suggestion_cache.pop(request.exam_id, None)
     _suggestion_cache.pop(str(request.exam_id), None)
+    _clear_session_suggestion(request.exam_id)
 
     return AssignmentConfirmation(
         exam_id=request.exam_id,
@@ -695,6 +760,7 @@ async def override_assignment(
     )
     _suggestion_cache.pop(request.exam_id, None)
     _suggestion_cache.pop(str(request.exam_id), None)
+    _clear_session_suggestion(request.exam_id)
 
     return AssignmentConfirmation(
         exam_id=request.exam_id,
@@ -727,12 +793,40 @@ async def bulk_eligible_diagnosticians(
     found_eids = {str(e.get("exam_id")) for e in selected_exams} | {str(e.get("exammoreid")) for e in selected_exams if e.get("exammoreid")}
     missing_ids = list(req_ids - found_eids)
 
+    # First resolve missing exams from in-memory _exam_details_cache (works in both MSSQL and mock modes)
+    if missing_ids:
+        from diagflow.services.assignment import _exam_details_cache
+        still_missing = []
+        for mid in missing_ids:
+            c_data = _exam_details_cache.get(int(mid)) if str(mid).isdigit() else None
+            if c_data:
+                selected_exams.append({
+                    "exam_id": str(c_data.get("exammoreid") or mid),
+                    "patient_id": str(c_data.get("demogid") or ""),
+                    "patient_name": str(c_data.get("patient_name") or ""),
+                    "modality": str(c_data.get("category") or c_data.get("modality") or ""),
+                    "body_part": "",
+                    "examnumcode": str(c_data.get("examnumcode") or ""),
+                    "examname": str(c_data.get("examname") or ""),
+                    "lab_id": str(c_data.get("labcodeid") or ""),
+                    "lab_name": str(c_data.get("lab_name") or ""),
+                    "issuing_doctor_id": str(c_data.get("wcode") or ""),
+                    "issuing_doctor_name": str(c_data.get("wname") or ""),
+                    "comments": str(c_data.get("notes") or ""),
+                    "visitdate": str(c_data.get("visitdate") or "")[:10],
+                    "oldpers": c_data.get("oldpers"),
+                })
+            else:
+                still_missing.append(mid)
+        missing_ids = still_missing
+
     if missing_ids and settings.use_mock_slis_db:
         try:
             from diagflow.services.assignment import _get_mock_db
             con = _get_mock_db()
             placeholders = ",".join("?" * len(missing_ids))
             rows = con.execute(f"SELECT * FROM slis_exams WHERE exammoreid IN ({placeholders})", tuple(missing_ids)).fetchall()
+            con.close()
             for r in rows:
                 r_dict = dict(r)
                 selected_exams.append({
@@ -743,12 +837,13 @@ async def bulk_eligible_diagnosticians(
                     "body_part": str(r_dict.get("bodypart") or ""),
                     "examnumcode": str(r_dict.get("examnumcode") or ""),
                     "examname": str(r_dict.get("examname") or ""),
-                    "lab_id": str(r_dict.get("labid") or ""),
+                    "lab_id": str(r_dict.get("labcodeid") or r_dict.get("labid") or ""),
                     "lab_name": str(r_dict.get("labname") or r_dict.get("laboratoryname") or ""),
-                    "issuing_doctor_id": str(r_dict.get("doctorid") or ""),
+                    "issuing_doctor_id": str(r_dict.get("wcode") or r_dict.get("doctorid") or ""),
                     "issuing_doctor_name": str(r_dict.get("wname") or r_dict.get("issuing_doctor_name") or ""),
-                    "comments": str(r_dict.get("comments") or ""),
-                    "oldpers": r_dict.get("oldpers")
+                    "comments": str(r_dict.get("notes") or r_dict.get("comments") or ""),
+                    "visitdate": cfg_db._normalize_date_str(r_dict.get("visitdate")) or "",
+                    "oldpers": r_dict.get("oldpers"),
                 })
         except Exception as ex:
             pass
@@ -765,12 +860,7 @@ async def bulk_eligible_diagnosticians(
     exam_contexts = []
     for exam_data in selected_exams:
         raw_b_date = exam_data.get("visitdate") or exam_data.get("request_date")
-        parsed_b_date = None
-        if raw_b_date:
-            try:
-                parsed_b_date = date.fromisoformat(str(raw_b_date)[:10])
-            except Exception:
-                parsed_b_date = None
+        parsed_b_date = _parse_exam_date(raw_b_date)
 
         exam_contexts.append(
             ExamContext(
@@ -906,6 +996,7 @@ async def bulk_confirm_assignments(
         )
         _suggestion_cache.pop(exam_id_str, None)
         _suggestion_cache.pop(eid_lookup, None)
+        _clear_session_suggestion(exam_id_str)
 
         results.append(
             AssignmentConfirmation(
@@ -941,6 +1032,7 @@ async def bulk_override_assignments(
         )
         _suggestion_cache.pop(exam_id_str, None)
         _suggestion_cache.pop(eid_lookup, None)
+        _clear_session_suggestion(exam_id_str)
 
         results.append(
             AssignmentConfirmation(
@@ -955,11 +1047,12 @@ async def bulk_override_assignments(
 
 
 @router.delete("/assignments/{exam_id}")
-async def unassign_exam_by_id(exam_id: str):
+def unassign_exam_by_id(exam_id: str):
     """Remove an exam from local staged assignments without affecting Slis."""
     try:
         eid_int = int(exam_id)
         success = cfg_db.delete_local_assignment(eid_int)
+        _clear_session_suggestion(exam_id)
         return {"success": success, "exam_id": exam_id}
     except Exception as e:
         logger.error("unassign_exam_by_id_error", exam_id=exam_id, error=str(e))
@@ -967,11 +1060,12 @@ async def unassign_exam_by_id(exam_id: str):
 
 
 @router.post("/assignments/unassign")
-async def unassign_exam(request: UnassignRequest):
+def unassign_exam(request: UnassignRequest):
     """Remove an exam from local staged assignments without affecting Slis."""
     try:
         eid_int = int(request.exam_id)
         success = cfg_db.delete_local_assignment(eid_int)
+        _clear_session_suggestion(request.exam_id)
         return {"success": success, "exam_id": str(request.exam_id)}
     except Exception as e:
         logger.error("unassign_exam_error", exam_id=request.exam_id, error=str(e))
@@ -979,7 +1073,7 @@ async def unassign_exam(request: UnassignRequest):
 
 
 @router.post("/assignments/bulk-unassign")
-async def bulk_unassign_exams(request: BulkUnassignRequest):
+def bulk_unassign_exams(request: BulkUnassignRequest):
     """Remove multiple exams from local staged assignments without affecting Slis."""
     unassigned = []
     for eid in request.exam_ids:
@@ -987,6 +1081,7 @@ async def bulk_unassign_exams(request: BulkUnassignRequest):
             eid_int = int(eid)
             if cfg_db.delete_local_assignment(eid_int):
                 unassigned.append(eid_int)
+            _clear_session_suggestion(eid)
         except Exception as e:
             logger.warning("bulk_unassign_item_failed", exam_id=eid, error=str(e))
             continue
@@ -1012,7 +1107,7 @@ def list_doctors_public(q: str = "", limit: int = 200):
 
 
 @router.get("/dashboard")
-async def get_dashboard(date: str | None = None):
+def get_dashboard(date: str | None = None):
     """Get assigned exams per diagnostician for a given date (defaults to today)."""
     dashboard_data = cfg_db.get_dashboard_data(target_date=date)
     
@@ -1165,26 +1260,33 @@ class DiagnosticianCreateRequest(BaseModel):
     quota_sunday: int = 0
     preferred_lab_id: int | None = None
 
+    @field_validator("active", "can_ct", "can_mri", mode="before")
+    @classmethod
+    def coerce_int_bool(cls, v: Any) -> Any:
+        if isinstance(v, (int, float)) and not isinstance(v, bool):
+            return bool(v)
+        return v
+
 
 @router.get("/admin/diagnosticians")
-async def admin_list_diagnosticians(_=Depends(_require_admin)):
+def admin_list_diagnosticians(_=Depends(_require_admin)):
     return cfg_db.get_all_diagnosticians()
 
 
 @router.post("/admin/diagnosticians/sync")
-async def admin_sync_diagnosticians(_=Depends(_require_admin)):
+def admin_sync_diagnosticians(_=Depends(_require_admin)):
     from diagflow.services.slis_sync import sync_diagnosticians
     return sync_diagnosticians()
 
 
 @router.post("/admin/doctors/sync")
-async def admin_sync_doctors(_=Depends(_require_admin)):
+def admin_sync_doctors(_=Depends(_require_admin)):
     from diagflow.services.slis_sync import sync_doctors
     return sync_doctors()
 
 
 @router.post("/admin/diagnosticians")
-async def admin_create_diagnostician(
+def admin_create_diagnostician(
     req: DiagnosticianCreateRequest,
     _=Depends(_require_admin),
 ):
@@ -1205,7 +1307,7 @@ async def admin_create_diagnostician(
 
 
 @router.put("/admin/diagnosticians/{diag_id}")
-async def admin_update_diagnostician(
+def admin_update_diagnostician(
     diag_id: int,
     req: DiagnosticianCreateRequest,
     _=Depends(_require_admin),
@@ -1231,7 +1333,7 @@ async def admin_update_diagnostician(
 
 
 @router.delete("/admin/diagnosticians/{diag_id}")
-async def admin_delete_diagnostician(diag_id: int, _=Depends(_require_admin)):
+def admin_delete_diagnostician(diag_id: int, _=Depends(_require_admin)):
     if not cfg_db.delete_diagnostician(diag_id):
         raise HTTPException(status_code=404, detail="Ο ακτινοδιαγνώστης δεν βρέθηκε")
     return {"deleted": diag_id}
@@ -1543,19 +1645,22 @@ class PushSelectedRequest(BaseModel):
 
 
 @router.post("/slis/pull")
-async def slis_pull():
+def slis_pull():
     """
     Pull fresh exam data from Slis (or refresh the mock DB).
     Runs automatically on startup; can also be triggered via the
     'Ανανέωση' button on the frontend.
     """
     from diagflow.services.slis_sync import pull_from_slis
-    from diagflow.services.assignment import _exam_details_cache
+    from diagflow.services.assignment import _exam_details_cache, _slis_assigned_cache, invalidate_slis_period_cache
     # Reset the session suggestion and exam caches
     _session_suggestion_counts.clear()
+    _session_suggestions_by_exam.clear()
     _suggestion_cache.clear()
     if not settings.use_mock_slis_db:
         _exam_details_cache.clear()
+        _slis_assigned_cache.clear()
+        invalidate_slis_period_cache()
     result = pull_from_slis()
     return {
         "status": "ok",
@@ -1566,14 +1671,14 @@ async def slis_pull():
 
 
 @router.get("/slis/status")
-async def slis_status():
+def slis_status():
     """Return the current Slis DB connection status and error details if any."""
     from diagflow.main import SLIS_STATUS
     return SLIS_STATUS
 
 
 @router.post("/slis/push-all")
-async def slis_push_all():
+def slis_push_all():
     """
     Push ALL assigned-but-not-yet-synced exams to Slis in one operation.
     After a successful push the exam's slis_synced_at is set and it will
@@ -1585,7 +1690,7 @@ async def slis_push_all():
 
 
 @router.post("/slis/push-selected")
-async def slis_push_selected(req: PushSelectedRequest):
+def slis_push_selected(req: PushSelectedRequest):
     """
     Push a specific list of exams (by exammoreid) to Slis.
     Used when the user selects individual rows in the Assigned tab.
@@ -1596,7 +1701,7 @@ async def slis_push_selected(req: PushSelectedRequest):
 
 
 @router.post("/slis/search")
-async def slis_search_exams(req: SlisSearchRequest):
+def slis_search_exams(req: SlisSearchRequest):
     """
     Search exams directly in Slis (production MSSQL or mock DB) by filters.
     Defaults to last 7 days if date range is empty.
@@ -1613,7 +1718,7 @@ async def slis_search_exams(req: SlisSearchRequest):
 
 
 @router.post("/slis/reassign")
-async def slis_reassign_exam(req: SlisReassignRequest):
+def slis_reassign_exam(req: SlisReassignRequest):
     """
     Re-assign an exam to a new diagnostician and immediately update Slis.
     Overrides any existing Slis assignment without optimistic locking conflicts.
@@ -1630,7 +1735,7 @@ async def slis_reassign_exam(req: SlisReassignRequest):
 
 
 @router.post("/admin/sync-diagnosticians")
-async def admin_sync_diagnosticians(_=Depends(_require_admin)):
+def admin_sync_diagnosticians(_=Depends(_require_admin)):
     """Manual trigger to pull diagnosticians from Slis DB into diagflow.db."""
     from diagflow.services.slis_sync import sync_diagnosticians
     result = sync_diagnosticians()
@@ -1638,7 +1743,7 @@ async def admin_sync_diagnosticians(_=Depends(_require_admin)):
 
 
 @router.post("/admin/sync-doctors")
-async def admin_sync_doctors(_=Depends(_require_admin)):
+def admin_sync_doctors(_=Depends(_require_admin)):
     """Manual trigger to pull doctors from Slis DB into diagflow.db."""
     from diagflow.services.slis_sync import sync_doctors
     result = sync_doctors()
