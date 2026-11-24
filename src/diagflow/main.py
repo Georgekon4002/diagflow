@@ -9,6 +9,7 @@ Serves:
 
 from contextlib import asynccontextmanager
 from pathlib import Path
+import asyncio
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -21,7 +22,11 @@ from diagflow.config import settings
 from diagflow.api.routes import router as api_router
 from diagflow.utils.logging import setup_logging
 
+setup_logging(settings.log_level)
 logger = structlog.get_logger(__name__)
+
+# Hold a strong reference to background startup task so it is never GC'd mid-flight
+_startup_sync_task: asyncio.Task | None = None
 
 
 # ── Global SLIS DB Connection Status ──
@@ -34,16 +39,16 @@ SLIS_STATUS: dict[str, str | None] = {
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan — runs setup on startup and cleanup on shutdown."""
-    # ── Ensure admin users table exists & seed accounts ──
+    global _startup_sync_task
+    # ── Ensure admin users table exists & seed default accounts once if empty ──
     import diagflow.db.diagflow_db as cfg_db
     try:
-        cfg_db.get_all_admin_users()
+        await asyncio.to_thread(cfg_db.ensure_admin_users_initialized)
     except Exception as exc:
         logger.warning("ensure_admin_users_failed", error=str(exc))
 
     # ── Sync Doctors and Pull Exams in background on startup ──
     from diagflow.services.slis_sync import pull_from_slis, sync_doctors, cleanup_mock_data
-    import asyncio
 
     async def _async_startup_sync():
         def _do_sync():
@@ -70,7 +75,7 @@ async def lifespan(app: FastAPI):
                     engine = get_slis_engine()
                     with engine.connect() as conn:
                         conn.execute(text("SELECT 1"))
-                    
+
                     SLIS_STATUS["status"] = "connected"
                     SLIS_STATUS["error"] = None
                     logger.info("slis_db_connected_successfully")
@@ -94,17 +99,17 @@ async def lifespan(app: FastAPI):
 
         await asyncio.to_thread(_do_sync)
 
-    asyncio.create_task(_async_startup_sync())
+    _startup_sync_task = asyncio.create_task(_async_startup_sync())
 
-    # ── Start APScheduler for daily background sync ──
+    # ── Start APScheduler for daily background sync (non-blocking async job) ──
     from apscheduler.schedulers.asyncio import AsyncIOScheduler
     scheduler = AsyncIOScheduler()
-    
-    def daily_sync():
+
+    async def daily_sync():
         logger.info("running_daily_background_sync")
         if settings.use_mock_slis_db or SLIS_STATUS["status"] == "connected":
             try:
-                sync_doctors()
+                await asyncio.to_thread(sync_doctors)
             except Exception as e:
                 logger.error("daily_sync_error", error=str(e))
 
@@ -112,33 +117,43 @@ async def lifespan(app: FastAPI):
     scheduler.start()
     logger.info("apscheduler_started")
 
-    # TODO: Initialize database engines when real MSSQL DB access is available
-    # from diagflow.db.engines import init_engines
-    # init_engines()
-
     yield
 
     # Cleanup
-    scheduler.shutdown()
+    if _startup_sync_task and not _startup_sync_task.done():
+        _startup_sync_task.cancel()
+    scheduler.shutdown(wait=False)
 
     from diagflow.db.engines import dispose_engines
     dispose_engines()
 
+
+_is_prod = settings.app_env.lower() == "production"
 
 app = FastAPI(
     title=__app_name__,
     version=__version__,
     description="Automated CT/MRI report assignment engine for Kosmoiatriki",
     lifespan=lifespan,
+    docs_url=None if _is_prod else "/docs",
+    redoc_url=None if _is_prod else "/redoc",
+    openapi_url=None if _is_prod else "/openapi.json",
 )
 
-# ── CORS (allow the dashboard and development tools) ──
+# ── CORS (explicit configured origins, no wildcard + credentials reflection) ──
+_allowed_origins = [
+    o.strip() for o in (settings.cors_origins or "").split(",") if o.strip() and o.strip() != "*"
+] or [
+    f"http://localhost:{settings.app_port}",
+    f"http://127.0.0.1:{settings.app_port}",
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Tighten in production
+    allow_origins=_allowed_origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type", "X-Admin-Token", "Authorization"],
 )
 
 # ── Health check (must be registered before the catch-all static mount) ──

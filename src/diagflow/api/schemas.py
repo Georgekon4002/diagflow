@@ -4,10 +4,27 @@ DiagFlow — Pydantic Request/Response Schemas
 Defines all API data contracts using Pydantic v2 models.
 """
 
-from datetime import datetime
-from typing import Optional
+from datetime import date as dt_date, datetime
+from typing import Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+
+def _validate_iso_date_str(v: str | None) -> str | None:
+    if v is None or str(v).strip() == "":
+        return None
+    s = str(v).strip()
+    if len(s) == 10:
+        try:
+            return dt_date.fromisoformat(s).isoformat()
+        except ValueError as exc:
+            raise ValueError(f"Invalid ISO date format (expected YYYY-MM-DD): {v}") from exc
+    try:
+        # Allow valid ISO-8601 timestamps (e.g. 2026-11-24T00:00:00), reject arbitrary trailing junk
+        parsed_dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
+        return parsed_dt.date().isoformat()
+    except ValueError as exc:
+        raise ValueError(f"Invalid ISO date format (expected YYYY-MM-DD): {v}") from exc
 
 
 # ── Request schemas ──
@@ -61,14 +78,15 @@ class SetOncallRequest(BaseModel):
     """Request body for setting Παμακάριστος on-call diagnostician."""
 
     date: str = Field(..., description="Date in ISO format (YYYY-MM-DD)")
-    diagnostician_id: int
-    quota_monday: int = 15
-    quota_tuesday: int = 15
-    quota_wednesday: int = 15
-    quota_thursday: int = 15
-    quota_friday: int = 15
-    quota_saturday: int = 0
-    quota_sunday: int = 0
+    diagnostician_id: int = Field(..., gt=0)
+
+    @field_validator("date")
+    @classmethod
+    def validate_date(cls, v: str) -> str:
+        res = _validate_iso_date_str(v)
+        if not res:
+            raise ValueError("date is required in YYYY-MM-DD format")
+        return res
 
 
 class AdminChangeCredentialsRequest(BaseModel):
@@ -162,7 +180,7 @@ class DiagnosticianResponse(BaseModel):
     quota_saturday: int
     quota_sunday: int
     current_day_count: int
-    counts_by_date: dict[str, int] = {}
+    counts_by_date: dict[str, int] = Field(default_factory=dict)
     available: bool
 
 
@@ -256,22 +274,36 @@ class ExclusiveLabRuleResponse(ExclusiveLabRuleBase):
     diagnostician_name: str
 
 class ModalityQuotaBase(BaseModel):
-    diagnostician_id: int
-    modality: str
-    max_count: int
+    diagnostician_id: int = Field(..., gt=0)
+    modality: Literal["CT", "MRI", "MRA"]
+    max_count: int = Field(..., ge=0)
     is_active: bool = True
+
+    @field_validator("modality", mode="before")
+    @classmethod
+    def normalize_modality_case(cls, v: str) -> str:
+        return str(v).upper().strip() if v is not None else v
 
 class ModalityQuotaCreate(ModalityQuotaBase):
     pass
 
 class ModalityQuotaUpdate(BaseModel):
-    diagnostician_id: int | None = None
-    modality: str | None = None
-    max_count: int | None = None
+    diagnostician_id: int | None = Field(default=None, gt=0)
+    modality: Literal["CT", "MRI", "MRA"] | None = None
+    max_count: int | None = Field(default=None, ge=0)
     is_active: bool | None = None
 
-class ModalityQuotaResponse(ModalityQuotaBase):
+    @field_validator("modality", mode="before")
+    @classmethod
+    def normalize_modality_case(cls, v: str | None) -> str | None:
+        return str(v).upper().strip() if v is not None else None
+
+class ModalityQuotaResponse(BaseModel):
     id: int
+    diagnostician_id: int
+    modality: str
+    max_count: int
+    is_active: bool = True
     diagnostician_name: str
 
 
@@ -282,6 +314,11 @@ class SlisSearchRequest(BaseModel):
     patient_query: str | None = None
     doctor_query: str | None = None
     diagnostician_query: str | None = None
+
+    @field_validator("start_date", "end_date")
+    @classmethod
+    def validate_search_dates(cls, v: str | None) -> str | None:
+        return _validate_iso_date_str(v)
 
 
 class SlisReassignRequest(BaseModel):

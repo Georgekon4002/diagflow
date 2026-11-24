@@ -9,6 +9,7 @@ let lastAssignedClickedIndex = -1;
 
 let cachedDoctorsList = [];
 let activeAutocompleteIndex = -1;
+let _customGlassGlobalListenerBound = false;
 
 async function fetchPublicDoctorsList() {
     try {
@@ -20,12 +21,45 @@ async function fetchPublicDoctorsList() {
         console.warn('Could not fetch public doctors list:', e);
     }
 }
-fetchPublicDoctorsList();
+
+function syncCustomGlassSelect(sel) {
+    if (!sel) return;
+    if (typeof sel === 'string') sel = document.getElementById(sel);
+    if (!sel) return;
+    const wrapper = sel.nextElementSibling;
+    if (!wrapper || !wrapper.classList.contains('custom-glass-dropdown-wrap')) return;
+    const trigger = wrapper.querySelector('.custom-glass-dropdown-trigger');
+    const label = wrapper.querySelector('.custom-glass-trigger-label');
+    const selectedOption = sel.options[sel.selectedIndex] || sel.options[0];
+    const text = selectedOption ? selectedOption.textContent : '— Επιλέξτε —';
+    if (label) label.textContent = text;
+    if (trigger) trigger.classList.toggle('placeholder-text', !sel.value);
+}
+
+function _bindCustomGlassGlobalClickListener() {
+    if (_customGlassGlobalListenerBound) return;
+    _customGlassGlobalListenerBound = true;
+    document.addEventListener('click', (e) => {
+        document.querySelectorAll('.custom-glass-dropdown-wrap').forEach(w => {
+            if (!w.contains(e.target)) {
+                const m = w.querySelector('.custom-glass-dropdown-menu');
+                const t = w.querySelector('.custom-glass-dropdown-trigger');
+                if (m) m.style.display = 'none';
+                if (t) t.classList.remove('open');
+                w.classList.remove('open-active');
+                const parentCard = w.closest('.admin-card') || w.closest('.form-group') || w.closest('.modal-card');
+                if (parentCard) parentCard.classList.remove('has-open-dropdown');
+            }
+        });
+    });
+}
 
 function enhanceSelectWithCustomGlass(sel) {
     if (!sel) return;
     if (typeof sel === 'string') sel = document.getElementById(sel);
     if (!sel || sel.tagName !== 'SELECT') return;
+
+    _bindCustomGlassGlobalClickListener();
 
     let wrapper = sel.nextElementSibling;
     if (!wrapper || !wrapper.classList.contains('custom-glass-dropdown-wrap')) {
@@ -43,7 +77,7 @@ function enhanceSelectWithCustomGlass(sel) {
 
     wrapper.innerHTML = `
         <div class="custom-glass-dropdown-trigger ${isPlaceholder ? 'placeholder-text' : ''}" tabindex="0">
-            <span class="custom-glass-trigger-label">${escapeHtml(initialText)}</span>
+            <span class="custom-glass-trigger-label">${escapeHtmlFull(initialText)}</span>
             <span style="font-size: 10px; opacity: 0.6; margin-left: 6px;">▼</span>
         </div>
         <div class="custom-glass-dropdown-menu" style="display: none;">
@@ -81,8 +115,8 @@ function enhanceSelectWithCustomGlass(sel) {
             count++;
             const isSelected = sel.value === optVal;
             optionsHtml += `
-                <div class="custom-glass-option ${isSelected ? 'selected' : ''}" data-value="${escapeHtml(optVal)}" data-text="${escapeHtml(optText)}">
-                    <span>${escapeHtml(optText)}</span>
+                <div class="custom-glass-option ${isSelected ? 'selected' : ''}" data-value="${escapeHtmlFull(optVal)}" data-text="${escapeHtmlFull(optText)}">
+                    <span>${escapeHtmlFull(optText)}</span>
                     ${isSelected ? '<span style="color:var(--accent-primary); font-weight:bold; font-size:12px;">✓</span>' : ''}
                 </div>
             `;
@@ -103,6 +137,7 @@ function enhanceSelectWithCustomGlass(sel) {
                 trigger.classList.toggle('placeholder-text', !val);
                 menu.style.display = 'none';
                 trigger.classList.remove('open');
+                wrapper.classList.remove('open-active');
                 sel.dispatchEvent(new Event('change', { bubbles: true }));
             });
         });
@@ -132,13 +167,6 @@ function enhanceSelectWithCustomGlass(sel) {
     searchInput.addEventListener('input', (e) => {
         populateOptions(e.target.value);
     });
-
-    document.addEventListener('click', (e) => {
-        if (!wrapper.contains(e.target)) {
-            menu.style.display = 'none';
-            trigger.classList.remove('open');
-        }
-    });
 }
 
 function handleSlisDoctorAutocomplete(query) {
@@ -165,9 +193,9 @@ function handleSlisDoctorAutocomplete(query) {
     }
 
     box.innerHTML = matches.slice(0, 10).map((d, idx) => `
-        <div class="autocomplete-item" data-idx="${idx}" onclick="selectSlisDoctor('${escapeHtml(d.name)}')">
-            <span style="font-weight: 600;">🩺 ${escapeHtml(d.name)}</span>
-            <span style="font-size: 11px; color: var(--text-tertiary); font-family: monospace;">(${escapeHtml(d.id)})</span>
+        <div class="autocomplete-item" data-idx="${idx}" data-name="${escapeHtmlFull(d.name)}" onclick="selectSlisDoctor(this.dataset.name)">
+            <span style="font-weight: 600;">🩺 ${escapeHtmlFull(d.name)}</span>
+            <span style="font-size: 11px; color: var(--text-tertiary); font-family: monospace;">(${escapeHtmlFull(d.id)})</span>
         </div>
     `).join('');
     box.style.display = 'block';
@@ -211,8 +239,8 @@ function handleSlisDiagAutocomplete(query) {
         const qMax = rawQ === 999 ? '∞' : rawQ;
         const lastName = (d.name || '').trim().split(/\s+/)[0];
         return `
-            <div class="autocomplete-item" data-idx="${idx}" onclick="selectSlisDiag('${escapeHtml(d.name)}')">
-                <span style="font-weight: 700;">👨‍⚕️ ${escapeHtml(lastName)} <span style="font-weight: normal; font-size: 11px; color: var(--text-tertiary);">(${escapeHtml(d.name)})</span></span>
+            <div class="autocomplete-item" data-idx="${idx}" data-name="${escapeHtmlFull(d.name)}" onclick="selectSlisDiag(this.dataset.name)">
+                <span style="font-weight: 700;">👨‍⚕️ ${escapeHtmlFull(lastName)} <span style="font-weight: normal; font-size: 11px; color: var(--text-tertiary);">(${escapeHtmlFull(d.name)})</span></span>
                 <span class="custom-glass-option-count">(${count}/${qMax})</span>
             </div>
         `;
@@ -313,6 +341,10 @@ let currentSlisSearchResults = [];
 let currentTab = 'pending';   // 'pending' | 'assigned'
 let filterOnlyComments = false;
 let filterOnlyHistory = false;
+let filterOnlyPammakaristos = false;
+let filterOnlyStat = false;
+let filterOnlyEmergency = false;
+let filterOnlyAutoAssigned = false;
 let sortConfig = { key: null, direction: null };
 let selectedExams = new Set();           // pending tab selections
 let selectedAssignedExams = new Set();   // assigned tab selections for Slis push
@@ -453,8 +485,25 @@ document.addEventListener('DOMContentLoaded', async () => {
     initTheme();
     restoreAdminState();
     checkDbStatus();
+    fetchPublicDoctorsList();
 
     document.getElementById('override-select')?.addEventListener('change', updateProposalModalButtons);
+
+    // Backdrop click-to-close on modal overlays
+    [
+        ['suggestion-modal', closeModal],
+        ['login-modal', closeLoginModal],
+        ['confirm-update-all-modal', closeConfirmUpdateAllModal],
+        ['sql-script-modal', closeSqlModal],
+        ['slis-warning-modal', closeSlisWarningModal],
+    ].forEach(([id, closeFn]) => {
+        const overlay = document.getElementById(id);
+        if (overlay) {
+            overlay.addEventListener('click', (e) => {
+                if (e.target === overlay) closeFn();
+            });
+        }
+    });
 
     // Initialize debounced search input (150ms)
     const searchInput = document.getElementById('search-input');
@@ -464,69 +513,33 @@ document.addEventListener('DOMContentLoaded', async () => {
         }, 150);
     }
 
-    // Initialize date range picker
-    dateRangePicker = flatpickr("#filter-date-range", {
-        mode: "range",
-        dateFormat: "d/m/Y",
-        locale: "gr",
-        firstDayOfWeek: 1, // Start on Monday
-        onChange: function (selectedDates, dateStr, instance) {
-            applyFilters();
-        }
-    });
+    // Initialize date range picker (guarded for offline safety)
+    if (typeof flatpickr === 'function') {
+        dateRangePicker = flatpickr("#filter-date-range", {
+            mode: "range",
+            dateFormat: "d/m/Y",
+            locale: "gr",
+            firstDayOfWeek: 1, // Start on Monday
+            onChange: function (selectedDates, dateStr, instance) {
+                applyFilters();
+            }
+        });
+    }
 
     initSlisSearchDatePicker();
     initSlisSearchStickyScrollbar();
-
-    // Keyboard Shortcuts listener
-    document.addEventListener('keydown', (e) => {
-        const activeEl = document.activeElement;
-        const isInput = activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA' || activeEl.tagName === 'SELECT');
-
-        if (e.key === 'Escape') {
-            closeModal();
-            closeLoginModal();
-            closeSlisWarningModal();
-            clearUnifiedSelection();
-            clearFocusedRow();
-            return;
-        }
-
-        if (isInput) {
-            if (e.key === 'Enter' && activeEl.id === 'search-input') {
-                applyFilters();
-            }
-            return;
-        }
-
-        if (e.key === '/') {
-            e.preventDefault();
-            const sInput = document.getElementById('search-input');
-            if (sInput) {
-                sInput.focus();
-                sInput.select();
-            }
-            return;
-        }
-
-
-
-        const currentTbody = currentTab === 'pending' ? document.getElementById('tbody-pending') : document.getElementById('tbody-assigned');
-        if (!currentTbody) return;
-        const rows = Array.from(currentTbody.querySelectorAll('tr:not(.skeleton-row)'));
-        if (rows.length === 0) return;
-
-        // Handled by global keyboard shortcuts engine
-    });
 
     showBackgroundWork('⏳ Φόρτωση δεδομένων και υπολογισμός προτάσεων...');
     try {
         await loadDiagnosticians();
         await Promise.all([
-            loadPendingExams(),
-            loadAssignedExams(),
+            loadPendingExams(false),
+            loadAssignedExams(false),
             loadOncall(),
         ]);
+        buildLabDropdown(pendingExams);
+        updateTabCounts();
+        applyFilters();
     } finally {
         hideBackgroundWork();
     }
@@ -548,20 +561,12 @@ async function apiCall(endpoint, method = 'GET', body = null, extraHeaders = {})
     if (adminToken) options.headers['X-Admin-Token'] = adminToken;
     if (body) options.body = JSON.stringify(body);
 
-    try {
-        const response = await fetch(`${API_BASE}${endpoint}`, options);
-        if (!response.ok) {
-            const error = await response.json().catch(() => ({ detail: response.statusText }));
-            throw new Error(error.detail || `HTTP ${response.status}`);
-        }
-        return await response.json();
-    } catch (err) {
-        if (err.message.includes('Failed to fetch') || err.message.includes('NetworkError')) {
-            console.warn('API not available — using mock mode');
-            return null;
-        }
-        throw err;
+    const response = await fetch(`${API_BASE}${endpoint}`, options);
+    if (!response.ok) {
+        const error = await response.json().catch(() => ({ detail: response.statusText }));
+        throw new Error(error.detail || `HTTP ${response.status}`);
     }
+    return await response.json();
 }
 
 
@@ -569,7 +574,7 @@ async function apiCall(endpoint, method = 'GET', body = null, extraHeaders = {})
 //  Load Data
 // ══════════════════════════════════════════════
 
-async function loadPendingExams() {
+async function loadPendingExams(render = true) {
     try {
         const existingSuggestions = {};
         (pendingExams || []).forEach(e => {
@@ -579,40 +584,63 @@ async function loadPendingExams() {
         });
 
         const data = await apiCall('/exams/pending');
-        if (data) {
+        if (Array.isArray(data)) {
             data.forEach(e => {
                 if (existingSuggestions[e.exam_id]) {
                     e.suggestion = existingSuggestions[e.exam_id];
                 }
             });
             pendingExams = data;
+            // Prune stale selection IDs
+            const validIds = new Set(pendingExams.map(e => String(e.exam_id)));
+            for (const id of Array.from(selectedExams)) {
+                if (!validIds.has(String(id))) selectedExams.delete(id);
+            }
         }
     } catch (err) {
         console.error("Failed to load pending exams:", err);
+        showToast(`Σφάλμα φόρτωσης εκκρεμών εξετάσεων: ${err.message}`, 'error');
     }
-    // Build the dynamic lab filter from real data
-    buildLabDropdown(pendingExams);
-    updateTabCounts();
-    applyFilters();
+    if (render) {
+        buildLabDropdown(pendingExams);
+        updateTabCounts();
+        applyFilters();
+        updateBulkActionsUI();
+    }
 }
 
-async function loadAssignedExams() {
+async function loadAssignedExams(render = true) {
     try {
         const data = await apiCall('/exams/assigned');
-        if (data) assignedExams = data;
+        if (Array.isArray(data)) {
+            assignedExams = data;
+            const validIds = new Set(assignedExams.map(e => String(e.exam_id)));
+            for (const id of Array.from(selectedAssignedExams)) {
+                if (!validIds.has(String(id))) selectedAssignedExams.delete(id);
+            }
+        }
     } catch (err) {
         console.error("Failed to load assigned exams:", err);
+        showToast(`Σφάλμα φόρτωσης ανατεθειμένων εξετάσεων: ${err.message}`, 'error');
     }
-    updateTabCounts();
-    applyFilters();
+    if (render) {
+        buildLabDropdown(pendingExams);
+        updateTabCounts();
+        applyFilters();
+        updateBulkActionsUI();
+    }
 }
 
 async function loadDiagnosticians() {
     try {
         const data = await apiCall('/diagnosticians');
-        diagnosticians = data || getMockDiagnosticians();
-    } catch {
-        diagnosticians = getMockDiagnosticians();
+        if (Array.isArray(data)) {
+            diagnosticians = data;
+            _cachedNotesProfilesSource = null;
+        }
+    } catch (err) {
+        console.error("Failed to load diagnosticians:", err);
+        showToast(`Σφάλμα φόρτωσης ακτινοδιαγνωστών: ${err.message}`, 'error');
     }
 }
 
@@ -620,7 +648,7 @@ async function loadOncall() {
     try {
         const data = await apiCall('/pamakristos/oncall');
         document.getElementById('oncall-name').textContent =
-            data ? data.diagnostician_name : 'Παπαδόπουλος Γ.';
+            (data && data.diagnostician_name) ? data.diagnostician_name : '—';
     } catch {
         document.getElementById('oncall-name').textContent = '—';
     }
@@ -640,6 +668,7 @@ function switchTab(tab) {
     if (currentTab === tab) return;
 
     currentTab = tab;
+    clearFocusedRow();
 
     document.getElementById('tab-pending').classList.toggle('active', tab === 'pending');
     document.getElementById('tab-assigned').classList.toggle('active', tab === 'assigned');
@@ -673,6 +702,17 @@ function switchTab(tab) {
         examsSection.style.display = (tab === 'dashboard' || tab === 'search') ? 'none' : '';
     }
 
+    const mainFab = document.getElementById('floating-action-bar');
+    const slisFab = document.getElementById('slis-search-floating-bar');
+    if (tab !== 'search' && slisFab) {
+        slisFab.style.display = 'none';
+    }
+    if (tab !== 'pending' && tab !== 'assigned' && mainFab) {
+        mainFab.style.display = 'none';
+        document.body.classList.remove('has-fab');
+        closeFabDropdown();
+    }
+
     const titleEl = document.getElementById('section-title-text');
     const countEl = document.getElementById('section-count');
     const sectionHeader = document.querySelector('.section-header');
@@ -680,6 +720,7 @@ function switchTab(tab) {
     if (tab === 'dashboard' || tab === 'search') {
         if (sectionHeader) sectionHeader.style.display = 'none';
         if (tab === 'dashboard') loadDashboard();
+        if (tab === 'search') updateSlisSearchBulkUI();
         return; // Dashboard and Search don't need main list filters/counts
     }
 
@@ -702,9 +743,14 @@ function switchTab(tab) {
     if (btnUnassignTop) {
         btnUnassignTop.style.display = (tab === 'assigned' && selectedAssignedExams.size > 0) ? 'inline-flex' : 'none';
     }
+    const autoFilterBtn = document.getElementById('btn-filter-auto');
+    if (autoFilterBtn) {
+        autoFilterBtn.style.display = tab === 'assigned' ? 'flex' : 'none';
+    }
 
     // Keep active filters applied when switching tabs
     applyFilters();
+    updateBulkActionsUI();
 }
 
 function updateTabCounts() {
@@ -730,6 +776,52 @@ function normalizeGreek(str) {
     return String(str).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase();
 }
 
+function paginateOrderGroups(sortedExams, pageSize) {
+    if (!sortedExams || sortedExams.length === 0) return [];
+    const pages = [];
+    let currentPage = [];
+    let i = 0;
+    while (i < sortedExams.length) {
+        let j = i + 1;
+        while (
+            j < sortedExams.length &&
+            sortedExams[j].extracode && sortedExams[i].extracode &&
+            String(sortedExams[j].extracode) === String(sortedExams[i].extracode) &&
+            String(sortedExams[j].demogid || sortedExams[j].patient_id) === String(sortedExams[i].demogid || sortedExams[i].patient_id)
+        ) {
+            j++;
+        }
+        const group = sortedExams.slice(i, j);
+        if (currentPage.length > 0 && currentPage.length + group.length > pageSize) {
+            pages.push(currentPage);
+            currentPage = [];
+        }
+        currentPage.push(...group);
+        i = j;
+    }
+    if (currentPage.length > 0) {
+        pages.push(currentPage);
+    }
+    return pages;
+}
+
+function getOrderPageBounds(pages, pageIdx) {
+    let startOffset = 0;
+    for (let p = 0; p < pageIdx && p < pages.length; p++) {
+        startOffset += pages[p].length;
+    }
+    const pageItems = pages[pageIdx] || [];
+    return {
+        items: pageItems,
+        startNum: pageItems.length > 0 ? startOffset + 1 : 0,
+        endNum: startOffset + pageItems.length,
+        totalPages: pages.length,
+    };
+}
+
+let _pendingPagesMeta = { total: 0, totalPages: 0, startNum: 0, endNum: 0 };
+let _assignedPagesMeta = { total: 0, totalPages: 0, startNum: 0, endNum: 0 };
+
 function applyFilters() {
     const search = normalizeGreek(document.getElementById('search-input').value.trim());
     // Read modality from checkboxes
@@ -750,6 +842,8 @@ function applyFilters() {
         }
     }
 
+    const effectiveAutoAssigned = currentTab === 'assigned' && filterOnlyAutoAssigned;
+
     // Gather current filter state
     const currentFilterState = JSON.stringify({
         search,
@@ -758,7 +852,11 @@ function applyFilters() {
         dateFrom,
         dateTo,
         filterOnlyComments,
-        filterOnlyHistory
+        filterOnlyHistory,
+        filterOnlyPammakaristos,
+        filterOnlyStat,
+        filterOnlyEmergency,
+        effectiveAutoAssigned
     });
 
     if (lastFilterState !== null && lastFilterState !== currentFilterState) {
@@ -767,7 +865,7 @@ function applyFilters() {
     }
     lastFilterState = currentFilterState;
 
-    const hasFilters = search || selectedModalities.length > 0 || selectedLabs.length > 0 || dateFrom || dateTo || filterOnlyComments || filterOnlyHistory || sortConfig.key;
+    const hasFilters = search || selectedModalities.length > 0 || selectedLabs.length > 0 || dateFrom || dateTo || filterOnlyComments || filterOnlyHistory || filterOnlyPammakaristos || filterOnlyStat || filterOnlyEmergency || effectiveAutoAssigned || sortConfig.key;
     document.getElementById('btn-clear-filters').style.display = hasFilters ? 'flex' : 'none';
 
     // Update modality button label
@@ -807,38 +905,34 @@ function applyFilters() {
         let filtered = pendingExams.filter(e => matchesFilters(e, search, selectedModalities, selectedLabs, dateFrom, dateTo));
         filtered = sortExams(filtered);
 
-        // Clamp page to valid range if data shrunk
-        const maxPage = Math.max(0, Math.ceil(filtered.length / examsPageSize) - 1);
+        const pages = paginateOrderGroups(filtered, examsPageSize);
+        const maxPage = Math.max(0, pages.length - 1);
         if (currentPendingPage > maxPage) {
             currentPendingPage = maxPage;
         }
+        const bounds = getOrderPageBounds(pages, currentPendingPage);
+        _pendingPagesMeta = { total: filtered.length, ...bounds };
 
-        // Pagination logic
-        const start = currentPendingPage * examsPageSize;
-        const sliced = filtered.slice(start, start + examsPageSize);
-
-        renderPendingRows(sliced);
+        renderPendingRows(bounds.items, true);
         updatePendingPagination(filtered.length);
 
         document.getElementById('section-count').textContent =
             filtered.length === pendingExams.length
                 ? `${pendingExams.length} σύνολο`
                 : `${filtered.length} από ${pendingExams.length}`;
-    } else {
+    } else if (currentTab === 'assigned') {
         let filtered = assignedExams.filter(e => matchesFilters(e, search, selectedModalities, selectedLabs, dateFrom, dateTo));
         filtered = sortExams(filtered);
 
-        // Clamp page to valid range if data shrunk
-        const maxPage = Math.max(0, Math.ceil(filtered.length / examsPageSize) - 1);
+        const pages = paginateOrderGroups(filtered, examsPageSize);
+        const maxPage = Math.max(0, pages.length - 1);
         if (currentAssignedPage > maxPage) {
             currentAssignedPage = maxPage;
         }
+        const bounds = getOrderPageBounds(pages, currentAssignedPage);
+        _assignedPagesMeta = { total: filtered.length, ...bounds };
 
-        // Pagination logic
-        const start = currentAssignedPage * examsPageSize;
-        const sliced = filtered.slice(start, start + examsPageSize);
-
-        renderAssignedRows(sliced);
+        renderAssignedRows(bounds.items, true);
         updateAssignedPagination(filtered.length);
 
         document.getElementById('section-count').textContent =
@@ -851,8 +945,8 @@ function applyFilters() {
 function isPammakristos(exam) {
     if (!exam) return false;
     if (exam.is_pamakristos === true) return true;
-    const wname = (exam.wname || exam.issuing_doctor_name || '').toUpperCase();
-    const lab = (exam.lab_name || exam.laboratoryname || '').toUpperCase();
+    const wname = normalizeGreek(exam.wname || exam.issuing_doctor_name || '');
+    const lab = normalizeGreek(exam.lab_name || exam.laboratoryname || '');
     return wname.includes('ΠΑΜΜΑΚΑΡΙΣΤ') || wname.includes('ΠΑΜΑΚΑΡΙΣΤ') ||
            lab.includes('ΠΑΜΜΑΚΑΡΙΣΤ') || lab.includes('ΠΑΜΑΚΑΡΙΣΤ');
 }
@@ -902,25 +996,19 @@ function getStatInfo(exam) {
             isUrgent: true,
             isEmergency: false,
             class: 'urgent-row stat-row',
-            badge: '<span class="stat-badge stat-badge-stat" title="Επείγουσα (Stat)">⚡ STAT</span>'
+            badge: '<span class="stat-badge stat-badge-stat" title="Επείγουσα (Stat)">❗ STAT</span>'
         };
     }
     return { isUrgent: false, isEmergency: false, class: '', badge: '' };
 }
 
-function hasActiveFiltersOrSort() {
-    const searchEl = document.getElementById('search-input');
-    const hasSearch = Boolean(searchEl && searchEl.value.trim());
-    const hasModalities = document.querySelectorAll('#modality-dropdown input[type="checkbox"]:checked').length > 0;
-    const hasLabs = document.querySelectorAll('#lab-dropdown input[type="checkbox"]:checked').length > 0;
-    const hasDateRange = Boolean(dateRangePicker && dateRangePicker.selectedDates && dateRangePicker.selectedDates.length > 0);
-    const hasColumnSort = Boolean(sortConfig && sortConfig.key && sortConfig.direction);
-    return Boolean(hasSearch || hasModalities || hasLabs || hasDateRange || filterOnlyComments || filterOnlyHistory || hasColumnSort);
+function hasActiveSort() {
+    return Boolean(sortConfig && sortConfig.key && sortConfig.direction);
 }
 
 function sortExams(exams, prioritizeSpecial = null) {
     if (!exams || exams.length === 0) return [];
-    const shouldPrioritize = prioritizeSpecial !== null ? Boolean(prioritizeSpecial) : !hasActiveFiltersOrSort();
+    const shouldPrioritize = prioritizeSpecial !== null ? Boolean(prioritizeSpecial) : !hasActiveSort();
 
     // 1. Group exams into order groups (same order ID & patient)
     const groupMap = new Map();
@@ -1036,7 +1124,7 @@ function sortExams(exams, prioritizeSpecial = null) {
         });
     }
 
-    // 3. Keep Emergency (stat 2), Stat (stat 1), and Pammakristos order groups at the top ONLY when no filtering/sorting is active
+    // 3. Keep Emergency (stat 2), Stat (stat 1), and Pammakristos order groups at the top unless column sorting is active
     if (shouldPrioritize) {
         groupOrder.sort((a, b) => {
             const prioA = getOrderGroupPriority(a);
@@ -1098,6 +1186,21 @@ function matchesFilters(exam, search, selectedModalities, selectedLabs, dateFrom
         if (!ov || ov === 0) return false;
     }
 
+    if (filterOnlyPammakaristos) {
+        if (!isPammakristos(exam)) return false;
+    }
+
+    if (filterOnlyStat || filterOnlyEmergency) {
+        const statVal = Number(exam.stat) || 0;
+        const matchStat = filterOnlyStat && statVal === 1;
+        const matchEmergency = filterOnlyEmergency && statVal === 2;
+        if (!matchStat && !matchEmergency) return false;
+    }
+
+    if (currentTab === 'assigned' && filterOnlyAutoAssigned) {
+        if (!exam.is_auto_assigned) return false;
+    }
+
     // Full-text search
     if (search) {
         const patName = exam.patient_name || `${exam.fname || ''} ${exam.lname || ''}`.trim();
@@ -1155,23 +1258,20 @@ function clearFilters(rerender = true) {
     const labBtn = document.getElementById('lab-filter-btn');
     if (labBtn) labBtn.classList.remove('has-selection');
 
-    // Reset comments filter
+    // Reset icon filters
     filterOnlyComments = false;
-    const commentsBtn = document.getElementById('btn-filter-comments');
-    if (commentsBtn) {
-        commentsBtn.style.background = 'var(--bg-tertiary)';
-        commentsBtn.style.borderColor = 'var(--border-color)';
-        commentsBtn.style.color = 'var(--text-primary)';
-    }
-
-    // Reset history filter
     filterOnlyHistory = false;
-    const historyBtn = document.getElementById('btn-filter-history');
-    if (historyBtn) {
-        historyBtn.style.background = 'var(--bg-tertiary)';
-        historyBtn.style.borderColor = 'var(--border-color)';
-        historyBtn.style.color = 'var(--text-primary)';
-    }
+    filterOnlyPammakaristos = false;
+    filterOnlyStat = false;
+    filterOnlyEmergency = false;
+    filterOnlyAutoAssigned = false;
+
+    setIconFilterButtonStyle('btn-filter-comments', false);
+    setIconFilterButtonStyle('btn-filter-history', false);
+    setIconFilterButtonStyle('btn-filter-pammakaristos', false);
+    setIconFilterButtonStyle('btn-filter-stat', false);
+    setIconFilterButtonStyle('btn-filter-emergency', false);
+    setIconFilterButtonStyle('btn-filter-auto', false);
 
     // Reset sorting
     sortConfig = { key: null, direction: null };
@@ -1180,10 +1280,10 @@ function clearFilters(rerender = true) {
     if (rerender) applyFilters();
 }
 
-function toggleCommentsFilter() {
-    filterOnlyComments = !filterOnlyComments;
-    const btn = document.getElementById('btn-filter-comments');
-    if (filterOnlyComments) {
+function setIconFilterButtonStyle(btnId, active) {
+    const btn = document.getElementById(btnId);
+    if (!btn) return;
+    if (active) {
         btn.style.background = 'rgba(99, 102, 241, 0.08)';
         btn.style.borderColor = 'var(--accent-primary)';
         btn.style.color = 'var(--accent-primary)';
@@ -1192,21 +1292,41 @@ function toggleCommentsFilter() {
         btn.style.borderColor = 'var(--border-color)';
         btn.style.color = 'var(--text-primary)';
     }
+}
+
+function toggleCommentsFilter() {
+    filterOnlyComments = !filterOnlyComments;
+    setIconFilterButtonStyle('btn-filter-comments', filterOnlyComments);
     applyFilters();
 }
 
 function toggleHistoryFilter() {
     filterOnlyHistory = !filterOnlyHistory;
-    const btn = document.getElementById('btn-filter-history');
-    if (filterOnlyHistory) {
-        btn.style.background = 'rgba(99, 102, 241, 0.08)';
-        btn.style.borderColor = 'var(--accent-primary)';
-        btn.style.color = 'var(--accent-primary)';
-    } else {
-        btn.style.background = 'var(--bg-tertiary)';
-        btn.style.borderColor = 'var(--border-color)';
-        btn.style.color = 'var(--text-primary)';
-    }
+    setIconFilterButtonStyle('btn-filter-history', filterOnlyHistory);
+    applyFilters();
+}
+
+function togglePammakaristosFilter() {
+    filterOnlyPammakaristos = !filterOnlyPammakaristos;
+    setIconFilterButtonStyle('btn-filter-pammakaristos', filterOnlyPammakaristos);
+    applyFilters();
+}
+
+function toggleStatFilter() {
+    filterOnlyStat = !filterOnlyStat;
+    setIconFilterButtonStyle('btn-filter-stat', filterOnlyStat);
+    applyFilters();
+}
+
+function toggleEmergencyFilter() {
+    filterOnlyEmergency = !filterOnlyEmergency;
+    setIconFilterButtonStyle('btn-filter-emergency', filterOnlyEmergency);
+    applyFilters();
+}
+
+function toggleAutoAssignedFilter() {
+    filterOnlyAutoAssigned = !filterOnlyAutoAssigned;
+    setIconFilterButtonStyle('btn-filter-auto', filterOnlyAutoAssigned);
     applyFilters();
 }
 
@@ -1296,12 +1416,25 @@ function groupExamsByOrder(exams) {
 function renderPendingTable() {
     if (currentTab === 'pending') {
         applyFilters();
-    } else {
-        renderPendingRows(sortExams(pendingExams));
     }
 }
 
-function renderPendingRows(rawExams) {
+function collectGroupNotes(groupSlice) {
+    const seen = new Set();
+    const parts = [];
+    for (const ex of groupSlice) {
+        const raw = (ex.notes || ex.comments || '').trim();
+        if (!raw || EMPTY_NOTES_RE.test(raw)) continue;
+        const cleaned = raw.replace(/\*\s*\*\s*$/, '').trim();
+        if (cleaned && !seen.has(cleaned)) {
+            seen.add(cleaned);
+            parts.push(cleaned);
+        }
+    }
+    return parts.join(' | ');
+}
+
+function renderPendingRows(rawExams, alreadySorted = false) {
     const tbody = document.getElementById('tbody-pending');
     const emptyState = document.getElementById('empty-state-pending');
 
@@ -1312,7 +1445,7 @@ function renderPendingRows(rawExams) {
     }
 
     emptyState.style.display = 'none';
-    const exams = groupExamsByOrder(sortExams(rawExams));
+    const exams = alreadySorted ? groupExamsByOrder(rawExams) : groupExamsByOrder(sortExams(rawExams));
 
     // Pre-calculate order group info & sub-spans for Date, Lab, and Doctor
     const orderGroupInfos = new Array(exams.length);
@@ -1331,6 +1464,7 @@ function renderPendingRows(rawExams) {
 
         const groupSlice = exams.slice(startIndex, endIndex);
         const L = groupSlice.length;
+        const groupNotes = collectGroupNotes(groupSlice);
 
         // Calculate date spans within this order group
         const dateSpans = new Array(L).fill(0);
@@ -1378,6 +1512,7 @@ function renderPendingRows(rawExams) {
                 groupIndex: groupIdx,
                 groupClass: groupClass,
                 groupSize: L,
+                groupNotes: groupNotes,
                 dateSpan: dateSpans[k],
                 labSpan: labSpans[k],
                 docSpan: docSpans[k]
@@ -1395,9 +1530,11 @@ function renderPendingRows(rawExams) {
         const normCat = normalizeModalityCode(exam.category || exam.modality);
         const catClass = normCat.toLowerCase();
         const patientName = exam.patient_name || `${exam.fname || ''} ${exam.lname || ''}`.trim() || '—';
-        const notesHtml = buildNotesCell(exam.notes || exam.comments || '', exam);
+        const notesHtml = info.isGroupHeader ? buildNotesCell(info.groupNotes, exam) : '';
         const oldVisitHtml = buildOldVisitCell(exam);
 
+        const safeExamIdAttr = escapeHtmlFull(exam.exam_id);
+        const safeExamIdJs = escapeJsStr(exam.exam_id);
         const isSelected = selectedExams.has(exam.exam_id) ? 'checked' : '';
         const rowClass = isSelected ? 'selected-row' : '';
         const pamClass = isPammakristos(exam) ? 'pammakristos-row' : '';
@@ -1413,57 +1550,57 @@ function renderPendingRows(rawExams) {
             ? `<span style="color: #ef4444; font-weight: 800;" title="Παιδιατρικός ασθενής (<=18)">${escapeHtmlFull(rawAge)}</span>`
             : escapeHtmlFull(rawAge);
         const groupedOrderPatientCols = info.isGroupHeader ? `
-            <td class="extracode-cell frozen-col-2" rowspan="${span}"><span class="extracode-badge">${exam.extracode || exam.exam_id}</span></td>
-            <td class="demogid-cell" style="border-left: 1px solid rgba(255, 255, 255, 0.2);" rowspan="${span}">${exam.demogid || exam.patient_id || '—'}</td>
-            <td rowspan="${span}">${patientName}</td>
+            <td class="extracode-cell frozen-col-2" rowspan="${span}"><span class="extracode-badge">${escapeHtmlFull(exam.extracode || exam.exam_id)}</span></td>
+            <td class="demogid-cell" style="border-left: 1px solid rgba(255, 255, 255, 0.2);" rowspan="${span}">${escapeHtmlFull(exam.demogid || exam.patient_id || '—')}</td>
+            <td rowspan="${span}">${escapeHtmlFull(patientName)}</td>
             <td class="age-cell" style="text-align: center; border-right: 1px solid rgba(255, 255, 255, 0.2);" rowspan="${span}">${ageDisplay}</td>` : '';
 
         // Sub-grouped column: Ημερομηνία
         const dateCol = info.dateSpan > 0 ? `
-            <td class="date-cell" ${info.dateSpan > 1 ? `rowspan="${info.dateSpan}"` : ''}>${dateStr}</td>` : '';
+            <td class="date-cell" ${info.dateSpan > 1 ? `rowspan="${info.dateSpan}"` : ''}>${escapeHtmlFull(dateStr)}</td>` : '';
 
         // Sub-grouped column: Μονάδα
         const labCol = info.labSpan > 0 ? `
-            <td ${info.labSpan > 1 ? `rowspan="${info.labSpan}"` : ''}>${exam.lab_name || exam.laboratoryname || '—'}</td>` : '';
+            <td ${info.labSpan > 1 ? `rowspan="${info.labSpan}"` : ''}>${escapeHtmlFull(exam.lab_name || exam.laboratoryname || '—')}</td>` : '';
 
         // Sub-grouped column: Παραπέμπων Ιατρός
         const docCol = info.docSpan > 0 ? `
-            <td ${info.docSpan > 1 ? `rowspan="${info.docSpan}"` : ''}>${exam.wname || exam.issuing_doctor_name || '—'}</td>` : '';
+            <td ${info.docSpan > 1 ? `rowspan="${info.docSpan}"` : ''}>${escapeHtmlFull(exam.wname || exam.issuing_doctor_name || '—')}</td>` : '';
 
         // Grouped column: Σχόλια
         const groupedCommentsCol = info.isGroupHeader ? `
             <td class="comment-cell" rowspan="${span}">${notesHtml}</td>` : '';
 
         return `
-            <tr id="row-${exam.exam_id}" class="${info.groupClass} ${rowClass} ${pamClass} ${urgentClass}">
+            <tr id="row-${safeExamIdAttr}" class="${info.groupClass} ${rowClass} ${pamClass} ${urgentClass}">
                 <td class="frozen-col-1" style="width: 48px; min-width: 48px; padding: 0; text-align: center;">
-                    <input type="checkbox" class="row-checkbox" value="${exam.exam_id}" onclick="handlePendingCheckboxClick(event, '${exam.exam_id}')" onchange="toggleSelectExam('${exam.exam_id}')" ${isSelected}>
+                    <input type="checkbox" class="row-checkbox" value="${safeExamIdAttr}" onclick="handlePendingCheckboxClick(event, '${safeExamIdJs}')" onchange="toggleSelectExam('${safeExamIdJs}')" ${isSelected}>
                 </td>
 ${groupedOrderPatientCols}
 ${dateCol}
 ${labCol}
                 <td style="border-left: 1px solid rgba(255, 255, 255, 0.2);">
-                    <span class="modality-badge ${catClass}">${normCat}</span>
+                    <span class="modality-badge ${catClass}">${escapeHtmlFull(normCat)}</span>
                     ${statInfo.badge}
                 </td>
-                <td class="examnumcode-cell">${exam.examnumcode || '—'}</td>
-                <td class="exam-name-cell" style="border-right: 1px solid rgba(255, 255, 255, 0.2);"><span class="body-part-tag" title="${escapeHtmlFull(exam.examname || '')}">${cleanName || '—'}</span></td>
+                <td class="examnumcode-cell">${escapeHtmlFull(exam.examnumcode || '—')}</td>
+                <td class="exam-name-cell" style="border-right: 1px solid rgba(255, 255, 255, 0.2);"><span class="body-part-tag" title="${escapeHtmlFull(exam.examname || '')}">${escapeHtmlFull(cleanName || '—')}</span></td>
 ${docCol}
 ${groupedCommentsCol}
                 <td class="comment-cell">${oldVisitHtml}</td>
                 <td class="suggestion-cell">
                     ${hasSuggestion
-                ? `<span class="suggested-name">${exam.suggestion.suggested_diagnostician_name}</span>
-                   <span class="suggested-score">${Math.round(exam.suggestion.confidence_score * 100)}%</span>
+                ? `<span class="suggested-name">${escapeHtmlFull(exam.suggestion.suggested_diagnostician_name)}</span>
+                   <span class="suggested-score">${Math.round((exam.suggestion.confidence_score || 0) * 100)}%</span>
                    <div class="proposal-workload-row">${renderWorkloadGaugeHtml(exam.suggestion.suggested_diagnostician_id, diagnosticians, exam.visitdate || exam.request_date)}</div>`
-                : '<span class="no-suggestion" id="sugg-status-' + exam.exam_id + '">—</span>'
+                : '<span class="no-suggestion" id="sugg-status-' + safeExamIdAttr + '">—</span>'
             }
                 </td>
                 <td>
                     <div class="btn-group">
                         ${hasSuggestion
-                ? `<button class="btn btn-view" onclick="viewSuggestion('${exam.exam_id}')">Προβολή</button>`
-                : `<button class="btn btn-suggest" id="sugg-btn-${exam.exam_id}" onclick="getSuggestion('${exam.exam_id}')">
+                ? `<button class="btn btn-view" onclick="viewSuggestion('${safeExamIdJs}')">Προβολή</button>`
+                : `<button class="btn btn-suggest" id="sugg-btn-${safeExamIdAttr}" onclick="getSuggestion('${safeExamIdJs}', event)">
                                 <span class="btn-text">Πρόταση</span>
                                </button>`
             }
@@ -1474,7 +1611,9 @@ ${groupedCommentsCol}
     }).join('');
 
     // Background fetch suggestions for visible exams that lack one
-    fetchVisibleSuggestions(exams);
+    if (currentTab === 'pending') {
+        fetchVisibleSuggestions(exams);
+    }
 }
 
 function updateExamSuggestionRow(exam) {
@@ -1482,34 +1621,49 @@ function updateExamSuggestionRow(exam) {
     if (!tr) return;
     const suggCell = tr.querySelector('.suggestion-cell');
     const lastTd = tr.querySelector('td:last-child');
+    const safeExamIdJs = escapeJsStr(exam.exam_id);
     if (exam.suggestion) {
         if (suggCell) {
             suggCell.innerHTML = `<span class="suggested-name">${escapeHtmlFull(exam.suggestion.suggested_diagnostician_name)}</span>
-                                  <span class="suggested-score">${Math.round(exam.suggestion.confidence_score * 100)}%</span>
+                                  <span class="suggested-score">${Math.round((exam.suggestion.confidence_score || 0) * 100)}%</span>
                                   <div class="proposal-workload-row">${renderWorkloadGaugeHtml(exam.suggestion.suggested_diagnostician_id, diagnosticians, exam.visitdate || exam.request_date)}</div>`;
         }
         if (lastTd) {
-            lastTd.innerHTML = `<div class="btn-group"><button class="btn btn-view" onclick="viewSuggestion('${exam.exam_id}')">Προβολή</button></div>`;
+            lastTd.innerHTML = `<div class="btn-group"><button class="btn btn-view" onclick="viewSuggestion('${safeExamIdJs}')">Προβολή</button></div>`;
+        }
+    } else if (exam._suggestionError) {
+        if (suggCell) {
+            suggCell.innerHTML = `<span class="no-suggestion" style="color:var(--accent-danger);" title="${escapeHtmlFull(exam._suggestionError)}">⚠️ Σφάλμα</span>`;
         }
     }
 }
+
+let suggestionInvalidationGen = 0;
 
 async function fetchVisibleSuggestions(exams) {
     const missing = exams.filter(e => !e.suggestion && !e._fetchingSuggestion);
     if (missing.length === 0) return;
 
-    missing.forEach(e => e._fetchingSuggestion = true);
+    const myGen = suggestionInvalidationGen;
+    missing.forEach(e => {
+        e._fetchingSuggestion = true;
+        e._suggestionError = null;
+    });
 
     try {
         const examIds = missing.map(e => String(e.exam_id));
         const res = await apiCall('/assignments/suggest-batch', 'POST', { exam_ids: examIds });
+        if (myGen !== suggestionInvalidationGen) {
+            missing.forEach(e => { e._fetchingSuggestion = false; });
+            return;
+        }
         if (res && res.suggestions) {
             missing.forEach(exam => {
                 const sugg = res.suggestions[String(exam.exam_id)];
                 if (sugg) {
                     exam.suggestion = sugg;
                 } else {
-                    exam.suggestion = getMockSuggestion(exam.exam_id);
+                    exam._suggestionError = 'Δεν βρέθηκε πρόταση';
                 }
                 exam._fetchingSuggestion = false;
                 if (currentTab === 'pending') {
@@ -1518,7 +1672,7 @@ async function fetchVisibleSuggestions(exams) {
             });
         } else {
             missing.forEach(exam => {
-                exam.suggestion = getMockSuggestion(exam.exam_id);
+                exam._suggestionError = 'Κενή απάντηση από τον server';
                 exam._fetchingSuggestion = false;
                 if (currentTab === 'pending') {
                     updateExamSuggestionRow(exam);
@@ -1526,26 +1680,31 @@ async function fetchVisibleSuggestions(exams) {
             });
         }
     } catch (err) {
-        console.warn("Batch suggest failed, using fallbacks:", err);
+        console.error("Batch suggest failed:", err);
         missing.forEach(exam => {
-            exam.suggestion = getMockSuggestion(exam.exam_id);
             exam._fetchingSuggestion = false;
-            if (currentTab === 'pending') {
+            exam._suggestionError = err.message || 'Σφάλμα υπολογισμού';
+            if (myGen === suggestionInvalidationGen && currentTab === 'pending') {
                 updateExamSuggestionRow(exam);
             }
         });
+        if (myGen === suggestionInvalidationGen) {
+            showToast(`Αποτυχία υπολογισμού προτάσεων: ${err.message}`, 'error');
+        }
     }
 }
 
 function invalidatePendingSuggestions() {
+    suggestionInvalidationGen++;
     pendingExams.forEach(exam => {
-        if (exam.suggestion) {
-            exam.suggestion = null;
-            exam._fetchingSuggestion = false;
-            exam._wasInvalidated = true;
-        }
+        exam.suggestion = null;
+        exam._fetchingSuggestion = false;
+        exam._suggestionError = null;
+        exam._wasInvalidated = true;
     });
-    applyFilters();
+    if (currentTab === 'pending') {
+        applyFilters();
+    }
 }
 
 
@@ -1556,12 +1715,10 @@ function invalidatePendingSuggestions() {
 function renderAssignedTable() {
     if (currentTab === 'assigned') {
         applyFilters();
-    } else {
-        renderAssignedRows(sortExams(assignedExams));
     }
 }
 
-function renderAssignedRows(rawExams) {
+function renderAssignedRows(rawExams, alreadySorted = false) {
     const tbody = document.getElementById('tbody-assigned');
     const emptyState = document.getElementById('empty-state-assigned');
 
@@ -1572,7 +1729,7 @@ function renderAssignedRows(rawExams) {
     }
 
     emptyState.style.display = 'none';
-    const exams = groupExamsByOrder(sortExams(rawExams));
+    const exams = alreadySorted ? groupExamsByOrder(rawExams) : groupExamsByOrder(sortExams(rawExams));
 
     // Pre-calculate order group info & sub-spans for Date, Lab, and Doctor
     const orderGroupInfos = new Array(exams.length);
@@ -1591,6 +1748,7 @@ function renderAssignedRows(rawExams) {
 
         const groupSlice = exams.slice(startIndex, endIndex);
         const L = groupSlice.length;
+        const groupNotes = collectGroupNotes(groupSlice);
 
         // Calculate date spans within this order group
         const dateSpans = new Array(L).fill(0);
@@ -1638,6 +1796,7 @@ function renderAssignedRows(rawExams) {
                 groupIndex: groupIdx,
                 groupClass: groupClass,
                 groupSize: L,
+                groupNotes: groupNotes,
                 dateSpan: dateSpans[k],
                 labSpan: labSpans[k],
                 docSpan: docSpans[k]
@@ -1655,8 +1814,10 @@ function renderAssignedRows(rawExams) {
         const catClass = normCat.toLowerCase();
         const patientName = exam.patient_name || `${exam.fname || ''} ${exam.lname || ''}`.trim() || '—';
         const diagName = exam.code || exam.diagnostician_name || exam.assigned_diagnostician_name || '—';
-        const notesHtml = buildNotesCell(exam.notes || exam.comments || '', exam);
+        const notesHtml = info.isGroupHeader ? buildNotesCell(info.groupNotes, exam) : '';
         const oldVisitHtml = buildOldVisitCell(exam);
+        const safeExamIdAttr = escapeHtmlFull(exam.exam_id);
+        const safeExamIdJs = escapeJsStr(exam.exam_id);
         const isSelected = selectedAssignedExams.has(exam.exam_id);
         const rowClass = isSelected ? 'selected-row' : '';
         const pamClass = isPammakristos(exam) ? 'pammakristos-row' : '';
@@ -1673,22 +1834,22 @@ function renderAssignedRows(rawExams) {
             ? `<span style="color: #ef4444; font-weight: 800;" title="Παιδιατρικός ασθενής (<=18)">${escapeHtmlFull(rawAge)}</span>`
             : escapeHtmlFull(rawAge);
         const groupedOrderPatientCols = info.isGroupHeader ? `
-            <td class="extracode-cell frozen-col-2" rowspan="${span}"><span class="extracode-badge">${exam.extracode || exam.exam_id}</span></td>
-            <td class="demogid-cell" style="border-left: 1px solid rgba(255, 255, 255, 0.2);" rowspan="${span}">${exam.demogid || exam.patient_id || '—'}</td>
-            <td rowspan="${span}">${patientName}</td>
+            <td class="extracode-cell frozen-col-2" rowspan="${span}"><span class="extracode-badge">${escapeHtmlFull(exam.extracode || exam.exam_id)}</span></td>
+            <td class="demogid-cell" style="border-left: 1px solid rgba(255, 255, 255, 0.2);" rowspan="${span}">${escapeHtmlFull(exam.demogid || exam.patient_id || '—')}</td>
+            <td rowspan="${span}">${escapeHtmlFull(patientName)}</td>
             <td class="age-cell" style="text-align: center; border-right: 1px solid rgba(255, 255, 255, 0.2);" rowspan="${span}">${ageDisplay}</td>` : '';
 
         // Sub-grouped column: Ημερομηνία
         const dateCol = info.dateSpan > 0 ? `
-            <td class="date-cell" ${info.dateSpan > 1 ? `rowspan="${info.dateSpan}"` : ''}>${dateStr}</td>` : '';
+            <td class="date-cell" ${info.dateSpan > 1 ? `rowspan="${info.dateSpan}"` : ''}>${escapeHtmlFull(dateStr)}</td>` : '';
 
         // Sub-grouped column: Μονάδα
         const labCol = info.labSpan > 0 ? `
-            <td ${info.labSpan > 1 ? `rowspan="${info.labSpan}"` : ''}>${exam.lab_name || exam.laboratoryname || '—'}</td>` : '';
+            <td ${info.labSpan > 1 ? `rowspan="${info.labSpan}"` : ''}>${escapeHtmlFull(exam.lab_name || exam.laboratoryname || '—')}</td>` : '';
 
         // Sub-grouped column: Παραπέμπων Ιατρός
         const docCol = info.docSpan > 0 ? `
-            <td ${info.docSpan > 1 ? `rowspan="${info.docSpan}"` : ''}>${exam.wname || exam.issuing_doctor_name || '—'}</td>` : '';
+            <td ${info.docSpan > 1 ? `rowspan="${info.docSpan}"` : ''}>${escapeHtmlFull(exam.wname || exam.issuing_doctor_name || '—')}</td>` : '';
 
         // Grouped column: Σχόλια
         const groupedCommentsCol = info.isGroupHeader ? `
@@ -1702,34 +1863,35 @@ function renderAssignedRows(rawExams) {
             </div>` : '';
 
         return `
-            <tr id="assigned-row-${exam.exam_id}" class="${info.groupClass} ${rowClass} ${pamClass} ${urgentClass}">
+            <tr id="assigned-row-${safeExamIdAttr}" class="${info.groupClass} ${rowClass} ${pamClass} ${urgentClass}">
                 <td class="frozen-col-1" style="width: 48px; min-width: 48px; padding: 0; text-align: center;">
-                    <input type="checkbox" class="assigned-row-checkbox" value="${exam.exam_id}"
-                        data-exammoreid="${exammoreid}"
-                        onchange="toggleSelectAssignedExam('${exam.exam_id}')" ${isSelected ? 'checked' : ''}>
+                    <input type="checkbox" class="assigned-row-checkbox" value="${safeExamIdAttr}"
+                        data-exammoreid="${escapeHtmlFull(exammoreid)}"
+                        onclick="handleAssignedCheckboxClick(event, '${safeExamIdJs}')"
+                        onchange="toggleSelectAssignedExam('${safeExamIdJs}')" ${isSelected ? 'checked' : ''}>
                 </td>
 ${groupedOrderPatientCols}
 ${dateCol}
 ${labCol}
                 <td style="border-left: 1px solid rgba(255, 255, 255, 0.2);">
-                    <span class="modality-badge ${catClass}">${normCat}</span>
+                    <span class="modality-badge ${catClass}">${escapeHtmlFull(normCat)}</span>
                     ${statInfo.badge}
                 </td>
-                <td class="examnumcode-cell">${exam.examnumcode || '—'}</td>
-                <td class="exam-name-cell" style="border-right: 1px solid rgba(255, 255, 255, 0.2);"><span class="body-part-tag" title="${escapeHtmlFull(exam.examname || '')}">${cleanName || '—'}</span></td>
+                <td class="examnumcode-cell">${escapeHtmlFull(exam.examnumcode || '—')}</td>
+                <td class="exam-name-cell" style="border-right: 1px solid rgba(255, 255, 255, 0.2);"><span class="body-part-tag" title="${escapeHtmlFull(exam.examname || '')}">${escapeHtmlFull(cleanName || '—')}</span></td>
 ${docCol}
 ${groupedCommentsCol}
                 <td class="comment-cell">${oldVisitHtml}</td>
-                <td><span class="assigned-name">${diagName}</span>${autoBadge}</td>
+                <td><span class="assigned-name">${escapeHtmlFull(diagName)}</span>${autoBadge}</td>
                 <td>
                     <div class="btn-group">
-                        <button class="btn btn-slis-update btn-sm" onclick="updateExamOnSlis('${exam.exam_id}', ${exammoreid || 'null'})">
-                            Update on Slis
+                        <button class="btn btn-slis-update btn-sm" onclick="updateExamOnSlis('${safeExamIdJs}', ${exammoreid || 'null'})">
+                            Ενημέρωση Slis
                         </button>
-                        <button class="btn btn-secondary btn-sm" onclick="changeAssignment('${exam.exam_id}')">
+                        <button class="btn btn-secondary btn-sm" onclick="changeAssignment('${safeExamIdJs}', event)">
                             Αλλαγή
                         </button>
-                        <button class="btn btn-danger btn-sm" onclick="unassignExam('${exam.exam_id}')" title="Αφαίρεση από τις τοπικές αναθέσεις (χωρίς διαγραφή από το Slis)">
+                        <button class="btn btn-danger btn-sm" onclick="unassignExam('${safeExamIdJs}')" title="Αφαίρεση από τις τοπικές αναθέσεις (χωρίς διαγραφή από το Slis)">
                             Αφαίρεση
                         </button>
                     </div>
@@ -1744,27 +1906,35 @@ ${groupedCommentsCol}
 //  Suggestion Flow
 // ══════════════════════════════════════════════
 
-async function getSuggestion(examId) {
-    const btn = event.target.closest('.btn');
-    const originalHTML = btn.innerHTML;
-    btn.innerHTML = '<span class="loading-spinner"></span>';
-    btn.disabled = true;
+async function getSuggestion(examId, evt = null) {
+    const btn = (evt && evt.target && evt.target.closest('.btn')) || document.getElementById(`sugg-btn-${examId}`);
+    const originalHTML = btn ? btn.innerHTML : '';
+    if (btn) {
+        btn.innerHTML = '<span class="loading-spinner"></span>';
+        btn.disabled = true;
+    }
 
     try {
-        let suggestion = await apiCall('/assignments/suggest', 'POST', { exam_id: examId });
-        if (!suggestion) suggestion = getMockSuggestion(examId);
+        const suggestion = await apiCall('/assignments/suggest', 'POST', { exam_id: examId });
+        if (!suggestion) {
+            throw new Error('Δεν επιστράφηκε πρόταση από τον server');
+        }
 
         const exam = pendingExams.find(e => e.exam_id === examId);
-        if (exam) exam.suggestion = suggestion;
+        if (exam) {
+            exam.suggestion = suggestion;
+            exam._suggestionError = null;
+            updateExamSuggestionRow(exam);
+        }
 
-        renderPendingTable();
-        applyFilters();
         openSuggestionModal(examId, suggestion);
 
     } catch (err) {
         showToast(`Σφάλμα: ${err.message}`, 'error');
-        btn.innerHTML = originalHTML;
-        btn.disabled = false;
+        if (btn) {
+            btn.innerHTML = originalHTML;
+            btn.disabled = false;
+        }
     }
 }
 
@@ -1774,15 +1944,19 @@ function viewSuggestion(examId) {
     if (exam && exam.suggestion) openSuggestionModal(examId, exam.suggestion);
 }
 
-async function changeAssignment(examId) {
-    const btn = event.target.closest('.btn');
-    const originalHTML = btn.innerHTML;
-    btn.innerHTML = '<span class="loading-spinner"></span>';
-    btn.disabled = true;
+async function changeAssignment(examId, evt = null) {
+    const btn = evt && evt.target ? evt.target.closest('.btn') : null;
+    const originalHTML = btn ? btn.innerHTML : '';
+    if (btn) {
+        btn.innerHTML = '<span class="loading-spinner"></span>';
+        btn.disabled = true;
+    }
 
     try {
-        let suggestion = await apiCall('/assignments/suggest', 'POST', { exam_id: examId });
-        if (!suggestion) suggestion = getMockSuggestion(examId);
+        const suggestion = await apiCall('/assignments/suggest', 'POST', { exam_id: examId });
+        if (!suggestion) {
+            throw new Error('Δεν επιστράφηκε πρόταση από τον server');
+        }
 
         const exam = assignedExams.find(e => e.exam_id === examId);
         if (exam) exam.suggestion = suggestion;
@@ -1792,8 +1966,10 @@ async function changeAssignment(examId) {
     } catch (err) {
         showToast(`Σφάλμα: ${err.message}`, 'error');
     } finally {
-        btn.innerHTML = originalHTML;
-        btn.disabled = false;
+        if (btn) {
+            btn.innerHTML = originalHTML;
+            btn.disabled = false;
+        }
     }
 }
 
@@ -1934,10 +2110,10 @@ function openSuggestionModal(examId, suggestion) {
     const notesText = exam?.comments || exam?.notes || '';
 
     document.getElementById('modal-exam-summary').innerHTML = `
-        <strong>${exam?.extracode || exam?.exam_id || ''}</strong> — ${patientName}<br>
-        <strong>${examCode} - ${modality} ${examName}</strong> &nbsp;|&nbsp;
-        <strong>Εργαστήριο:</strong> ${labName} &nbsp;|&nbsp;
-        <strong>Ιατρός:</strong> ${doctorName}
+        <strong>${escapeHtmlFull(exam?.extracode || exam?.exam_id || '')}</strong> — ${escapeHtmlFull(patientName)}<br>
+        <strong>${escapeHtmlFull(examCode)} - ${escapeHtmlFull(modality)} ${escapeHtmlFull(examName)}</strong> &nbsp;|&nbsp;
+        <strong>Εργαστήριο:</strong> ${escapeHtmlFull(labName)} &nbsp;|&nbsp;
+        <strong>Ιατρός:</strong> ${escapeHtmlFull(doctorName)}
         ${notesText && !EMPTY_NOTES_RE.test(notesText) ? `<br><strong>Σχόλια:</strong> <span style="color:var(--accent-warning);">${escapeHtmlFull(notesText)}</span>` : ''}
     `;
 
@@ -1945,32 +2121,34 @@ function openSuggestionModal(examId, suggestion) {
     const diagWorkloadHtml = renderWorkloadGaugeHtml(suggestion.suggested_diagnostician_id, diagnosticians, examDateVal);
     document.getElementById('suggestion-name').innerHTML = `
         <span style="display:flex; align-items:center; gap:8px;">
-            ${escapeHtml(suggestion.suggested_diagnostician_name)}
+            ${escapeHtmlFull(suggestion.suggested_diagnostician_name)}
             ${diagWorkloadHtml}
         </span>
     `;
-    document.getElementById('suggestion-score').textContent = `${Math.round(suggestion.confidence_score * 100)}%`;
+    document.getElementById('suggestion-score').textContent = `${Math.round((suggestion.confidence_score || 0) * 100)}%`;
 
     const tagEl = document.getElementById('suggestion-tag');
     if (suggestion.is_direct_assignment) {
-        tagEl.textContent = `⚡ ${suggestion.direct_assignment_reason}`;
+        tagEl.textContent = `⚡ ${suggestion.direct_assignment_reason || 'Άμεση Ανάθεση'}`;
         tagEl.style.color = 'var(--accent-warning)';
     } else {
-        tagEl.textContent = `Κανόνες: ${suggestion.rules_fired.map(r => translateRule(r)).join(', ')}`;
+        const rulesFired = Array.isArray(suggestion.rules_fired) ? suggestion.rules_fired : [];
+        tagEl.textContent = `Κανόνες: ${rulesFired.map(r => translateRule(r)).join(', ') || '—'}`;
         tagEl.style.color = 'var(--accent-success)';
     }
 
     // Score breakdown & visualizer
     const visualizerHtml = renderScoreVisualizerHtml(suggestion);
     const breakdownList = document.getElementById('breakdown-list');
-    const itemsHtml = suggestion.score_breakdown.map(comp => {
+    const breakdownItems = Array.isArray(suggestion.score_breakdown) ? suggestion.score_breakdown : [];
+    const itemsHtml = breakdownItems.map(comp => {
         const scoreClass = comp.weighted_score > 0 ? 'positive' : comp.weighted_score < 0 ? 'negative' : 'neutral';
-        const barWidth = Math.abs(comp.raw_score) * 100;
+        const barWidth = Math.min(100, Math.abs(comp.raw_score || 0) * 100);
         return `
             <div class="breakdown-item">
-                <span class="rule-name">${comp.display_name}</span>
-                <span class="rule-explanation">${comp.explanation}</span>
-                <span class="rule-score ${scoreClass}">${comp.weighted_score > 0 ? '+' : ''}${comp.weighted_score.toFixed(3)}</span>
+                <span class="rule-name">${escapeHtmlFull(comp.display_name)}</span>
+                <span class="rule-explanation">${escapeHtmlFull(comp.explanation)}</span>
+                <span class="rule-score ${scoreClass}">${comp.weighted_score > 0 ? '+' : ''}${Number(comp.weighted_score || 0).toFixed(3)}</span>
                 <div class="score-bar">
                     <div class="score-bar-fill" style="width:${barWidth}%"></div>
                 </div>
@@ -1990,21 +2168,23 @@ function openSuggestionModal(examId, suggestion) {
 
         altList.innerHTML = alternatives.map(alt => {
             const gaugeHtml = renderWorkloadGaugeHtml(alt.id, diagnosticians, examDateVal);
+            const safeAltId = escapeHtmlFull(alt.id);
+            const safeAltNameAttr = escapeHtmlFull(alt.name);
             if (alt.eliminated) {
                 return `
-                    <div class="alternative-item eliminated" data-diag-id="${alt.id}" onclick="selectAlternative('${alt.id}', '${escapeHtml(alt.name)}', true, event)">
+                    <div class="alternative-item eliminated" data-diag-id="${safeAltId}" data-diag-name="${safeAltNameAttr}" onclick="selectAlternative(this.dataset.diagId, this.dataset.diagName, true, event)">
                         <span class="alt-rank">—</span>
-                        <span class="alt-name" title="${escapeHtmlFull(alt.name)}">${escapeHtml(alt.name)}</span>
+                        <span class="alt-name" title="${safeAltNameAttr}">${safeAltNameAttr}</span>
                         <span class="alt-gauge">${gaugeHtml}</span>
                         <span class="alt-eliminated-badge" title="Εξαιρέθηκε">⛔</span>
-                        <span class="alt-elimination-reason">${alt.elimination_reason || ''}</span>
+                        <span class="alt-elimination-reason">${escapeHtmlFull(alt.elimination_reason || '')}</span>
                     </div>
                 `;
-            } else if (Math.round(alt.score * 100) === 0) {
+            } else if (Math.round((alt.score || 0) * 100) === 0) {
                 return `
-                    <div class="alternative-item eliminated" data-diag-id="${alt.id}" onclick="selectAlternative('${alt.id}', '${escapeHtml(alt.name)}', true, event)">
+                    <div class="alternative-item eliminated" data-diag-id="${safeAltId}" data-diag-name="${safeAltNameAttr}" onclick="selectAlternative(this.dataset.diagId, this.dataset.diagName, true, event)">
                         <span class="alt-rank">—</span>
-                        <span class="alt-name" title="${escapeHtmlFull(alt.name)}">${escapeHtml(alt.name)}</span>
+                        <span class="alt-name" title="${safeAltNameAttr}">${safeAltNameAttr}</span>
                         <span class="alt-gauge">${gaugeHtml}</span>
                         <span class="alt-eliminated-badge" title="0% Βαθμολογία">⛔</span>
                         <span class="alt-elimination-reason">Δεν πληροί κανένα κριτήριο προτίμησης</span>
@@ -2013,11 +2193,11 @@ function openSuggestionModal(examId, suggestion) {
             } else {
                 const rank = rankCounter++;
                 return `
-                    <div class="alternative-item" data-diag-id="${alt.id}" onclick="selectAlternative('${alt.id}', '${escapeHtml(alt.name)}', false, event)">
+                    <div class="alternative-item" data-diag-id="${safeAltId}" data-diag-name="${safeAltNameAttr}" onclick="selectAlternative(this.dataset.diagId, this.dataset.diagName, false, event)">
                         <span class="alt-rank">#${rank}</span>
-                        <span class="alt-name" title="${escapeHtmlFull(alt.name)}">${escapeHtml(alt.name)}</span>
+                        <span class="alt-name" title="${safeAltNameAttr}">${safeAltNameAttr}</span>
                         <span class="alt-gauge">${gaugeHtml}</span>
-                        <span class="alt-score">${Math.round(alt.score * 100)}%</span>
+                        <span class="alt-score">${Math.round((alt.score || 0) * 100)}%</span>
                     </div>
                 `;
             }
@@ -2030,22 +2210,28 @@ function openSuggestionModal(examId, suggestion) {
     const overrideSelect = document.getElementById('override-select');
     overrideSelect.innerHTML = '<option value="">— Επιλέξτε εναλλακτικό —</option>';
 
-    const scored = alternatives.filter(a => !a.eliminated && Math.round(a.score * 100) > 0);
+    const scored = alternatives.filter(a => !a.eliminated && Math.round((a.score || 0) * 100) > 0);
     if (scored.length) {
         const grp1 = document.createElement('optgroup');
         grp1.label = 'Αξιολογημένοι';
         scored.forEach(alt => {
-            grp1.innerHTML += `<option value="${alt.id}">${alt.name}</option>`;
+            const opt = document.createElement('option');
+            opt.value = String(alt.id);
+            opt.textContent = alt.name;
+            grp1.appendChild(opt);
         });
         overrideSelect.appendChild(grp1);
     }
 
-    const eliminated = alternatives.filter(a => a.eliminated || Math.round(a.score * 100) === 0);
+    const eliminated = alternatives.filter(a => a.eliminated || Math.round((a.score || 0) * 100) === 0);
     if (eliminated.length) {
         const grp2 = document.createElement('optgroup');
         grp2.label = 'Εξαιρεθέντες (χειροκίνητη παράκαμψη)';
         eliminated.forEach(alt => {
-            grp2.innerHTML += `<option value="${alt.id}">${alt.name} ⛔</option>`;
+            const opt = document.createElement('option');
+            opt.value = String(alt.id);
+            opt.textContent = `${alt.name} ⛔`;
+            grp2.appendChild(opt);
         });
         overrideSelect.appendChild(grp2);
     }
@@ -2057,6 +2243,12 @@ function openSuggestionModal(examId, suggestion) {
 }
 
 async function refreshExams() {
+    slisEligibilityCache.clear();
+    slisFabEligibilityCacheKey = null;
+    slisFabEligibilityMap = new Map();
+    currentBulkSelection = '';
+    bulkEligibilityCache = null;
+
     try {
         showBackgroundWork('⏳ Ανανέωση από Slis DB...');
         await apiCall('/slis/pull', 'POST');
@@ -2067,9 +2259,13 @@ async function refreshExams() {
     }
     await loadDiagnosticians();
     await Promise.all([
-        loadPendingExams(),
-        loadAssignedExams()
+        loadPendingExams(false),
+        loadAssignedExams(false)
     ]);
+    buildLabDropdown(pendingExams);
+    updateTabCounts();
+    applyFilters();
+    updateBulkActionsUI();
     if (currentTab === 'dashboard') {
         loadDashboard();
     }
@@ -2163,6 +2359,7 @@ function selectAlternative(diagId, diagName, isEliminated, evt) {
         if (matchedIndex !== -1) {
             select.selectedIndex = matchedIndex;
             selectedAlternativeId = String(select.options[matchedIndex].value);
+            syncCustomGlassSelect(select);
         }
     }
 
@@ -2175,10 +2372,10 @@ function selectAlternative(diagId, diagName, isEliminated, evt) {
 
     updateProposalModalButtons();
 
-    // Auto-scroll modal to the bottom so user sees action buttons ("Αλλαγή")
-    const modalEl = document.querySelector('#suggestion-modal .modal');
-    if (modalEl) {
-        modalEl.scrollTo({ top: modalEl.scrollHeight, behavior: 'smooth' });
+    // Auto-scroll modal body to the bottom so user sees action buttons ("Αλλαγή")
+    const modalBody = document.querySelector('#suggestion-modal .modal-body') || document.querySelector('#suggestion-modal .modal');
+    if (modalBody) {
+        modalBody.scrollTo({ top: modalBody.scrollHeight, behavior: 'smooth' });
     }
 }
 
@@ -2190,7 +2387,10 @@ function closeModal() {
     selectedAlternativeId = null;
     document.querySelectorAll('.alternative-item').forEach(el => el.classList.remove('selected-alt'));
     const select = document.getElementById('override-select');
-    if (select) select.value = '';
+    if (select) {
+        select.value = '';
+        syncCustomGlassSelect(select);
+    }
     const reasonInput = document.getElementById('override-reason');
     if (reasonInput) reasonInput.value = '';
     updateProposalModalButtons();
@@ -2203,8 +2403,11 @@ function closeModal() {
 //  Confirm / Override
 // ══════════════════════════════════════════════
 
+let _isSubmittingAssignment = false;
+
 async function confirmAssignment() {
-    if (!currentExamId || !currentSuggestion) return;
+    if (!currentExamId || !currentSuggestion || _isSubmittingAssignment) return;
+    _isSubmittingAssignment = true;
 
     const btn = document.getElementById('btn-confirm');
     btn.innerHTML = '<span class="loading-spinner"></span>';
@@ -2216,51 +2419,66 @@ async function confirmAssignment() {
             diagnostician_id: currentSuggestion.suggested_diagnostician_id,
         });
     } catch (err) {
+        _isSubmittingAssignment = false;
         showToast(`❌ Σφάλμα ανάθεσης: ${err.message}`, 'error');
         updateProposalModalButtons();
         return;
     }
 
-    // Handle moving or updating exam state
-    let exam = pendingExams.find(e => e.exam_id === currentExamId);
-    let wasPending = true;
-    if (!exam) {
-        exam = assignedExams.find(e => e.exam_id === currentExamId);
-        wasPending = false;
-    }
-
-    if (exam) {
-        const updatedExam = {
-            ...exam,
-            status: 'assigned',
-            assigned_diagnostician_id: currentSuggestion.suggested_diagnostician_id,
-            assigned_diagnostician_name: currentSuggestion.suggested_diagnostician_name,
-            code: currentSuggestion.suggested_diagnostician_name,
-            diagnostis: currentSuggestion.suggested_diagnostician_id,
-            assigned_at: new Date().toISOString(),
-        };
-
-        if (wasPending) {
-            pendingExams = pendingExams.filter(e => e.exam_id !== currentExamId);
+    try {
+        // Handle moving or updating exam state
+        let exam = pendingExams.find(e => e.exam_id === currentExamId);
+        let wasPending = true;
+        if (!exam) {
+            exam = assignedExams.find(e => e.exam_id === currentExamId);
+            wasPending = false;
         }
-        assignedExams = assignedExams.filter(e => e.exam_id !== currentExamId);
-        assignedExams.unshift(updatedExam);
+
+        if (exam) {
+            const updatedExam = {
+                ...exam,
+                status: 'assigned',
+                assigned_diagnostician_id: currentSuggestion.suggested_diagnostician_id,
+                assigned_diagnostician_name: currentSuggestion.suggested_diagnostician_name,
+                code: currentSuggestion.suggested_diagnostician_name,
+                diagnostis: currentSuggestion.suggested_diagnostician_id,
+                assigned_at: new Date().toISOString(),
+            };
+
+            if (wasPending) {
+                pendingExams = pendingExams.filter(e => e.exam_id !== currentExamId);
+                selectedExams.delete(currentExamId);
+            }
+            assignedExams = assignedExams.filter(e => e.exam_id !== currentExamId);
+            assignedExams.unshift(updatedExam);
+        }
+
+        slisEligibilityCache.clear();
+        slisFabEligibilityCacheKey = null;
+        currentBulkSelection = '';
+        bulkEligibilityCache = null;
+
+        await loadDiagnosticians();
+        updateTabCounts();
+        if (currentTab === 'dashboard') {
+            loadDashboard();
+        }
+        // Invalidate all visible suggestion caches so they re-score with updated capacities
+        invalidatePendingSuggestions();
+        if (currentTab === 'assigned') {
+            applyFilters();
+        }
+        updateBulkActionsUI();
+
+        showToast(`✅ Ανατέθηκε στον/στην ${currentSuggestion.suggested_diagnostician_name}`, 'success');
+        closeModal();
+    } finally {
+        _isSubmittingAssignment = false;
     }
-
-    await loadDiagnosticians();
-    renderPendingTable();
-    renderAssignedTable();
-    updateTabCounts();
-    loadDashboard();
-    // Invalidate all visible suggestion caches so they re-score with updated capacities
-    invalidatePendingSuggestions();
-
-    showToast(`✅ Ανατέθηκε στον/στην ${currentSuggestion.suggested_diagnostician_name}`, 'success');
-    closeModal();
 }
 
 async function overrideAssignment() {
-    if (!currentExamId || !currentSuggestion) return;
+    if (!currentExamId || !currentSuggestion || _isSubmittingAssignment) return;
 
     const select = document.getElementById('override-select');
     const reason = document.getElementById('override-reason').value;
@@ -2271,13 +2489,14 @@ async function overrideAssignment() {
         return;
     }
 
-    const overrideId = parseInt(activeVal);
+    const overrideId = parseInt(activeVal, 10);
     let overrideName = 'Διαγνώστης';
     if (select.selectedIndex >= 0 && select.options[select.selectedIndex]?.value) {
         const optText = select.options[select.selectedIndex].text;
-        overrideName = optText.split(' (')[0].replace(' ⛔ Εξαιρέθηκε', '').replace(' ⛔ 0%', '').trim();
+        overrideName = optText.split(' (')[0].replace(/\s*⛔.*$/, '').trim();
     }
 
+    _isSubmittingAssignment = true;
     const btn = document.getElementById('btn-override');
     btn.innerHTML = '<span class="loading-spinner"></span>';
     btn.disabled = true;
@@ -2290,50 +2509,64 @@ async function overrideAssignment() {
             reason,
         });
     } catch (err) {
+        _isSubmittingAssignment = false;
         showToast(`❌ Σφάλμα αλλαγής ανάθεσης: ${err.message}`, 'error');
         updateProposalModalButtons();
         return;
     }
 
-    // Handle moving or updating exam state
-    let exam = pendingExams.find(e => e.exam_id === currentExamId);
-    let wasPending = true;
-    if (!exam) {
-        exam = assignedExams.find(e => e.exam_id === currentExamId);
-        wasPending = false;
-    }
-
-    if (exam) {
-        const updatedExam = {
-            ...exam,
-            status: 'assigned',
-            assigned_diagnostician_id: overrideId,
-            assigned_diagnostician_name: overrideName,
-            code: overrideName,
-            diagnostis: overrideId,
-            assigned_at: new Date().toISOString(),
-        };
-
-        if (wasPending) {
-            pendingExams = pendingExams.filter(e => e.exam_id !== currentExamId);
+    try {
+        // Handle moving or updating exam state
+        let exam = pendingExams.find(e => e.exam_id === currentExamId);
+        let wasPending = true;
+        if (!exam) {
+            exam = assignedExams.find(e => e.exam_id === currentExamId);
+            wasPending = false;
         }
-        assignedExams = assignedExams.filter(e => e.exam_id !== currentExamId);
-        assignedExams.unshift(updatedExam);
+
+        if (exam) {
+            const updatedExam = {
+                ...exam,
+                status: 'assigned',
+                assigned_diagnostician_id: overrideId,
+                assigned_diagnostician_name: overrideName,
+                code: overrideName,
+                diagnostis: overrideId,
+                assigned_at: new Date().toISOString(),
+            };
+
+            if (wasPending) {
+                pendingExams = pendingExams.filter(e => e.exam_id !== currentExamId);
+                selectedExams.delete(currentExamId);
+            }
+            assignedExams = assignedExams.filter(e => e.exam_id !== currentExamId);
+            assignedExams.unshift(updatedExam);
+        }
+
+        slisEligibilityCache.clear();
+        slisFabEligibilityCacheKey = null;
+        currentBulkSelection = '';
+        bulkEligibilityCache = null;
+
+        await loadDiagnosticians();
+        updateTabCounts();
+        if (currentTab === 'dashboard') {
+            loadDashboard();
+        }
+        invalidatePendingSuggestions();
+        if (currentTab === 'assigned') {
+            applyFilters();
+        }
+        updateBulkActionsUI();
+
+        showToast(
+            `⚠️ Αλλαγή → ${overrideName} (αντί ${currentSuggestion.suggested_diagnostician_name})`,
+            'warning'
+        );
+        closeModal();
+    } finally {
+        _isSubmittingAssignment = false;
     }
-
-    await loadDiagnosticians();
-    renderPendingTable();
-    renderAssignedTable();
-    updateTabCounts();
-    loadDashboard();
-    // Invalidate all visible suggestion caches so they re-score with updated capacities
-    invalidatePendingSuggestions();
-
-    showToast(
-        `⚠️ Αλλαγή → ${overrideName} (αντί ${currentSuggestion.suggested_diagnostician_name})`,
-        'warning'
-    );
-    closeModal();
 }
 
 
@@ -2379,24 +2612,13 @@ async function doLogin() {
         if (data && data.token) {
             adminToken = data.token;
             sessionStorage.setItem('adminToken', adminToken);
-            if(data.role) sessionStorage.setItem('adminRole', data.role);
+            if (data.role) sessionStorage.setItem('adminRole', data.role);
             showAdminLoggedIn();
             closeLoginModal();
             showToast('✅ Συνδεθήκατε ως Διαχειριστής', 'success');
             goToAdmin();
         } else {
-            // Mock mode: accept admin/admin1234
-            if (username === 'admin' && password === 'admin1234') {
-                adminToken = 'mock-token-' + Date.now();
-                sessionStorage.setItem('adminToken', adminToken);
-            if(data.role) sessionStorage.setItem('adminRole', data.role);
-                showAdminLoggedIn();
-                closeLoginModal();
-                showToast('✅ Συνδεθήκατε ως Διαχειριστής (mock)', 'success');
-                goToAdmin();
-            } else {
-                throw new Error('Λάθος στοιχεία σύνδεσης');
-            }
+            throw new Error('Αποτυχία σύνδεσης με τον server');
         }
     } catch (err) {
         errorEl.textContent = err.message || 'Λάθος στοιχεία σύνδεσης.';
@@ -2407,10 +2629,22 @@ async function doLogin() {
     }
 }
 
-function adminLogout() {
+async function adminLogout() {
+    const tokenToRevoke = adminToken;
     adminToken = null;
     sessionStorage.removeItem('adminToken');
+    sessionStorage.removeItem('adminRole');
     showAdminLoggedOut();
+    if (tokenToRevoke) {
+        try {
+            await fetch(`${API_BASE}/admin/auth/logout`, {
+                method: 'POST',
+                headers: { 'X-Admin-Token': tokenToRevoke }
+            });
+        } catch {
+            // Best-effort server revocation
+        }
+    }
     showToast('Αποσυνδεθήκατε από το Admin Panel', 'info');
 }
 
@@ -2481,7 +2715,7 @@ function showToast(message, type = 'info') {
     toast.className = `toast ${type}`;
     toast.innerHTML = `
         <span class="toast-icon">${icons[type] || 'ℹ️'}</span>
-        <span class="toast-message">${message}</span>
+        <span class="toast-message">${escapeHtmlFull(message)}</span>
     `;
 
     container.appendChild(toast);
@@ -2499,21 +2733,25 @@ function showToast(message, type = 'info') {
 
 // ── Exam name cleaning ──
 /**
- * Strip boilerplate prefixes from Greek exam names.
- * Removes: ΜΑΓΝΗΤΙΚΗ, ΑΞΟΝΙΚΗ, ΑΓΓΕΙΟΓΡΑΦΙΑ, ΤΟΜΟΓΡΑΦΙΑ, (MRI), (MRA)
- * then collapses multiple spaces and trims.
+ * Strip boilerplate modality prefixes/tokens from exam names since the
+ * modality pill (MRI / CT / MRA) is already displayed separately.
+ * Removes: (MRI), (CT), (MRA), standalone MRI/CT/MRA/M.R.I./C.T./M.R.A.,
+ * ΜΑΓΝΗΤΙΚΗ, ΑΞΟΝΙΚΗ, ΑΓΓΕΙΟΓΡΑΦΙΑ, ΤΟΜΟΓΡΑΦΙΑ, then cleans punctuation/spaces.
  */
 function cleanExamName(raw) {
     if (!raw) return '';
-    return raw
-        .replace(/\(MRI\)/gi, '')
-        .replace(/\(MRA\)/gi, '')
-        .replace(/ΜΑΓΝΗΤΙΚΗ\s*/gi, '')
-        .replace(/ΑΞΟΝΙΚΗ\s*/gi, '')
-        .replace(/ΑΓΓΕΙΟΓΡΑΦΙΑ\s*/gi, '')
-        .replace(/ΤΟΜΟΓΡΑΦΙΑ\s*/gi, '')
+    const cleaned = String(raw)
+        .replace(/\(\s*(?:M\.?R\.?I\.?|M\.?R\.?A\.?|C\.?T\.?)\s*\)/gi, '')
+        .replace(/(^|[^A-Za-z0-9Α-Ωα-ωΆ-Ώά-ώ])(?:M\.?R\.?I\.?|M\.?R\.?A\.?|C\.?T\.?)(?=$|[^A-Za-z0-9Α-Ωα-ωΆ-Ώά-ώ])/gi, '$1')
+        .replace(/ΜΑΓΝΗΤΙΚ[ΗΉ]\s*/gi, '')
+        .replace(/ΑΞΟΝΙΚ[ΗΉ]\s*/gi, '')
+        .replace(/ΑΓΓΕΙΟΓΡΑΦ[ΙΊ]Α\s*/gi, '')
+        .replace(/ΤΟΜΟΓΡΑΦ[ΙΊ]Α\s*/gi, '')
+        .replace(/^[\s\-–—/:.,]+/, '')
+        .replace(/[\s\-–—/:.,]+$/, '')
         .replace(/\s{2,}/g, ' ')
         .trim();
+    return cleaned || String(raw).trim();
 }
 
 // ── Notes cell builder ──
@@ -2605,6 +2843,73 @@ function extractConsonantSkeletonJS(word) {
     return norm.split('').filter(ch => !GREEK_VOWELS_SET.has(ch)).join('');
 }
 
+let _cachedNotesProfiles = null;
+let _cachedNotesProfilesSource = null;
+
+function _getNotesDiagnosticianProfiles() {
+    const hasDiags = typeof diagnosticians !== 'undefined' && Array.isArray(diagnosticians) && diagnosticians.length > 0;
+    const sourceKey = hasDiags ? diagnosticians : '__fallback__';
+    if (_cachedNotesProfiles && _cachedNotesProfilesSource === sourceKey) {
+        return _cachedNotesProfiles;
+    }
+
+    const profiles = [];
+    const fallbackSurnames = [
+        'ΠΑΠΟΥΤΣΗ', 'ΠΑΠΟΥΤΣΗΣ', 'ΝΑΤΣΙΚΑ', 'ΝΑΤΣΙΚΑΣ', 'ΜΠΕΡΕΤΗΣ', 'ΜΠΕΡΕΤΗ',
+        'ΣΙΓΑΛΑΣ', 'ΣΙΓΑΛΑ', 'ΚΟΥΛΟΓΙΩΡΓΑ', 'ΚΟΥΛΟΓΙΩΡΓΑΣ', 'ΜΑΥΡΟΜΜΑΤΗ', 'ΜΑΥΡΟΜΜΑΤΗΣ'
+    ];
+    const diagSources = hasDiags
+        ? diagnosticians
+        : fallbackSurnames.map((name, idx) => ({ id: idx + 1, name }));
+
+    diagSources.forEach(d => {
+        if (d.active !== false && d.name) {
+            const normName = normalizeGreek(d.name).trim();
+            const parts = normName.split(/\s+/).filter(Boolean);
+            if (parts.length === 0) return;
+
+            const surname = parts[0];
+            const exactKeys = new Set();
+            exactKeys.add(surname);
+
+            let stem = surname;
+            const suffixes = ['ΕΑΣ', 'ΟΣ', 'ΗΣ', 'ΑΣ', 'ΟΥ', 'ΩΝ'];
+            for (const suf of suffixes) {
+                if (surname.endsWith(suf) && surname.length > suf.length + 2) {
+                    stem = surname.slice(0, -suf.length);
+                    ['', 'Α', 'Η', 'Ο', 'ΟΥ', 'Ε', 'ΕΣ', 'ΟΙ', 'ΩΝ'].forEach(end => exactKeys.add(stem + end));
+                    break;
+                }
+            }
+            if (surname.endsWith('Α') && surname.length > 3) {
+                stem = surname.slice(0, -1);
+                exactKeys.add(stem);
+                exactKeys.add(stem + 'ΑΣ');
+                exactKeys.add(stem + 'ΕΣ');
+            } else if (surname.endsWith('Η') && surname.length > 3) {
+                stem = surname.slice(0, -1);
+                exactKeys.add(stem);
+                exactKeys.add(stem + 'ΗΣ');
+            }
+
+            const skeletons = new Set();
+            const sSkel = extractConsonantSkeletonJS(surname);
+            if (sSkel.length >= 3) {
+                skeletons.add(sSkel);
+                if (sSkel.endsWith('Σ') && sSkel.length > 3) skeletons.add(sSkel.slice(0, -1));
+            }
+            const stemSkel = extractConsonantSkeletonJS(stem);
+            if (stemSkel.length >= 3) skeletons.add(stemSkel);
+
+            profiles.push({ surname, stem, exactKeys, skeletons });
+        }
+    });
+
+    _cachedNotesProfiles = profiles;
+    _cachedNotesProfilesSource = sourceKey;
+    return profiles;
+}
+
 function buildNotesCell(notes, exam = null) {
     if (!notes || EMPTY_NOTES_RE.test(notes)) {
         return '<span style="color:var(--text-tertiary)">—</span>';
@@ -2647,62 +2952,7 @@ function buildNotesCell(notes, exam = null) {
         }
 
         if (!isRed) {
-            // Build comprehensive diagnostician search profiles
-            const profiles = [];
-            const fallbackSurnames = [
-                'ΠΑΠΟΥΤΣΗ', 'ΠΑΠΟΥΤΣΗΣ', 'ΝΑΤΣΙΚΑ', 'ΝΑΤΣΙΚΑΣ', 'ΜΠΕΡΕΤΗΣ', 'ΜΠΕΡΕΤΗ',
-                'ΣΙΓΑΛΑΣ', 'ΣΙΓΑΛΑ', 'ΚΟΥΛΟΓΙΩΡΓΑ', 'ΚΟΥΛΟΓΙΩΡΓΑΣ', 'ΜΑΥΡΟΜΜΑΤΗ', 'ΜΑΥΡΟΜΜΑΤΗΣ'
-            ];
-
-            const diagSources = (typeof diagnosticians !== 'undefined' && Array.isArray(diagnosticians) && diagnosticians.length > 0)
-                ? diagnosticians
-                : fallbackSurnames.map((name, idx) => ({ id: idx + 1, name }));
-
-            diagSources.forEach(d => {
-                if (d.active !== false && d.name) {
-                    const normName = normalizeGreek(d.name).trim();
-                    const parts = normName.split(/\s+/).filter(Boolean);
-                    if (parts.length === 0) return;
-
-                    const surname = parts[0];
-                    const firstName = parts[1] || '';
-
-                    const exactKeys = new Set();
-                    exactKeys.add(surname);
-                    if (firstName && firstName.length >= 3) exactKeys.add(firstName);
-
-                    let stem = surname;
-                    const suffixes = ['ΟΣ', 'ΗΣ', 'ΑΣ', 'ΟΥ', 'ΕΑΣ', 'ΩΝ'];
-                    for (const suf of suffixes) {
-                        if (surname.endsWith(suf) && surname.length > suf.length + 2) {
-                            stem = surname.slice(0, -suf.length);
-                            ['', 'Α', 'Η', 'Ο', 'ΟΥ', 'Ε', 'ΕΣ', 'ΟΙ', 'ΩΝ'].forEach(end => exactKeys.add(stem + end));
-                            break;
-                        }
-                    }
-                    if (surname.endsWith('Α') && surname.length > 3) {
-                        stem = surname.slice(0, -1);
-                        exactKeys.add(stem);
-                        exactKeys.add(stem + 'ΑΣ');
-                        exactKeys.add(stem + 'ΕΣ');
-                    } else if (surname.endsWith('Η') && surname.length > 3) {
-                        stem = surname.slice(0, -1);
-                        exactKeys.add(stem);
-                        exactKeys.add(stem + 'ΗΣ');
-                    }
-
-                    const skeletons = new Set();
-                    const sSkel = extractConsonantSkeletonJS(surname);
-                    if (sSkel.length >= 3) {
-                        skeletons.add(sSkel);
-                        if (sSkel.endsWith('Σ') && sSkel.length > 3) skeletons.add(sSkel.slice(0, -1));
-                    }
-                    const stemSkel = extractConsonantSkeletonJS(stem);
-                    if (stemSkel.length >= 3) skeletons.add(stemSkel);
-
-                    profiles.push({ surname, stem, exactKeys, skeletons });
-                }
-            });
+            const profiles = _getNotesDiagnosticianProfiles();
 
             // Match all tokens against profiles
             for (const tok of allTokens) {
@@ -2726,7 +2976,7 @@ function buildNotesCell(notes, exam = null) {
                     }
                     // Typo distance <= 1
                     if (prof.surname.length >= 4 && Math.abs(tok.length - prof.surname.length) <= 1) {
-                        if (levenshteinDistance(tok, prof.surname) <= 1 || levenshteinDistance(tok, prof.stem) <= 1) {
+                        if (levenshteinDistance(tok, prof.surname) <= 1 || (prof.stem.length >= 4 && Math.abs(tok.length - prof.stem.length) <= 1 && levenshteinDistance(tok, prof.stem) <= 1)) {
                             isRed = true;
                             break;
                         }
@@ -2758,8 +3008,8 @@ function buildOldVisitCell(exam) {
         return '<span style="color:var(--text-tertiary)">—</span>';
     }
     const lines = [
-        exam.oldorder ? `Ημ/νία: ${formatDateDMY(exam.oldorder)}` : null,
-        (exam.olddiagnostis && exam.olddiagnostis !== '-') ? `Διαγνώστης: ${exam.olddiagnostis}` : null,
+        exam.oldorder ? `Ημ/νία: ${escapeHtmlFull(formatDateDMY(exam.oldorder))}` : null,
+        (exam.olddiagnostis && exam.olddiagnostis !== '-') ? `Διαγνώστης: ${escapeHtmlFull(exam.olddiagnostis)}` : null,
     ].filter(Boolean).join('<br>');
     return `<div class="comment-btn-wrap">
         <button class="comment-btn" style="background:rgba(59,130,246,0.12);color:var(--accent-info);border:1px solid rgba(59,130,246,0.3);">🕐 Ιστορικό</button>
@@ -2788,12 +3038,12 @@ function buildLabDropdown(exams) {
 
     if (labs.size === 0) return;
 
-    labDropdown.innerHTML = [...labs.entries()].sort((a, b) => a[0].localeCompare(b[0], 'el')).map(([name]) => {
-        const id = `lab-${name.replace(/\s+/g, '-').toLowerCase()}`;
+    labDropdown.innerHTML = [...labs.entries()].sort((a, b) => a[0].localeCompare(b[0], 'el')).map(([name], idx) => {
+        const id = `lab-opt-${idx}`;
         const isChecked = checkedLabs.has(name) ? 'checked' : '';
-        return `<label class="lab-option">
+        return `<label class="lab-option" for="${id}">
             <input type="checkbox" id="${id}" value="${escapeHtmlFull(name)}" ${isChecked} onchange="applyFilters()">
-            <label for="${id}">${escapeHtmlFull(name)}</label>
+            <span>${escapeHtmlFull(name)}</span>
         </label>`;
     }).join('');
 }
@@ -2850,10 +3100,21 @@ function formatTime(isoStr) {
 }
 
 function escapeHtml(str) {
-    return String(str).replace(/'/g, "\\'").replace(/"/g, '&quot;');
+    return escapeHtmlFull(str);
+}
+
+function escapeJsStr(str) {
+    if (str === null || str === undefined) return '';
+    return String(str)
+        .replace(/\\/g, '\\\\')
+        .replace(/'/g, "\\'")
+        .replace(/"/g, '&quot;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
 }
 
 function escapeHtmlFull(str) {
+    if (str === null || str === undefined) return '';
     return String(str)
         .replace(/&/g, '&amp;')
         .replace(/</g, '&lt;')
@@ -3206,8 +3467,11 @@ function clearUnifiedSelection() {
     clearAssignedSelection();
 }
 
+let _isBulkSubmitting = false;
+
 async function bulkAssignToProposed() {
-    if (selectedExams.size === 0) return;
+    if (selectedExams.size === 0 || _isBulkSubmitting) return;
+    _isBulkSubmitting = true;
 
     const examIds = Array.from(selectedExams);
     const items = examIds.map(eid => {
@@ -3227,12 +3491,18 @@ async function bulkAssignToProposed() {
         });
         showToast(`${results.length} εξετάσεις ανατέθηκαν επιτυχώς.`, 'success');
         clearSelection();
+        slisEligibilityCache.clear();
+        slisFabEligibilityCacheKey = null;
         await loadDiagnosticians();
-        loadPendingExams();
-        loadAssignedExams();
+        await Promise.all([loadPendingExams(false), loadAssignedExams(false)]);
+        buildLabDropdown(pendingExams);
+        updateTabCounts();
+        applyFilters();
+        updateBulkActionsUI();
     } catch (err) {
         showToast(`Σφάλμα: ${err.message}`, 'error');
     } finally {
+        _isBulkSubmitting = false;
         hideBackgroundWork();
     }
 }
@@ -3323,6 +3593,7 @@ function getDiagnosticianCountForDate(d, dateStr = null) {
 let currentBulkSelection = "";
 let bulkEligibilityCache = null;
 let isBulkEligibilityLoading = false;
+let bulkEligReqSeq = 0;
 
 async function fetchBulkEligibility() {
     const selectedList = currentTab === 'pending'
@@ -3341,6 +3612,7 @@ async function fetchBulkEligibility() {
 
     if (examIds.length === 0) return;
 
+    const reqId = ++bulkEligReqSeq;
     isBulkEligibilityLoading = true;
     const menu = document.getElementById('fab-dropdown-menu');
     if (menu && menu.style.display === 'block') {
@@ -3349,7 +3621,7 @@ async function fetchBulkEligibility() {
 
     try {
         const res = await apiCall('/assignments/bulk-eligible-diagnosticians', 'POST', { exam_ids: examIds });
-        if (currentBulkSelection === selectionKey) {
+        if (reqId === bulkEligReqSeq && currentBulkSelection === selectionKey && res && res.diagnosticians) {
             bulkEligibilityCache = new Map();
             res.diagnosticians.forEach(d => {
                 bulkEligibilityCache.set(d.diagnostician_id, {
@@ -3361,10 +3633,12 @@ async function fetchBulkEligibility() {
     } catch (err) {
         console.error("Failed to fetch bulk eligibility", err);
     } finally {
-        isBulkEligibilityLoading = false;
-        const menu = document.getElementById('fab-dropdown-menu');
-        if (menu && menu.style.display === 'block') {
-            populateFabDropdown();
+        if (reqId === bulkEligReqSeq) {
+            isBulkEligibilityLoading = false;
+            const menu = document.getElementById('fab-dropdown-menu');
+            if (menu && menu.style.display === 'block') {
+                populateFabDropdown();
+            }
         }
     }
 }
@@ -3500,10 +3774,10 @@ function populateFabDropdown() {
             style = 'padding: 8px; cursor: pointer; border-radius: 4px; background: rgba(59, 130, 246, 0.08); color: var(--accent-primary, #3B82F6); border-bottom: 1px solid rgba(59, 130, 246, 0.2); font-weight: 500;';
         }
 
-        const reasonHtml = d.rejectReason ? `<span style="display: block; font-size: 10px; opacity: 0.8; margin-top: 2px;">${d.rejectReason}</span>` : '';
+        const reasonHtml = d.rejectReason ? `<span style="display: block; font-size: 10px; opacity: 0.8; margin-top: 2px;">${escapeHtmlFull(d.rejectReason)}</span>` : '';
 
         return `
-            <div class="${itemClass}" onclick="bulkAssignToSpecific(${d.id}, '${escapeHtml(d.name)}')" style="${style}">
+            <div class="${itemClass}" data-diag-name="${escapeHtmlFull(d.name)}" onclick="bulkAssignToSpecific(${d.id}, this.dataset.diagName)" style="${style}">
                 ${escapeHtmlFull(d.name)} <span style="opacity: ${isError ? '0.9' : '0.5'}; font-size: 11px; margin-left: 4px;">(${count}/${quotaStr})</span>
                 ${reasonHtml}
             </div>
@@ -3511,13 +3785,14 @@ function populateFabDropdown() {
     }).join('');
 }
 
-function filterFabDiagnosticians() {
+const filterFabDiagnosticians = debounce(() => {
     populateFabDropdown();
-}
+}, 120);
 
 async function bulkAssignToSpecific(diagId, diagName) {
     const activeSet = currentTab === 'pending' ? selectedExams : selectedAssignedExams;
-    if (activeSet.size === 0) return;
+    if (activeSet.size === 0 || _isBulkSubmitting) return;
+    _isBulkSubmitting = true;
 
     const examIds = Array.from(activeSet);
     closeFabDropdown();
@@ -3531,12 +3806,18 @@ async function bulkAssignToSpecific(diagId, diagName) {
         });
         showToast(`${results.length} εξετάσεις ανατέθηκαν επιτυχώς σε ${diagName}.`, 'success');
         clearUnifiedSelection();
+        slisEligibilityCache.clear();
+        slisFabEligibilityCacheKey = null;
         await loadDiagnosticians();
-        loadPendingExams();
-        loadAssignedExams();
+        await Promise.all([loadPendingExams(false), loadAssignedExams(false)]);
+        buildLabDropdown(pendingExams);
+        updateTabCounts();
+        applyFilters();
+        updateBulkActionsUI();
     } catch (err) {
         showToast(`Σφάλμα: ${err.message}`, 'error');
     } finally {
+        _isBulkSubmitting = false;
         hideBackgroundWork();
     }
 }
@@ -3545,7 +3826,10 @@ async function bulkAssignToSpecific(diagId, diagName) {
 function changePendingPage(dir) {
     currentPendingPage += dir;
     if (currentPendingPage < 0) currentPendingPage = 0;
+    lastPendingClickedIndex = -1;
+    clearFocusedRow();
     applyFilters();
+    updateBulkActionsUI();
     window.scrollTo({ top: 0, behavior: 'smooth' });
     document.querySelectorAll('.exams-table-container, .main-content').forEach(el => el.scrollTo({ top: 0, behavior: 'smooth' }));
 }
@@ -3553,7 +3837,10 @@ function changePendingPage(dir) {
 function changeAssignedPage(dir) {
     currentAssignedPage += dir;
     if (currentAssignedPage < 0) currentAssignedPage = 0;
+    lastAssignedClickedIndex = -1;
+    clearFocusedRow();
     applyFilters();
+    updateBulkActionsUI();
     window.scrollTo({ top: 0, behavior: 'smooth' });
     document.querySelectorAll('.exams-table-container, .main-content').forEach(el => el.scrollTo({ top: 0, behavior: 'smooth' }));
 }
@@ -3563,14 +3850,15 @@ function updatePendingPagination(total) {
     const prevBtn = document.getElementById('btn-pending-prev');
     const nextBtn = document.getElementById('btn-pending-next');
 
+    const totalPages = _pendingPagesMeta.totalPages || 0;
     if (info) {
         if (total === 0) {
             info.textContent = 'Σελίδα 0 (0 από 0)';
         } else {
             const pageNum = currentPendingPage + 1;
-            const start = currentPendingPage * examsPageSize + 1;
-            const end = Math.min((currentPendingPage + 1) * examsPageSize, total);
-            info.textContent = `Σελίδα ${pageNum} (${start}-${end} από ${total})`;
+            const start = _pendingPagesMeta.startNum || 1;
+            const end = _pendingPagesMeta.endNum || Math.min((currentPendingPage + 1) * examsPageSize, total);
+            info.textContent = `Σελίδα ${pageNum}/${Math.max(1, totalPages)} (${start}-${end} από ${total})`;
         }
     }
 
@@ -3579,7 +3867,7 @@ function updatePendingPagination(total) {
         prevBtn.disabled = currentPendingPage === 0;
     }
     if (nextBtn) {
-        const hasNext = (currentPendingPage + 1) * examsPageSize < total;
+        const hasNext = totalPages > 0 ? (currentPendingPage + 1 < totalPages) : ((currentPendingPage + 1) * examsPageSize < total);
         nextBtn.style.display = hasNext ? 'inline-block' : 'none';
         nextBtn.disabled = !hasNext;
     }
@@ -3590,14 +3878,15 @@ function updateAssignedPagination(total) {
     const prevBtn = document.getElementById('btn-assigned-prev');
     const nextBtn = document.getElementById('btn-assigned-next');
 
+    const totalPages = _assignedPagesMeta.totalPages || 0;
     if (info) {
         if (total === 0) {
             info.textContent = 'Σελίδα 0 (0 από 0)';
         } else {
             const pageNum = currentAssignedPage + 1;
-            const start = currentAssignedPage * examsPageSize + 1;
-            const end = Math.min((currentAssignedPage + 1) * examsPageSize, total);
-            info.textContent = `Σελίδα ${pageNum} (${start}-${end} από ${total})`;
+            const start = _assignedPagesMeta.startNum || 1;
+            const end = _assignedPagesMeta.endNum || Math.min((currentAssignedPage + 1) * examsPageSize, total);
+            info.textContent = `Σελίδα ${pageNum}/${Math.max(1, totalPages)} (${start}-${end} από ${total})`;
         }
     }
 
@@ -3606,7 +3895,7 @@ function updateAssignedPagination(total) {
         prevBtn.disabled = currentAssignedPage === 0;
     }
     if (nextBtn) {
-        const hasNext = (currentAssignedPage + 1) * examsPageSize < total;
+        const hasNext = totalPages > 0 ? (currentAssignedPage + 1 < totalPages) : ((currentAssignedPage + 1) * examsPageSize < total);
         nextBtn.style.display = hasNext ? 'inline-block' : 'none';
         nextBtn.disabled = !hasNext;
     }
@@ -3631,12 +3920,22 @@ async function handleRefreshClick() {
     }
 
     try {
+        slisEligibilityCache.clear();
+        slisFabEligibilityCacheKey = null;
+        slisFabEligibilityMap = new Map();
+        currentBulkSelection = '';
+        bulkEligibilityCache = null;
+
         await apiCall('/slis/pull', 'POST');
         await loadDiagnosticians();
         await Promise.all([
-            loadPendingExams(),
-            loadAssignedExams()
+            loadPendingExams(false),
+            loadAssignedExams(false)
         ]);
+        buildLabDropdown(pendingExams);
+        updateTabCounts();
+        applyFilters();
+        updateBulkActionsUI();
         if (currentTab === 'dashboard') {
             await loadDashboard();
         }
@@ -3665,22 +3964,33 @@ function closeSqlModal() {
     document.body.style.overflow = '';
 }
 
-function copySqlToClipboard() {
+async function copySqlToClipboard() {
     const content = document.getElementById('sql-script-content')?.textContent;
-    if (content) {
-        navigator.clipboard.writeText(content);
-        showToast('📋 Το SQL script αντιγράφηκε στο πρόχειρο!', 'success');
+    if (!content) return;
+    try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            await navigator.clipboard.writeText(content);
+            showToast('📋 Το SQL script αντιγράφηκε στο πρόχειρο!', 'success');
+        } else {
+            throw new Error('Clipboard API unavailable');
+        }
+    } catch {
+        showToast('⚠️ Αδυναμία αυτόματης αντιγραφής — επιλέξτε και αντιγράψτε χειροκίνητα.', 'warning');
     }
 }
 
+const _inFlightSlisPushIds = new Set();
+
 /**
- * Update a SINGLE exam on Slis using its exammoreid (Dry-run mode: shows SQL script preview).
+ * Update a SINGLE exam on Slis using its exammoreid.
  */
 async function updateExamOnSlis(examId, exammoreid) {
     if (!exammoreid) {
         showToast('Δεν βρέθηκε exammoreid για αυτή την εξέταση', 'error');
         return;
     }
+    if (_inFlightSlisPushIds.has(exammoreid)) return;
+    _inFlightSlisPushIds.add(exammoreid);
     try {
         const result = await apiCall('/slis/push-selected', 'POST', {
             exammoreid_list: [exammoreid]
@@ -3702,6 +4012,8 @@ async function updateExamOnSlis(examId, exammoreid) {
         }
     } catch (err) {
         showToast(`Σφάλμα: ${err.message}`, 'error');
+    } finally {
+        _inFlightSlisPushIds.delete(exammoreid);
     }
 }
 
@@ -3836,6 +4148,7 @@ async function updateSelectedToSlis() {
  */
 async function unassignExam(examId) {
     if (!examId) return;
+    if (!confirm('Να αφαιρεθεί η τοπική ανάθεση αυτής της εξέτασης; (Δεν επηρεάζει το Slis)')) return;
     try {
         const res = await apiCall('/assignments/unassign', 'POST', { exam_id: examId });
         if (res && res.success) {
@@ -3859,6 +4172,7 @@ async function bulkUnassignSelected() {
         return;
     }
     const examIds = Array.from(selectedAssignedExams);
+    if (!confirm(`Να αφαιρεθούν ${examIds.length} τοπικές αναθέσεις; (Δεν επηρεάζει το Slis)`)) return;
     try {
         const res = await apiCall('/assignments/bulk-unassign', 'POST', { exam_ids: examIds });
         if (res && res.success) {
@@ -3880,7 +4194,7 @@ function confirmUpdateAllToSlis() {
     }
     const textEl = document.getElementById('confirm-update-all-text');
     if (textEl) {
-        textEl.textContent = `Με αυτή την ενέργεια θα ενημερωθούν και οι ${assignedExams.length} εξετάσεις στο Slis. Επιβεβαιωθείτε ότι είναι σωστές οι αναθέσεις πρωτού προβείτε στην ενημέρωση του Slis.`;
+        textEl.textContent = `Με αυτή την ενέργεια θα ενημερωθούν και οι ${assignedExams.length} εξετάσεις στο Slis. Βεβαιωθείτε ότι είναι σωστές οι αναθέσεις προτού προβείτε στην ενημέρωση του Slis.`;
     }
     const modal = document.getElementById('confirm-update-all-modal');
     if (modal) modal.style.display = 'flex';
@@ -4105,6 +4419,8 @@ function refreshDashboardCurrentDate() {
     loadDashboard(currentDashboardDate || getDateByOffset(0));
 }
 
+let dashboardReqSeq = 0;
+
 async function loadDashboard(targetDate = null) {
     updateDashboardDateLabels();
     if (!targetDate) {
@@ -4115,11 +4431,13 @@ async function loadDashboard(targetDate = null) {
     const grid = document.getElementById('dashboard-grid');
     if (!grid) return;
 
+    const reqId = ++dashboardReqSeq;
     grid.innerHTML = '<div class="dashboard-empty-state">Φόρτωση δεδομένων...</div>';
     try {
-        const data = await apiCall(`/dashboard?date=${targetDate}`, 'GET');
+        const data = await apiCall(`/dashboard?date=${encodeURIComponent(targetDate)}`, 'GET');
+        if (reqId !== dashboardReqSeq) return;
         if (!data || data.length === 0) {
-            grid.innerHTML = `<div class="dashboard-empty-state">Δεν υπάρχουν καταγεγραμμένες αναθέσεις για ${formatDateDMY(targetDate)}.</div>`;
+            grid.innerHTML = `<div class="dashboard-empty-state">Δεν υπάρχουν καταγεγραμμένες αναθέσεις για ${escapeHtmlFull(formatDateDMY(targetDate))}.</div>`;
             return;
         }
 
@@ -4191,21 +4509,7 @@ async function loadDashboard(targetDate = null) {
                     if (/CT|ΑΞΟΝ/i.test(name)) modTag = 'CT';
                     else if (/MRA|ΑΓΓΕΙΟ/i.test(name)) modTag = 'MRA';
 
-                    let cleaned = name
-                        .replace(/\(MRI\)/gi, '')
-                        .replace(/\(CT\)/gi, '')
-                        .replace(/\(MRA\)/gi, '')
-                        .replace(/ΜΑΓΝΗΤΙΚΗ\s*/gi, '')
-                        .replace(/ΑΞΟΝΙΚΗ\s*/gi, '')
-                        .replace(/ΑΓΓΕΙΟΓΡΑΦΙΑ\s*/gi, '')
-                        .replace(/ΤΟΜΟΓΡΑΦΙΑ\s*/gi, '')
-                        .replace(/\s{2,}/g, ' ')
-                        .trim();
-
-                    if (cleaned.toUpperCase().startsWith(modTag)) {
-                        cleaned = cleaned.substring(modTag.length).trim();
-                    }
-
+                    const cleaned = cleanExamName(name);
                     let safeCleaned = escapeHtml(cleaned || name);
                     const catClass = modTag.toLowerCase();
                     examsHtml += `<div style="font-size: 11.5px; margin-bottom: 5px; display:flex; justify-content:space-between; align-items:center;">
@@ -4366,22 +4670,7 @@ function sortAndRenderSlisSearchResults() {
             }
         });
 
-        const hasSlisFilters = Boolean(
-            (document.getElementById('slis-search-extracode')?.value || '').trim() ||
-            (document.getElementById('slis-search-patient')?.value || '').trim() ||
-            (document.getElementById('slis-search-doctor')?.value || '').trim() ||
-            (document.getElementById('slis-search-diagnostis')?.value || '').trim() ||
-            (slisSearchDateRangePicker && slisSearchDateRangePicker.selectedDates && slisSearchDateRangePicker.selectedDates.length > 0)
-        );
-
         sorted.sort((a, b) => {
-            // 0. Priority: Emergency (stat 2) -> Stat (stat 1) -> Pammakaristos -> Normal ONLY with no filtering
-            if (!hasSlisFilters) {
-                const prioA = getExamPriority(a);
-                const prioB = getExamPriority(b);
-                if (prioB !== prioA) return prioB - prioA;
-            }
-
             const extA = String(a.extracode || a.exammoreid || '');
             const extB = String(b.extracode || b.exammoreid || '');
 
@@ -4404,13 +4693,6 @@ function sortAndRenderSlisSearchResults() {
             return Number(a.exammoreid || 0) - Number(b.exammoreid || 0);
         });
     }
-
-    // Always keep Emergency, Stat, and Pammakaristos at top in search results as well
-    sorted.sort((a, b) => {
-        const prioA = getExamPriority(a);
-        const prioB = getExamPriority(b);
-        return prioB - prioA;
-    });
 
     renderSlisSearchResults(sorted);
 }
@@ -4478,12 +4760,14 @@ function clearSlisSearchSelection() {
 }
 
 function initSlisSearchDatePicker() {
-    slisSearchDateRangePicker = flatpickr("#slis-search-date-range", {
-        mode: "range",
-        dateFormat: "d/m/Y",
-        locale: "gr",
-        firstDayOfWeek: 1,
-    });
+    if (typeof flatpickr === 'function') {
+        slisSearchDateRangePicker = flatpickr("#slis-search-date-range", {
+            mode: "range",
+            dateFormat: "d/m/Y",
+            locale: "gr",
+            firstDayOfWeek: 1,
+        });
+    }
 }
 
 function clearSlisSearchForm() {
@@ -4502,7 +4786,7 @@ function clearSlisSearchForm() {
     if (tbody) {
         tbody.innerHTML = `
             <tr>
-                <td colspan="9" style="text-align: center; color: #ffffff; font-weight: 500; padding: 24px;">
+                <td colspan="10" style="text-align: center; color: var(--text-secondary); font-weight: 500; padding: 24px;">
                     Συμπληρώστε τα πεδία αναζήτησης και πατήστε "Αναζήτηση".
                 </td>
             </tr>
@@ -4518,7 +4802,9 @@ function clearSlisSearchForm() {
     updateSlisSearchBulkUI();
 }
 
-async function performSlisSearch() {
+let slisSearchReqSeq = 0;
+
+async function performSlisSearch(preserveSelection = false) {
     const extracode = document.getElementById('slis-search-extracode')?.value.trim() || '';
     const patientQuery = document.getElementById('slis-search-patient')?.value.trim() || '';
     const doctorQuery = document.getElementById('slis-search-doctor')?.value.trim() || '';
@@ -4539,6 +4825,7 @@ async function performSlisSearch() {
         }
     }
 
+    const reqId = ++slisSearchReqSeq;
     const btn = document.getElementById('btn-do-slis-search');
     const originalHTML = btn ? btn.innerHTML : '';
     if (btn) {
@@ -4555,13 +4842,28 @@ async function performSlisSearch() {
             doctor_query: doctorQuery || null,
             diagnostician_query: diagnosticianQuery || null,
         });
+        if (reqId !== slisSearchReqSeq) return;
 
         rawSlisSearchResults = results || [];
+        if (!preserveSelection) {
+            selectedSlisSearchExams.clear();
+            slisSelectedDiagMap = {};
+        } else {
+            const validEids = new Set(rawSlisSearchResults.map(r => Number(r.exammoreid)));
+            for (const eid of Array.from(selectedSlisSearchExams)) {
+                if (!validEids.has(eid)) selectedSlisSearchExams.delete(eid);
+            }
+            for (const key of Object.keys(slisSelectedDiagMap)) {
+                if (!validEids.has(Number(key))) delete slisSelectedDiagMap[key];
+            }
+        }
         sortAndRenderSlisSearchResults();
     } catch (err) {
-        showToast(`Σφάλμα αναζήτησης Slis: ${err.message}`, 'error');
+        if (reqId === slisSearchReqSeq) {
+            showToast(`Σφάλμα αναζήτησης Slis: ${err.message}`, 'error');
+        }
     } finally {
-        if (btn) {
+        if (reqId === slisSearchReqSeq && btn) {
             btn.innerHTML = originalHTML;
             btn.disabled = false;
         }
@@ -4583,16 +4885,18 @@ function toggleSlisSearchFabDropdown(event) {
 let slisFabEligibilityCacheKey = null;
 let slisFabEligibilityMap = new Map();
 let slisFabEligibilityLoading = false;
+let slisFabEligReqSeq = 0;
 
 async function fetchSlisFabEligibility(selectedExamIds, cacheKey) {
     if (!selectedExamIds || selectedExamIds.length === 0) return;
+    const reqId = ++slisFabEligReqSeq;
     slisFabEligibilityLoading = true;
     slisFabEligibilityCacheKey = cacheKey;
     populateSlisSearchFabDiagnosticians();
 
     try {
         const res = await apiCall('/assignments/bulk-eligible-diagnosticians', 'POST', { exam_ids: selectedExamIds });
-        if (res && res.diagnosticians) {
+        if (reqId === slisFabEligReqSeq && res && res.diagnosticians) {
             const map = new Map();
             res.diagnosticians.forEach(item => {
                 map.set(item.diagnostician_id, {
@@ -4605,14 +4909,16 @@ async function fetchSlisFabEligibility(selectedExamIds, cacheKey) {
     } catch (err) {
         console.error("Failed to fetch SLIS FAB eligibility", err);
     } finally {
-        slisFabEligibilityLoading = false;
-        populateSlisSearchFabDiagnosticians();
+        if (reqId === slisFabEligReqSeq) {
+            slisFabEligibilityLoading = false;
+            populateSlisSearchFabDiagnosticians();
+        }
     }
 }
 
-function filterSlisSearchFabDiagnosticians() {
+const filterSlisSearchFabDiagnosticians = debounce(() => {
     populateSlisSearchFabDiagnosticians();
-}
+}, 120);
 
 function populateSlisSearchFabDiagnosticians() {
     const list = document.getElementById('slis-search-fab-diag-list');
@@ -4726,7 +5032,7 @@ function populateSlisSearchFabDiagnosticians() {
         }
 
         return `
-            <div class="fab-diag-item" onclick="bulkSetSlisSearchDiagnostician(${d.id}, '${escapeHtml(d.name)}')" style="${style}">
+            <div class="fab-diag-item" data-diag-name="${escapeHtmlFull(d.name)}" onclick="bulkSetSlisSearchDiagnostician(${d.id}, this.dataset.diagName)" style="${style}">
                 <div style="display: flex; justify-content: space-between; align-items: center; gap: 8px;">
                     <span style="font-weight: 600;">${escapeHtmlFull(d.name)}</span>
                     <span style="font-size: 11px; opacity: ${isError ? '0.9' : '0.6'};">(${count}/${quotaStr})</span>
@@ -4828,7 +5134,7 @@ function renderSlisSearchResults(results) {
 
         return `
             <tr class="${urgentClass}">
-                <td class="frozen-col-1" style="width: 44px; text-align: center;">
+                <td class="frozen-col-1" style="width: 48px; min-width: 48px; text-align: center;">
                     <input type="checkbox" class="slis-search-row-checkbox" value="${eid}" onchange="toggleSelectSlisSearchExam(${eid})" ${isSelectedRow ? 'checked' : ''}>
                 </td>
                 <td class="frozen-col-2 extracode-cell" style="font-weight: 600;">#${escapeHtmlFull(exam.extracode || eid)}</td>
@@ -4938,8 +5244,16 @@ function initSlisSearchStickyScrollbar() {
         isSyncingSlisScroll = false;
     });
 
-    window.addEventListener('resize', updateSlisSearchStickyScrollbar);
-    window.addEventListener('scroll', updateSlisSearchStickyScrollbar);
+    let stickyScrollbarRaf = null;
+    const scheduleStickyUpdate = () => {
+        if (stickyScrollbarRaf) return;
+        stickyScrollbarRaf = requestAnimationFrame(() => {
+            stickyScrollbarRaf = null;
+            updateSlisSearchStickyScrollbar();
+        });
+    };
+    window.addEventListener('resize', scheduleStickyUpdate, { passive: true });
+    window.addEventListener('scroll', scheduleStickyUpdate, { passive: true });
 }
 
 function toggleSlisReassignDropdown(event, exammoreid) {
@@ -4990,11 +5304,18 @@ function toggleSlisReassignDropdown(event, exammoreid) {
 }
 
 // Close slis dropdowns on outer window scroll, but NOT when scrolling inside the dropdown itself
+let _slisScrollRaf = null;
 window.addEventListener('scroll', (e) => {
     if (e.target && e.target.closest && e.target.closest('.slis-dropdown-menu')) {
         return;
     }
-    document.querySelectorAll('.slis-dropdown-menu').forEach(m => m.style.display = 'none');
+    if (_slisScrollRaf) return;
+    _slisScrollRaf = requestAnimationFrame(() => {
+        _slisScrollRaf = null;
+        document.querySelectorAll('.slis-dropdown-menu').forEach(m => {
+            if (m.style.display !== 'none') m.style.display = 'none';
+        });
+    });
 }, true);
 
 let slisEligibilityCache = new Map();
@@ -5136,7 +5457,7 @@ function populateSlisReassignDropdown(exammoreid) {
         }
 
         return `
-            <div class="slis-diag-item" onclick="selectSlisReassignDiag(${exammoreid}, ${d.id}, '${escapeHtml(d.name)}')" style="${style}">
+            <div class="slis-diag-item" data-diag-name="${escapeHtmlFull(d.name)}" onclick="selectSlisReassignDiag(${exammoreid}, ${d.id}, this.dataset.diagName)" style="${style}">
                 <div style="display: flex; justify-content: space-between; align-items: center; gap: 8px;">
                     <span style="font-weight: 600;">${escapeHtmlFull(d.name)}</span>
                     <span style="font-size: 11px; opacity: ${isError ? '0.9' : '0.6'};">(${count}/${quotaStr})</span>
@@ -5162,7 +5483,10 @@ function selectSlisReassignDiag(exammoreid, diagId, diagName) {
         previewName.textContent = diagName;
         previewDiv.style.display = 'inline-block';
     }
+    updateSlisSearchBulkUI();
 }
+
+const _inFlightSlisReassignIds = new Set();
 
 async function triggerSlisReassign(exammoreid) {
     const sel = slisSelectedDiagMap[exammoreid];
@@ -5170,6 +5494,8 @@ async function triggerSlisReassign(exammoreid) {
         showToast('Παρακαλώ επιλέξτε έναν διαγνώστη', 'warning');
         return;
     }
+    if (_inFlightSlisReassignIds.has(exammoreid)) return;
+    _inFlightSlisReassignIds.add(exammoreid);
 
     const diagId = sel.id;
     const diagName = sel.name;
@@ -5185,22 +5511,32 @@ async function triggerSlisReassign(exammoreid) {
             showToast(`✅ Η εξέταση #${exammoreid} ενημερώθηκε επιτυχώς στο Slis σε ${diagName}!`, 'success');
             delete slisSelectedDiagMap[exammoreid];
             selectedSlisSearchExams.delete(Number(exammoreid));
-            await performSlisSearch(); // Refresh search results while retaining choices on other rows
+            slisEligibilityCache.clear();
+            slisFabEligibilityCacheKey = null;
+            slisFabEligibilityMap = new Map();
+            await performSlisSearch(true);
             await loadDiagnosticians();
             await Promise.all([
-                loadPendingExams(),
-                loadAssignedExams(),
-                loadDashboard()
+                loadPendingExams(false),
+                loadAssignedExams(false),
             ]);
+            buildLabDropdown(pendingExams);
+            updateTabCounts();
+            if (currentTab === 'dashboard') loadDashboard();
         } else {
             showToast(`❌ Αποτυχία ενημέρωσης Slis: ${result?.error || 'Άγνωστο σφάλμα'}`, 'error');
         }
     } catch (err) {
         showToast(`Σφάλμα: ${err.message}`, 'error');
+    } finally {
+        _inFlightSlisReassignIds.delete(exammoreid);
     }
 }
 
+let _isBatchSlisReassigning = false;
+
 async function triggerBatchSlisReassign() {
+    if (_isBatchSlisReassigning) return;
     const pendingDiagEids = Object.keys(slisSelectedDiagMap).map(Number);
     const combinedEids = Array.from(new Set([...selectedSlisSearchExams, ...pendingDiagEids]));
 
@@ -5215,12 +5551,15 @@ async function triggerBatchSlisReassign() {
         return;
     }
 
-    const btn = document.getElementById('btn-update-selected-slis-search');
-    const originalHTML = btn ? btn.innerHTML : '';
-    if (btn) {
-        btn.innerHTML = '<span class="loading-spinner"></span> Ενημέρωση...';
-        btn.disabled = true;
-    }
+    _isBatchSlisReassigning = true;
+    const btnHeader = document.getElementById('btn-update-selected-slis-search');
+    const btnFab = document.getElementById('btn-fab-update-selected-slis-search');
+    const buttons = [btnHeader, btnFab].filter(Boolean);
+    const originals = buttons.map(b => b.innerHTML);
+    buttons.forEach(b => {
+        b.innerHTML = '<span class="loading-spinner"></span> Ενημέρωση...';
+        b.disabled = true;
+    });
 
     let successCount = 0;
     let failCount = 0;
@@ -5253,18 +5592,24 @@ async function triggerBatchSlisReassign() {
             showToast(`⚠️ Αποτυχία ενημέρωσης για ${failCount} εξετάσεις`, 'error');
         }
 
-        await performSlisSearch();
+        slisEligibilityCache.clear();
+        slisFabEligibilityCacheKey = null;
+        slisFabEligibilityMap = new Map();
+        await performSlisSearch(true);
         await loadDiagnosticians();
         await Promise.all([
-            loadPendingExams(),
-            loadAssignedExams(),
-            loadDashboard()
+            loadPendingExams(false),
+            loadAssignedExams(false),
         ]);
+        buildLabDropdown(pendingExams);
+        updateTabCounts();
+        if (currentTab === 'dashboard') loadDashboard();
     } finally {
-        if (btn) {
-            btn.innerHTML = originalHTML;
-            btn.disabled = false;
-        }
+        _isBatchSlisReassigning = false;
+        buttons.forEach((b, idx) => {
+            b.innerHTML = originals[idx];
+            b.disabled = false;
+        });
         updateSlisSearchBulkUI();
     }
 }
@@ -5279,9 +5624,14 @@ function getVisibleRows() {
     if (currentTab === 'pending') {
         return Array.from(document.querySelectorAll('#tbody-pending tr[id^="row-"]'));
     } else if (currentTab === 'assigned') {
-        return Array.from(document.querySelectorAll('#tbody-assigned tr[id^="row-assigned-"]'));
+        return Array.from(document.querySelectorAll('#tbody-assigned tr[id^="assigned-row-"]'));
     }
     return [];
+}
+
+function clearFocusedRow() {
+    focusedRowIndex = -1;
+    document.querySelectorAll('.row-keyboard-focused').forEach(r => r.classList.remove('row-keyboard-focused'));
 }
 
 function setFocusedRow(index) {
@@ -5310,7 +5660,7 @@ function getFocusedExam() {
     if (focusedRowIndex >= 0 && focusedRowIndex < rows.length) {
         const row = rows[focusedRowIndex];
         const cb = row.querySelector('input[type="checkbox"]');
-        const examId = cb ? cb.value : (row.id.replace('row-assigned-', '').replace('row-', ''));
+        const examId = cb ? cb.value : (row.id.replace('assigned-row-', '').replace('row-', ''));
         if (currentTab === 'pending') {
             return pendingExams.find(e => String(e.exam_id) === String(examId)) || { exam_id: examId };
         } else if (currentTab === 'assigned') {
@@ -5354,7 +5704,7 @@ function handlePendingCheckboxClick(event, examId) {
 // Shift + Click Range Selection for Assigned Exams
 function handleAssignedCheckboxClick(event, examId) {
     const rows = getVisibleRows();
-    const currentIndex = rows.findIndex(r => r.id === `row-assigned-${examId}`);
+    const currentIndex = rows.findIndex(r => r.id === `assigned-row-${examId}`);
 
     if (event.shiftKey && lastAssignedClickedIndex !== -1 && currentIndex !== -1) {
         const start = Math.min(lastAssignedClickedIndex, currentIndex);
@@ -5382,15 +5732,44 @@ function handleAssignedCheckboxClick(event, examId) {
     setFocusedRow(currentIndex);
 }
 
+function isAnyModalOpen() {
+    const modalIds = [
+        'suggestion-modal',
+        'login-modal',
+        'confirm-update-all-modal',
+        'sql-script-modal',
+        'slis-warning-modal',
+    ];
+    return modalIds.some(id => {
+        const el = document.getElementById(id);
+        return el && el.style.display === 'flex';
+    });
+}
+
 // Global Keyboard Shortcuts Listener
 window.addEventListener('keydown', function (e) {
     const activeEl = document.activeElement;
-    const isInput = activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA' || activeEl.isContentEditable);
+    const isInteractive = activeEl && (
+        activeEl.tagName === 'INPUT' ||
+        activeEl.tagName === 'TEXTAREA' ||
+        activeEl.tagName === 'SELECT' ||
+        activeEl.tagName === 'BUTTON' ||
+        activeEl.tagName === 'A' ||
+        activeEl.getAttribute('role') === 'button' ||
+        activeEl.isContentEditable
+    );
+    const isTextInput = activeEl && (
+        activeEl.tagName === 'INPUT' ||
+        activeEl.tagName === 'TEXTAREA' ||
+        activeEl.tagName === 'SELECT' ||
+        activeEl.isContentEditable
+    );
     const suggestionModal = document.getElementById('suggestion-modal');
-    const isModalOpen = suggestionModal && suggestionModal.style.display === 'flex';
+    const isSuggestionOpen = suggestionModal && suggestionModal.style.display === 'flex';
+    const anyModalOpen = isAnyModalOpen();
 
-    // 1. Enter key inside suggestion modal -> Confirm
-    if (e.key === 'Enter' && isModalOpen && !isInput) {
+    // 1. Enter key inside suggestion modal -> Confirm / Override (unless focused on text input or button)
+    if (e.key === 'Enter' && isSuggestionOpen && !isInteractive) {
         e.preventDefault();
         const btnConfirm = document.getElementById('btn-confirm');
         const btnOverride = document.getElementById('btn-override');
@@ -5402,21 +5781,36 @@ window.addEventListener('keydown', function (e) {
         return;
     }
 
-    // 2. Escape key -> Dismiss modals / dropdowns / selection
+    // 2. Escape key -> Dismiss open modals / dropdowns / selection / focus
     if (e.key === 'Escape') {
-        if (isModalOpen) {
-            closeModal();
+        if (anyModalOpen) {
+            if (isSuggestionOpen) closeModal();
+            if (document.getElementById('login-modal')?.style.display === 'flex') closeLoginModal();
+            if (document.getElementById('confirm-update-all-modal')?.style.display === 'flex') closeConfirmUpdateAllModal();
+            if (document.getElementById('sql-script-modal')?.style.display === 'flex') closeSqlModal();
+            if (document.getElementById('slis-warning-modal')?.style.display === 'flex') closeSlisWarningModal();
             return;
         }
 
         if (selectedExams.size > 0 || selectedAssignedExams.size > 0) {
             clearUnifiedSelection();
+            clearFocusedRow();
             return;
         }
+        clearFocusedRow();
+        return;
     }
 
-    // If typing in input or search box, don't trigger table shortcuts (except Escape)
-    if (isInput) return;
+    // Never fire background table shortcuts while any modal is open or user is typing/interacting
+    if (anyModalOpen || isTextInput) {
+        if (e.key === 'Enter' && activeEl && activeEl.id === 'search-input') {
+            applyFilters();
+        }
+        return;
+    }
+
+    // Only run table shortcuts on Pending / Assigned tabs
+    if (currentTab !== 'pending' && currentTab !== 'assigned') return;
 
     // 3. Ctrl + A / Cmd + A -> Select all visible exams
     if ((e.ctrlKey || e.metaKey) && (e.key === 'a' || e.key === 'A')) {
@@ -5435,7 +5829,7 @@ window.addEventListener('keydown', function (e) {
             checkboxes.forEach(cb => {
                 cb.checked = true;
                 selectedAssignedExams.add(cb.value);
-                const row = document.getElementById(`row-assigned-${cb.value}`);
+                const row = document.getElementById(`assigned-row-${cb.value}`);
                 if (row) row.classList.add('selected-row');
             });
             updateBulkActionsUI();
@@ -5454,7 +5848,7 @@ window.addEventListener('keydown', function (e) {
         return;
     }
 
-    // "?" shortcut disabled per user request
+    if (isInteractive) return;
 
     // 6. Arrow Navigation (↓ / ↑)
     if (e.key === 'ArrowDown') {
@@ -5477,9 +5871,9 @@ window.addEventListener('keydown', function (e) {
 
     // 7. Space -> Toggle selection of focused row
     if (e.key === ' ' || e.code === 'Space') {
-        e.preventDefault();
         const exam = getFocusedExam();
         if (exam && exam.exam_id) {
+            e.preventDefault();
             if (currentTab === 'pending') {
                 const cb = document.querySelector(`.row-checkbox[value="${exam.exam_id}"]`);
                 if (cb) {
@@ -5499,9 +5893,9 @@ window.addEventListener('keydown', function (e) {
 
     // 8. "O" or "o" -> Open Override / Proposal dialog for focused row
     if (e.key === 'o' || e.key === 'O' || e.key === 'ο' || e.key === 'Ο') {
-        e.preventDefault();
         const exam = getFocusedExam();
         if (exam && exam.exam_id) {
+            e.preventDefault();
             viewSuggestion(exam.exam_id);
         }
         return;
@@ -5509,16 +5903,18 @@ window.addEventListener('keydown', function (e) {
 
     // 9. Enter -> Confirm proposal for focused row (or bulk confirm if multiple selected)
     if (e.key === 'Enter') {
-        e.preventDefault();
         if (selectedExams.size > 0 && currentTab === 'pending') {
+            e.preventDefault();
             bulkAssignToProposed();
             return;
         }
 
         const exam = getFocusedExam();
         if (exam && exam.exam_id && currentTab === 'pending') {
+            e.preventDefault();
             if (exam.suggestion && exam.suggestion.suggested_diagnostician_id) {
-                // Confirm proposal directly
+                if (_isSubmittingAssignment) return;
+                _isSubmittingAssignment = true;
                 (async () => {
                     try {
                         showBackgroundWork('⏳ Ανάθεση εξέτασης...');
@@ -5527,14 +5923,21 @@ window.addEventListener('keydown', function (e) {
                             diagnostician_id: exam.suggestion.suggested_diagnostician_id
                         });
                         showToast(`✅ Η εξέταση ανατέθηκε στον/στην ${exam.suggestion.suggested_diagnostician_name}`, 'success');
+                        slisEligibilityCache.clear();
+                        slisFabEligibilityCacheKey = null;
                         await loadDiagnosticians();
                         await Promise.all([
-                            loadPendingExams(),
-                            loadAssignedExams()
+                            loadPendingExams(false),
+                            loadAssignedExams(false)
                         ]);
+                        buildLabDropdown(pendingExams);
+                        updateTabCounts();
+                        applyFilters();
+                        updateBulkActionsUI();
                     } catch (err) {
                         showToast(`Σφάλμα: ${err.message}`, 'error');
                     } finally {
+                        _isSubmittingAssignment = false;
                         hideBackgroundWork();
                     }
                 })();

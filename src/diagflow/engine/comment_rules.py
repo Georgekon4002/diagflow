@@ -22,14 +22,24 @@ NEGATION_WORDS = {
 
 # Clause separator tokens that reset negation scope
 CLAUSE_SEPARATORS = {
-    "-", ",", ";", ".", "!", "?", "/", "\\", "ΑΛΛΑ", "ΜΟΝΟ", "MONO", "ΑΝΤΙ", "ANTI",
-    "ΚΑΙ", "ΠΑΡΑΚΑΛΩ", "PLEASE", "ONLY", "BUT", "ANTI", "->", "=>"
+    "-", ";", ".", "!", "?", "\\", "ΑΛΛΑ", "ΜΟΝΟ", "MONO", "ΑΝΤΙ", "ANTI",
+    "ΠΑΡΑΚΑΛΩ", "PLEASE", "ONLY", "BUT", "->", "=>"
+}
+
+# Tokens that continue a negation list immediately after an excluded name
+# e.g. "ΟΧΙ ΝΑΤΣΙΚΑ ΚΑΙ ΜΠΕΡΕΤΗ", "ΟΧΙ ΝΑΤΣΙΚΑ, ΜΠΕΡΕΤΗ", "ΟΧΙ ΝΑΤΣΙΚΑ / ΜΠΕΡΕΤΗ"
+NEGATION_CONTINUATORS = {
+    ",", "ΚΑΙ", "Η", "ΟΥΤΕ", "ΜΗΤΕ", "/", "&", "AND", "OR", "NOR"
 }
 
 # Stopwords between negation and diagnostician name (e.g. "ΟΧΙ ΣΕ ΝΑΤΣΙΚΑ", "ΟΧΙ ΣΤΟΝ ΜΠΕΡΕΤΗ")
 NEGATION_LINK_WORDS = {
     "ΣΕ", "ΣΤΟΝ", "ΣΤΗΝ", "ΣΤΟ", "ΣΤΟΥΣ", "ΣΤΙΣ", "ΓΙΑ", "ΑΠΟ", "ΤΟΝ", "ΤΗΝ", "ΤΟ", "TO", "FOR", "IN"
 }
+
+# Memoized diagnostician pattern cache
+_PATTERN_CACHE: dict[tuple, list[dict]] = {}
+_PATTERN_CACHE_MAX = 64
 
 
 def normalize_greek_text(text: str) -> str:
@@ -98,14 +108,21 @@ def levenshtein_distance(s1: str, s2: str) -> int:
 
 def build_diagnostician_patterns(diagnosticians: list[dict]) -> list[dict]:
     """
-    Builds a comprehensive search profile for each active diagnostician.
+    Builds (and memoizes) a comprehensive search profile for each active diagnostician.
     Includes:
-    - Full surname and first name
+    - Full surname (avoids bare common first-name false positives)
     - Declension variations (nominative, accusative, genitive)
     - Consonant skeletons (e.g. 'ΝΤΣΚ' for 'ΝΑΤΣΙΚΑ')
     - Stem patterns (e.g. 'ΝΑΤΣΙΚ', 'ΜΠΕΡΕΤ')
-    - Latin transliterations
     """
+    cache_key = tuple(
+        (d.get("id"), str(d.get("name", "")).strip(), bool(d.get("active", True)))
+        for d in diagnosticians
+    )
+    cached = _PATTERN_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+
     profiles = []
 
     for d in diagnosticians:
@@ -122,16 +139,13 @@ def build_diagnostician_patterns(diagnosticians: list[dict]) -> list[dict]:
             continue
 
         surname = parts[0]
-        first_name = parts[1] if len(parts) > 1 else ""
 
         exact_keys = set()
         exact_keys.add(surname)
-        if first_name and len(first_name) >= 3:
-            exact_keys.add(first_name)
 
-        # Standard Greek surname declension endings
+        # Standard Greek surname declension endings (longer suffixes like ΕΑΣ before ΑΣ)
         stem = surname
-        for suffix in ("ΟΣ", "ΗΣ", "ΑΣ", "ΟΥ", "ΕΑΣ", "ΗΣ", "ΩΝ"):
+        for suffix in ("ΕΑΣ", "ΟΣ", "ΗΣ", "ΑΣ", "ΟΥ", "ΩΝ"):
             if surname.endswith(suffix) and len(surname) > len(suffix) + 2:
                 stem = surname[:-len(suffix)]
                 exact_keys.add(stem)
@@ -176,6 +190,9 @@ def build_diagnostician_patterns(diagnosticians: list[dict]) -> list[dict]:
             "skeletons": skeletons,
         })
 
+    if len(_PATTERN_CACHE) >= _PATTERN_CACHE_MAX:
+        _PATTERN_CACHE.clear()
+    _PATTERN_CACHE[cache_key] = profiles
     return profiles
 
 
@@ -210,6 +227,7 @@ def parse_comment_diagnosticians(
 
     # Track negation state linearly through tokens
     in_negation = False
+    just_excluded = False
     negation_distance = 0
 
     for i, tok in enumerate(raw_tokens):
@@ -218,14 +236,27 @@ def parse_comment_diagnosticians(
         # Check for negation starter token (e.g. "ΟΧΙ", "ΜΗΝ", "NOT")
         if tok in NEGATION_WORDS or tr_tok in NEGATION_WORDS:
             in_negation = True
+            just_excluded = False
+            negation_distance = 0
+            continue
+
+        # Check for negation list continuator immediately following an excluded diagnostician
+        # e.g. "ΟΧΙ ΝΑΤΣΙΚΑ ΚΑΙ ΜΠΕΡΕΤΗ" or "ΟΧΙ ΝΑΤΣΙΚΑ, ΜΠΕΡΕΤΗ"
+        if just_excluded and (tok in NEGATION_CONTINUATORS or tr_tok in NEGATION_CONTINUATORS):
+            in_negation = True
+            just_excluded = False
             negation_distance = 0
             continue
 
         # Check for clause separators resetting negation
         if tok in CLAUSE_SEPARATORS or tr_tok in CLAUSE_SEPARATORS:
             in_negation = False
+            just_excluded = False
             negation_distance = 0
             continue
+
+        # Reset just_excluded on any non-continuator token
+        just_excluded = False
 
         if in_negation:
             negation_distance += 1
@@ -248,7 +279,7 @@ def parse_comment_diagnosticians(
                 if not check_tok or len(check_tok) < 3:
                     continue
 
-                # 1. Exact surname / name / declension match
+                # 1. Exact surname / declension match
                 if check_tok in exact_keys:
                     matched_profile = prof
                     matched_tok_str = check_tok
@@ -268,15 +299,14 @@ def parse_comment_diagnosticians(
 
                 # 4. Levenshtein edit distance for typos (e.g. 'ΝΑΤΣΚΑ' vs 'ΝΑΤΣΙΚΑ')
                 if len(surname) >= 5 and len(check_tok) >= 5:
-                    if abs(len(check_tok) - len(surname)) <= 1:
-                        if levenshtein_distance(check_tok, surname) <= 1:
-                            matched_profile = prof
-                            matched_tok_str = check_tok
-                            break
-                        if levenshtein_distance(check_tok, stem) <= 1:
-                            matched_profile = prof
-                            matched_tok_str = check_tok
-                            break
+                    if abs(len(check_tok) - len(surname)) <= 1 and levenshtein_distance(check_tok, surname) <= 1:
+                        matched_profile = prof
+                        matched_tok_str = check_tok
+                        break
+                    if len(stem) >= 5 and abs(len(check_tok) - len(stem)) <= 1 and levenshtein_distance(check_tok, stem) <= 1:
+                        matched_profile = prof
+                        matched_tok_str = check_tok
+                        break
 
             if matched_profile:
                 break
@@ -285,8 +315,9 @@ def parse_comment_diagnosticians(
             diag_id = matched_profile["id"]
             if in_negation:
                 excluded_ids.add(diag_id)
-                # Negation has been consumed by this diagnostician match
+                # Negation consumed, but allow continuation via ',' / 'ΚΑΙ' / '/'
                 in_negation = False
+                just_excluded = True
             else:
                 if matched_diagnostician is None and diag_id not in excluded_ids:
                     matched_diagnostician = {

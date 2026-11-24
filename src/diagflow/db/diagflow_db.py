@@ -6,8 +6,10 @@ Universal CRUD for DiagFlow configuration and operational tables:
 - In production mode (USE_MOCK_SLIS_DB=false): Connects via SQLAlchemy to the central
   MSSQL database using the 'df_' table prefix.
 """
+import json
 import sqlite3
 import sys
+import threading
 from datetime import date, datetime
 from contextlib import contextmanager
 from pathlib import Path
@@ -26,9 +28,37 @@ else:
 
 _DB_PATH = _PROJECT_ROOT / "db" / "diagflow.db"
 _last_db_mtime = 0.0
+_initialized_sqlite_paths: set[str] = set()
+_schema_lock = threading.Lock()
 _mssql_schema_checked = False
 _table_columns_cache: dict[tuple[str, str], list[str]] = {}
 _dismissed_table_checked_modes: set[str] = set()
+_admin_table_checked_keys: set[str] = set()
+
+_MSSQL_IN_CHUNK_SIZE = 500
+_ALLOWED_WEIGHT_KEYS: frozenset[str] = frozenset({
+    "pts_partnership",
+    "pts_history",
+    "pts_skills_pref",
+    "pts_skills_neut",
+    "pts_skills_none",
+    "pts_lab_pref",
+    "pts_lab_neut",
+    "pts_lab_other",
+    "pts_capacity",
+})
+_AUDIT_LOG_COLUMNS: tuple[str, ...] = (
+    "suggested_diagnostician_id",
+    "was_overridden",
+    "override_reason",
+    "rules_fired",
+    "score_breakdown",
+)
+
+
+def _chunked(seq: list, size: int = _MSSQL_IN_CHUNK_SIZE):
+    for i in range(0, len(seq), size):
+        yield seq[i : i + size]
 
 _WEEKDAY_QUOTA_KEYS: tuple[str, ...] = (
     "quota_monday",
@@ -67,7 +97,7 @@ def _normalize_date_str(val) -> str | None:
                 return date(int(parts[2]), int(parts[1]), int(parts[0])).isoformat()
             except ValueError:
                 pass
-    return s[:10] if len(s) >= 10 else None
+    return None
 
 
 def _parse_date_safe(val) -> date:
@@ -255,21 +285,35 @@ def _get_table_columns(con, table_name: str) -> list[str]:
 
 
 def _ensure_mssql_schema(con: DBAdapter) -> None:
-    """Idempotently ensure newer columns (e.g. visitdate) exist on central MSSQL tables."""
+    """
+    Safely check central MSSQL schema once per process.
+    Never aborts a caller's transaction if the DB user lacks DDL privileges
+    (central DDL migrations are executed by the DBA via db/migrate_final_release.sql).
+    """
     global _mssql_schema_checked
     if _mssql_schema_checked:
         return
-    _mssql_schema_checked = True
-    try:
-        for base_name in ("local_assignments", "assignment_log"):
-            tbl = _tbl(base_name)
-            con.execute(
-                f"IF EXISTS (SELECT * FROM sys.tables WHERE name = '{tbl}') "
-                f"AND NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID('{tbl}') AND name = 'visitdate') "
-                f"ALTER TABLE {tbl} ADD visitdate NVARCHAR(50) NULL"
-            )
-    except Exception as exc:
-        logger.warning("ensure_mssql_schema_warning", error=str(exc))
+    with _schema_lock:
+        if _mssql_schema_checked:
+            return
+        try:
+            for base_name in ("local_assignments", "assignment_log"):
+                tbl = _tbl(base_name)
+                cols = _get_table_columns(con, tbl)
+                if cols and "visitdate" not in cols:
+                    try:
+                        con.execute(
+                            f"IF EXISTS (SELECT * FROM sys.tables WHERE name = '{tbl}') "
+                            f"AND NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID('{tbl}') AND name = 'visitdate') "
+                            f"ALTER TABLE {tbl} ADD visitdate NVARCHAR(50) NULL"
+                        )
+                        _table_columns_cache.pop(("mssql", tbl), None)
+                    except Exception as ddl_exc:
+                        # Permission denied or DDL restricted — safe because queries check _get_table_columns()
+                        logger.warning("ensure_mssql_schema_ddl_skipped", table=tbl, error=str(ddl_exc))
+            _mssql_schema_checked = True
+        except Exception as exc:
+            logger.warning("ensure_mssql_schema_warning", error=str(exc))
 
 
 def _ensure_schema(con: sqlite3.Connection) -> None:
@@ -281,7 +325,9 @@ def _ensure_schema(con: sqlite3.Connection) -> None:
             con.execute("ALTER TABLE local_assignments ADD COLUMN modality TEXT DEFAULT NULL")
         if cols and "visitdate" not in cols:
             con.execute("ALTER TABLE local_assignments ADD COLUMN visitdate TEXT DEFAULT NULL")
-        
+        if cols:
+            con.execute("CREATE INDEX IF NOT EXISTS idx_localassign_visitdate ON local_assignments(visitdate)")
+
         log_cols = _get_table_columns(con, "assignment_log")
         if log_cols and "extracode" not in log_cols:
             con.execute("ALTER TABLE assignment_log ADD COLUMN extracode TEXT DEFAULT NULL")
@@ -289,6 +335,18 @@ def _ensure_schema(con: sqlite3.Connection) -> None:
             con.execute("ALTER TABLE assignment_log ADD COLUMN modality TEXT DEFAULT NULL")
         if log_cols and "visitdate" not in log_cols:
             con.execute("ALTER TABLE assignment_log ADD COLUMN visitdate TEXT DEFAULT NULL")
+        if log_cols and "suggested_diagnostician_id" not in log_cols:
+            con.execute("ALTER TABLE assignment_log ADD COLUMN suggested_diagnostician_id INTEGER DEFAULT NULL")
+        if log_cols and "was_overridden" not in log_cols:
+            con.execute("ALTER TABLE assignment_log ADD COLUMN was_overridden INTEGER NOT NULL DEFAULT 0")
+        if log_cols and "override_reason" not in log_cols:
+            con.execute("ALTER TABLE assignment_log ADD COLUMN override_reason TEXT DEFAULT NULL")
+        if log_cols and "rules_fired" not in log_cols:
+            con.execute("ALTER TABLE assignment_log ADD COLUMN rules_fired TEXT DEFAULT NULL")
+        if log_cols and "score_breakdown" not in log_cols:
+            con.execute("ALTER TABLE assignment_log ADD COLUMN score_breakdown TEXT DEFAULT NULL")
+        if log_cols:
+            con.execute("CREATE INDEX IF NOT EXISTS idx_assignlog_visitdate ON assignment_log(visitdate)")
 
         con.execute(
             "CREATE TABLE IF NOT EXISTS exam_dictionary ("
@@ -320,16 +378,23 @@ def _conn() -> Generator[DBAdapter, None, None]:
         _DB_PATH.parent.mkdir(parents=True, exist_ok=True)
         raw_con = sqlite3.connect(_DB_PATH, timeout=10.0)
         raw_con.row_factory = sqlite3.Row
-        raw_con.execute("PRAGMA journal_mode = WAL")
         raw_con.execute("PRAGMA foreign_keys = ON")
-        raw_con.execute("PRAGMA busy_timeout = 5000")
-        
-        current_mtime = _DB_PATH.stat().st_mtime if _DB_PATH.exists() else 0.0
-        if current_mtime != _last_db_mtime:
-            _ensure_schema(raw_con)
-            _table_columns_cache.clear()
-            _dismissed_table_checked_modes.discard("sqlite")
-            _last_db_mtime = current_mtime
+        raw_con.execute("PRAGMA busy_timeout = 10000")
+
+        db_key = str(_DB_PATH.resolve())
+        if db_key not in _initialized_sqlite_paths:
+            with _schema_lock:
+                if db_key not in _initialized_sqlite_paths:
+                    try:
+                        raw_con.execute("PRAGMA journal_mode = WAL")
+                    except Exception:
+                        pass
+                    _ensure_schema(raw_con)
+                    _table_columns_cache.clear()
+                    _dismissed_table_checked_modes.discard("sqlite")
+                    _admin_table_checked_keys.discard(db_key)
+                    _initialized_sqlite_paths.add(db_key)
+                    _last_db_mtime = _DB_PATH.stat().st_mtime if _DB_PATH.exists() else 0.0
 
         adapter = DBAdapter("sqlite", raw_con)
         try:
@@ -345,8 +410,8 @@ def _conn() -> Generator[DBAdapter, None, None]:
         engine = get_config_engine()
         with engine.connect() as raw_conn:
             adapter = DBAdapter("mssql", raw_conn)
-            _ensure_mssql_schema(adapter)
             try:
+                _ensure_mssql_schema(adapter)
                 yield adapter
                 adapter.commit()
             except Exception:
@@ -413,7 +478,7 @@ def create_diagnostician(name: str, active: bool = True, can_ct: bool = True,
             f"SELECT id, name, active, can_ct, can_mri, quota_monday, quota_tuesday, quota_wednesday, quota_thursday, quota_friday, quota_saturday, quota_sunday, preferred_lab_id FROM {tbl} WHERE id = ?",
             (diag_id,),
         ).fetchone()
-    return _row_to_dict(row)
+    return _normalize_diagnostician_row(row)
 
 
 def upsert_diagnostician(diag_id: int, diag_name: str, active: bool = False) -> None:
@@ -425,6 +490,28 @@ def upsert_diagnostician(diag_id: int, diag_name: str, active: bool = False) -> 
                 f"INSERT INTO {tbl} (id, name, active) VALUES (?, ?, ?)",
                 (diag_id, str(diag_name).strip(), int(active))
             )
+
+
+def upsert_diagnosticians_batch(diags: list[tuple[int, str]], active: bool = False) -> int:
+    """Batch insert missing diagnosticians in a single DB transaction. Returns count of newly inserted rows."""
+    if not diags:
+        return 0
+    tbl = _tbl("diagnosticians")
+    deduped = {int(did): str(name).strip() for did, name in diags if name}
+    if not deduped:
+        return 0
+    inserted = 0
+    with _conn() as con:
+        existing_rows = con.execute(f"SELECT id FROM {tbl}").fetchall()
+        existing_ids = {int(r["id"]) for r in existing_rows}
+        for did, dname in deduped.items():
+            if did not in existing_ids:
+                con.execute(
+                    f"INSERT INTO {tbl} (id, name, active) VALUES (?, ?, ?)",
+                    (did, dname, int(active)),
+                )
+                inserted += 1
+    return inserted
 
 
 def update_diagnostician(diag_id: int, name: str, active: bool,
@@ -441,12 +528,27 @@ def update_diagnostician(diag_id: int, name: str, active: bool,
             f"SELECT id, name, active, can_ct, can_mri, quota_monday, quota_tuesday, quota_wednesday, quota_thursday, quota_friday, quota_saturday, quota_sunday, preferred_lab_id FROM {tbl} WHERE id = ?",
             (diag_id,),
         ).fetchone()
-    return _row_to_dict(row) if row else None
+    return _normalize_diagnostician_row(row) if row else None
 
 
 def delete_diagnostician(diag_id: int) -> bool:
+    """
+    Delete a diagnostician and clean up child references in tables that may lack
+    ON DELETE CASCADE in existing MSSQL deployments.
+    """
     tbl = _tbl("diagnosticians")
+    child_tables = (
+        _tbl("exam_routing_rules"),
+        _tbl("exclusive_lab_rules"),
+        _tbl("modality_quotas"),
+        _tbl("pamakristos_schedule"),
+    )
     with _conn() as con:
+        for child_tbl in child_tables:
+            try:
+                con.execute(f"DELETE FROM {child_tbl} WHERE diagnostician_id = ?", (diag_id,))
+            except Exception as exc:
+                logger.warning("delete_diagnostician_child_cleanup_warning", table=child_tbl, diag_id=diag_id, error=str(exc))
         cur = con.execute(f"DELETE FROM {tbl} WHERE id = ?", (diag_id,))
     return cur.rowcount > 0
 
@@ -697,26 +799,28 @@ def get_partnerships_by_doctor(issuing_doctor_id: str) -> list[dict]:
 
 
 def get_partnerships_for_doctors(doctor_ids: list[str]) -> dict[str, list[dict]]:
-    """Batch fetch active partnerships for multiple issuing doctor IDs."""
+    """Batch fetch active partnerships for multiple issuing doctor IDs (chunked for MSSQL)."""
     if not doctor_ids:
         return {}
     tbl = _tbl("partnerships")
     clean_ids = list({str(d).strip() for d in doctor_ids if str(d).strip()})
     if not clean_ids:
         return {}
-    placeholders = ", ".join(["?"] * len(clean_ids))
+    # Pre-populate every requested doctor ID so callers know it was queried (avoids N+1 fallbacks)
+    result: dict[str, list[dict]] = {cid: [] for cid in clean_ids}
     with _conn() as con:
-        rows = con.execute(
-            f"SELECT issuing_doctor_id, preferred_diagnostician_id, priority, exclusive, is_active "
-            f"FROM {tbl} "
-            f"WHERE issuing_doctor_id IN ({placeholders}) "
-            f"ORDER BY priority DESC",
-            tuple(clean_ids),
-        ).fetchall()
-    result: dict[str, list[dict]] = {}
-    for r in rows:
-        r_dict = _row_to_dict(r)
-        result.setdefault(str(r_dict["issuing_doctor_id"]).strip(), []).append(r_dict)
+        for chunk in _chunked(clean_ids):
+            placeholders = ", ".join(["?"] * len(chunk))
+            rows = con.execute(
+                f"SELECT issuing_doctor_id, preferred_diagnostician_id, priority, exclusive, is_active "
+                f"FROM {tbl} "
+                f"WHERE issuing_doctor_id IN ({placeholders}) "
+                f"ORDER BY priority DESC",
+                tuple(chunk),
+            ).fetchall()
+            for r in rows:
+                r_dict = _row_to_dict(r)
+                result.setdefault(str(r_dict["issuing_doctor_id"]).strip(), []).append(r_dict)
     return result
 
 
@@ -733,17 +837,24 @@ def get_all_availability() -> list[dict]:
             f"JOIN {tbl_d} d ON d.id = a.diagnostician_id "
             f"ORDER BY a.date DESC, d.name",
         ).fetchall()
-    return [_row_to_dict(r) for r in rows]
+    out = []
+    for r in rows:
+        d = _row_to_dict(r)
+        if "date" in d:
+            d["date"] = _normalize_date_str(d["date"]) or str(d["date"])
+        out.append(d)
+    return out
 
 
 def upsert_availability(diagnostician_id: int, date: str, status: str = "available",
                         is_pamakristos_oncall: bool = False, notes: str = "") -> dict:
     tbl_a = _tbl("availability")
     tbl_d = _tbl("diagnosticians")
+    norm_date = _normalize_date_str(date) or str(date).strip()
     with _conn() as con:
         existing = con.execute(
             f"SELECT id FROM {tbl_a} WHERE diagnostician_id = ? AND date = ?",
-            (diagnostician_id, date)
+            (diagnostician_id, norm_date)
         ).fetchone()
         if existing:
             con.execute(
@@ -753,7 +864,7 @@ def upsert_availability(diagnostician_id: int, date: str, status: str = "availab
         else:
             con.execute(
                 f"INSERT INTO {tbl_a} (diagnostician_id, date, status, is_pamakristos_oncall, notes) VALUES (?, ?, ?, ?, ?)",
-                (diagnostician_id, date, status, int(is_pamakristos_oncall), notes)
+                (diagnostician_id, norm_date, status, int(is_pamakristos_oncall), notes)
             )
         row = con.execute(
             f"SELECT a.id, a.diagnostician_id, d.name AS diagnostician_name, "
@@ -761,29 +872,105 @@ def upsert_availability(diagnostician_id: int, date: str, status: str = "availab
             f"FROM {tbl_a} a "
             f"JOIN {tbl_d} d ON d.id = a.diagnostician_id "
             f"WHERE a.diagnostician_id = ? AND a.date = ?",
-            (diagnostician_id, date),
+            (diagnostician_id, norm_date),
         ).fetchone()
-    return _row_to_dict(row)
+    res = _row_to_dict(row)
+    if "date" in res:
+        res["date"] = _normalize_date_str(res["date"]) or str(res["date"])
+    return res
+
+
+def set_pamakristos_oncall_for_date(date_str: str, diagnostician_id: int) -> dict:
+    """
+    Atomically set the Παμμακάριστος on-call diagnostician for a date in a single transaction:
+    - Clears any previous is_pamakristos_oncall=1 rows on that date (works across MSSQL DATE and SQLite TEXT).
+    - Preserves the target diagnostician's existing status and notes if a row already exists.
+    """
+    tbl_a = _tbl("availability")
+    tbl_d = _tbl("diagnosticians")
+    norm_date = _normalize_date_str(date_str)
+    if not norm_date:
+        raise ValueError(f"Invalid date: {date_str}")
+
+    with _conn() as con:
+        # 1. Clear all existing on-call flags on this date in SQL (avoids Python DATE vs str mismatch)
+        con.execute(
+            f"UPDATE {tbl_a} SET is_pamakristos_oncall = 0 WHERE date = ? AND is_pamakristos_oncall = 1",
+            (norm_date,),
+        )
+
+        # 2. Upsert the target diagnostician while preserving existing status & notes
+        existing = con.execute(
+            f"SELECT id, status, notes FROM {tbl_a} WHERE diagnostician_id = ? AND date = ?",
+            (diagnostician_id, norm_date),
+        ).fetchone()
+        if existing:
+            con.execute(
+                f"UPDATE {tbl_a} SET is_pamakristos_oncall = 1 WHERE id = ?",
+                (existing["id"],),
+            )
+        else:
+            con.execute(
+                f"INSERT INTO {tbl_a} (diagnostician_id, date, status, is_pamakristos_oncall, notes) VALUES (?, ?, 'available', 1, '')",
+                (diagnostician_id, norm_date),
+            )
+
+        row = con.execute(
+            f"SELECT a.id, a.diagnostician_id, d.name AS diagnostician_name, "
+            f"a.date, a.status, a.is_pamakristos_oncall, a.notes "
+            f"FROM {tbl_a} a "
+            f"JOIN {tbl_d} d ON d.id = a.diagnostician_id "
+            f"WHERE a.diagnostician_id = ? AND a.date = ?",
+            (diagnostician_id, norm_date),
+        ).fetchone()
+
+    res = _row_to_dict(row)
+    if "date" in res:
+        res["date"] = _normalize_date_str(res["date"]) or norm_date
+    return res
 
 
 def delete_availability(diagnostician_id: int, date: str) -> bool:
     tbl = _tbl("availability")
+    norm_date = _normalize_date_str(date) or str(date).strip()
     with _conn() as con:
         res = con.execute(
             f"DELETE FROM {tbl} WHERE diagnostician_id = ? AND date = ?",
-            (diagnostician_id, date),
+            (diagnostician_id, norm_date),
         )
         return res.rowcount > 0
 
 
 def get_absent_diagnostician_ids(date: str) -> set[int]:
     tbl = _tbl("availability")
+    norm_date = _normalize_date_str(date) or str(date).strip()
     with _conn() as con:
         rows = con.execute(
             f"SELECT diagnostician_id FROM {tbl} WHERE date = ? AND status = 'on_leave'",
-            (date,),
+            (norm_date,),
         ).fetchall()
     return {r["diagnostician_id"] for r in rows}
+
+
+def get_absent_diagnostician_ids_for_dates(dates: set[str] | list[str]) -> dict[str, set[int]]:
+    """Batch fetch absent diagnostician IDs for multiple dates in a single query."""
+    clean_dates = sorted({d for raw in dates if (d := _normalize_date_str(raw))})
+    result: dict[str, set[int]] = {d: set() for d in clean_dates}
+    if not clean_dates:
+        return result
+    tbl = _tbl("availability")
+    with _conn() as con:
+        for chunk in _chunked(clean_dates):
+            placeholders = ", ".join(["?"] * len(chunk))
+            rows = con.execute(
+                f"SELECT date, diagnostician_id FROM {tbl} WHERE date IN ({placeholders}) AND status = 'on_leave'",
+                tuple(chunk),
+            ).fetchall()
+            for r in rows:
+                d_str = _normalize_date_str(r["date"])
+                if d_str and d_str in result:
+                    result[d_str].add(int(r["diagnostician_id"]))
+    return result
 
 
 def get_exclusive_partnerships() -> dict[str, dict]:
@@ -834,7 +1021,6 @@ def get_pamakristos_weekly_schedule_db() -> list[dict]:
 
 
 def update_pamakristos_weekly_schedule_db(schedule_items: list[dict]):
-    init_pamakristos_schedule()
     tbl_ps = _tbl("pamakristos_schedule")
     with _conn() as con:
         con.execute(f"DELETE FROM {tbl_ps}")
@@ -849,22 +1035,27 @@ def update_pamakristos_weekly_schedule_db(schedule_items: list[dict]):
 
 
 def get_oncall_diagnostician(date_str: str) -> dict | None:
+    norm_date = _normalize_date_str(date_str) or str(date_str).strip()
     tbl_a = _tbl("availability")
     tbl_d = _tbl("diagnosticians")
     with _conn() as con:
         row = con.execute(
-            f"SELECT a.diagnostician_id, d.name AS diagnostician_name, a.date "
+            f"SELECT a.diagnostician_id, d.name AS diagnostician_name, a.date, a.status, d.active "
             f"FROM {tbl_a} a "
             f"JOIN {tbl_d} d ON d.id = a.diagnostician_id "
-            f"WHERE a.date = ? AND a.is_pamakristos_oncall = 1",
-            (date_str,),
+            f"WHERE a.date = ? AND a.is_pamakristos_oncall = 1 "
+            f"ORDER BY a.id DESC",
+            (norm_date,),
         ).fetchone()
     if row:
-        return _row_to_dict(row)
+        d = _row_to_dict(row)
+        d["date"] = _normalize_date_str(d.get("date")) or norm_date
+        d["source"] = "override"
+        return d
 
     try:
         from datetime import date as dt_date
-        dt = dt_date.fromisoformat(date_str)
+        dt = dt_date.fromisoformat(norm_date)
         weekday = dt.weekday()
         if weekday in (5, 6):
             return None
@@ -872,9 +1063,10 @@ def get_oncall_diagnostician(date_str: str) -> dict | None:
         match = next((item for item in weekly if item["weekday"] == weekday), None)
         if match:
             return {
-                "date": date_str,
+                "date": norm_date,
                 "diagnostician_id": match["diagnostician_id"],
                 "diagnostician_name": match["diagnostician_name"],
+                "source": "weekly_schedule",
             }
     except Exception:
         pass
@@ -886,6 +1078,8 @@ def get_pamakristos_manual_overrides(from_date: str | None = None) -> list[dict]
     if from_date is None:
         from datetime import date
         from_date = str(date.today())
+    else:
+        from_date = _normalize_date_str(from_date) or str(from_date).strip()
     tbl_a = _tbl("availability")
     tbl_d = _tbl("diagnosticians")
     with _conn() as con:
@@ -897,7 +1091,13 @@ def get_pamakristos_manual_overrides(from_date: str | None = None) -> list[dict]
             f"ORDER BY a.date ASC",
             (from_date,)
         ).fetchall()
-    return [_row_to_dict(r) for r in rows]
+    out = []
+    for r in rows:
+        d = _row_to_dict(r)
+        if "date" in d:
+            d["date"] = _normalize_date_str(d["date"]) or str(d["date"])
+        out.append(d)
+    return out
 
 
 def delete_pamakristos_manual_override(avail_id: int) -> bool:
@@ -923,9 +1123,60 @@ def _normalize_greek_str(s: str) -> str:
 
 
 def get_all_doctors(q: str = "", skip: int = 0, limit: int = 50) -> dict:
+    skip = max(0, int(skip or 0))
+    limit = max(0, int(limit)) if limit is not None else 50
     tbl_doc = _tbl("doctors")
     tbl_p = _tbl("partnerships")
     tbl_diag = _tbl("diagnosticians")
+
+    # Fast SQL-level pagination when no accent-insensitive search query is provided
+    if not q or not q.strip():
+        with _conn() as con:
+            count_row = con.execute(f"SELECT COUNT(*) AS cnt FROM {tbl_doc}").fetchone()
+            total = int(count_row["cnt"] if isinstance(count_row, dict) else count_row[0])
+            if limit == 0:
+                doc_rows = con.execute(f"SELECT id, name FROM {tbl_doc} ORDER BY name").fetchall()
+            elif not settings.use_mock_slis_db:
+                doc_rows = con.execute(
+                    f"SELECT id, name FROM {tbl_doc} ORDER BY name OFFSET ? ROWS FETCH NEXT ? ROWS ONLY",
+                    (skip, limit),
+                ).fetchall()
+            else:
+                doc_rows = con.execute(
+                    f"SELECT id, name FROM {tbl_doc} ORDER BY name LIMIT ? OFFSET ?",
+                    (limit, skip),
+                ).fetchall()
+
+            paged_ids = [r["id"] for r in doc_rows]
+            partners_by_doc: dict[str, list[str]] = {}
+            if paged_ids:
+                for chunk in _chunked(paged_ids):
+                    placeholders = ", ".join(["?"] * len(chunk))
+                    p_rows = con.execute(
+                        f"SELECT p.issuing_doctor_id, diag.name AS partner_name "
+                        f"FROM {tbl_p} p "
+                        f"JOIN {tbl_diag} diag ON p.preferred_diagnostician_id = diag.id "
+                        f"WHERE p.is_active = 1 AND p.issuing_doctor_id IN ({placeholders})",
+                        tuple(chunk),
+                    ).fetchall()
+                    for pr in p_rows:
+                        did = pr["issuing_doctor_id"]
+                        pname = pr["partner_name"]
+                        if pname:
+                            lst = partners_by_doc.setdefault(did, [])
+                            if pname not in lst:
+                                lst.append(pname)
+
+        items = [
+            {
+                "id": r["id"],
+                "name": r["name"],
+                "partner_name": ", ".join(partners_by_doc[r["id"]]) if r["id"] in partners_by_doc else None,
+            }
+            for r in doc_rows
+        ]
+        return {"items": items, "total": total}
+
     with _conn() as con:
         rows = con.execute(f"""
             SELECT doc.id, doc.name, diag.name AS partner_name
@@ -958,20 +1209,15 @@ def get_all_doctors(q: str = "", skip: int = 0, limit: int = 50) -> dict:
         for v in doc_map.values()
     ]
 
-    if q:
-        norm_tokens = [_normalize_greek_str(t) for t in q.split() if t]
-        filtered = []
-        for d in all_items:
-            haystack = _normalize_greek_str(f"{d.get('id', '')} {d.get('name', '')} {d.get('partner_name', '')}")
-            if all(token in haystack for token in norm_tokens):
-                filtered.append(d)
-        total = len(filtered)
-        paged = filtered[skip : skip + limit] if limit else filtered[skip:]
-        return {"items": paged, "total": total}
-    else:
-        total = len(all_items)
-        paged = all_items[skip : skip + limit] if limit else all_items[skip:]
-        return {"items": paged, "total": total}
+    norm_tokens = [_normalize_greek_str(t) for t in q.split() if t]
+    filtered = []
+    for d in all_items:
+        haystack = _normalize_greek_str(f"{d.get('id', '')} {d.get('name', '')} {d.get('partner_name', '')}")
+        if all(token in haystack for token in norm_tokens):
+            filtered.append(d)
+    total = len(filtered)
+    paged = filtered[skip : skip + limit] if limit > 0 else filtered[skip:]
+    return {"items": paged, "total": total}
 
 
 def upsert_doctor(doctor_id: str, name: str) -> dict:
@@ -986,6 +1232,57 @@ def upsert_doctor(doctor_id: str, name: str) -> dict:
             con.execute(f"INSERT INTO {tbl} (id, name) VALUES (?, ?)", (doctor_id, str(name).strip()))
         row = con.execute(f"SELECT id, name FROM {tbl} WHERE id = ?", (doctor_id,)).fetchone()
     return _row_to_dict(row)
+
+
+def upsert_doctors_batch(doctors: list[tuple[str, str]]) -> int:
+    """Batch upsert doctors in a single DB transaction. Returns count of inserted/updated rows."""
+    if not doctors:
+        return 0
+    tbl = _tbl("doctors")
+    deduped = {str(did).strip(): str(name).strip() for did, name in doctors if str(did).strip() and str(name).strip()}
+    if not deduped:
+        return 0
+    changed = 0
+    with _conn() as con:
+        existing_rows = con.execute(f"SELECT id, name FROM {tbl}").fetchall()
+        existing_map = {str(r["id"]).strip(): str(r["name"] or "").strip() for r in existing_rows}
+        for did, dname in deduped.items():
+            if did not in existing_map:
+                con.execute(f"INSERT INTO {tbl} (id, name) VALUES (?, ?)", (did, dname))
+                changed += 1
+            elif existing_map[did] != dname:
+                con.execute(f"UPDATE {tbl} SET name = ? WHERE id = ?", (dname, did))
+                changed += 1
+    return changed
+
+
+def upsert_exam_dictionary_batch(entries: list[tuple[str, str, str]]) -> int:
+    """Batch upsert exam_dictionary entries in a single transaction."""
+    if not entries:
+        return 0
+    tbl = _tbl("exam_dictionary")
+    deduped = {
+        str(code).strip(): (str(name).strip(), str(cat or "").strip())
+        for code, name, cat in entries
+        if str(code).strip() and str(name).strip()
+    }
+    if not deduped:
+        return 0
+    changed = 0
+    with _conn() as con:
+        existing_rows = con.execute(f"SELECT code, name, category FROM {tbl}").fetchall()
+        existing_map = {
+            str(r["code"]).strip(): (str(r["name"] or "").strip(), str(r["category"] or "").strip())
+            for r in existing_rows
+        }
+        for code, (name, cat) in deduped.items():
+            if code not in existing_map:
+                con.execute(f"INSERT INTO {tbl} (code, name, category) VALUES (?, ?, ?)", (code, name, cat))
+                changed += 1
+            elif existing_map[code] != (name, cat):
+                con.execute(f"UPDATE {tbl} SET name = ?, category = ? WHERE code = ?", (name, cat, code))
+                changed += 1
+    return changed
 
 
 def delete_doctor(doctor_id: str) -> bool:
@@ -1102,6 +1399,14 @@ def upsert_local_assignment(
     return _row_to_dict(row)
 
 
+def get_local_assignment(exammoreid: int) -> dict | None:
+    """Single-row PK lookup for a staged local assignment."""
+    tbl = _tbl("local_assignments")
+    with _conn() as con:
+        row = con.execute(f"SELECT * FROM {tbl} WHERE exammoreid = ?", (exammoreid,)).fetchone()
+    return _row_to_dict(row) if row else None
+
+
 def get_all_local_assignments() -> dict[int, dict]:
     tbl = _tbl("local_assignments")
     with _conn() as con:
@@ -1109,14 +1414,39 @@ def get_all_local_assignments() -> dict[int, dict]:
         return {r["exammoreid"]: _row_to_dict(r) for r in rows}
 
 
+def get_assignment_log_entry(exammoreid: int) -> dict | None:
+    """Single-row PK lookup for an existing assignment_log entry."""
+    tbl = _tbl("assignment_log")
+    with _conn() as con:
+        row = con.execute(f"SELECT * FROM {tbl} WHERE exammoreid = ?", (exammoreid,)).fetchone()
+    return _row_to_dict(row) if row else None
+
+
 def delete_local_assignment(exammoreid: int, record_dismissed: bool = True) -> bool:
     tbl = _tbl("local_assignments")
     with _conn() as con:
         cur = con.execute(f"DELETE FROM {tbl} WHERE exammoreid = ?", (exammoreid,))
         deleted = bool(cur.rowcount > 0)
-    if record_dismissed:
-        record_dismissed_auto_assignment(exammoreid)
+        if record_dismissed:
+            _ensure_dismissed_table_exists(con)
+            tbl_dis = _tbl("dismissed_auto_assignments")
+            con.execute(f"DELETE FROM {tbl_dis} WHERE exammoreid = ?", (exammoreid,))
+            con.execute(
+                f"INSERT INTO {tbl_dis} (exammoreid, dismissed_at) VALUES (?, ?)",
+                (exammoreid, datetime.now().isoformat()),
+            )
     return deleted
+
+
+def _serialize_json_field(val) -> str | None:
+    if val is None:
+        return None
+    if isinstance(val, str):
+        return val
+    try:
+        return json.dumps(val, ensure_ascii=False)
+    except Exception:
+        return str(val)
 
 
 def log_assignment(
@@ -1126,75 +1456,104 @@ def log_assignment(
     modality: str | None = None,
     extracode: str | None = None,
     visitdate: str | None = None,
+    suggested_diagnostician_id: int | None = None,
+    was_overridden: bool | None = None,
+    override_reason: str | None = None,
+    rules_fired: list | str | None = None,
+    score_breakdown: list | str | None = None,
 ) -> None:
     if not assigned_at:
         assigned_at = datetime.now().isoformat()
     visitdate_norm = _normalize_date_str(visitdate)
     tbl = _tbl("assignment_log")
     with _conn() as con:
-        cols = _get_table_columns(con, tbl)
+        cols = set(_get_table_columns(con, tbl))
         has_vdate = "visitdate" in cols
+        has_audit = all(c in cols for c in _AUDIT_LOG_COLUMNS)
+
         existing = con.execute(f"SELECT exammoreid FROM {tbl} WHERE exammoreid = ?", (exammoreid,)).fetchone()
+        base_cols = ["diagnostician_id", "assigned_at", "modality", "extracode"]
+        base_vals: list = [diagnostician_id, assigned_at, modality, extracode]
+        if has_vdate:
+            base_cols.append("visitdate")
+            base_vals.append(visitdate_norm)
+        if has_audit:
+            base_cols.extend(_AUDIT_LOG_COLUMNS)
+            base_vals.extend([
+                suggested_diagnostician_id,
+                int(bool(was_overridden)) if was_overridden is not None else 0,
+                override_reason,
+                _serialize_json_field(rules_fired),
+                _serialize_json_field(score_breakdown),
+            ])
+
         if existing:
-            if has_vdate:
-                con.execute(
-                    f"UPDATE {tbl} SET diagnostician_id = ?, assigned_at = ?, modality = ?, extracode = ?, visitdate = ? WHERE exammoreid = ?",
-                    (diagnostician_id, assigned_at, modality, extracode, visitdate_norm, exammoreid)
-                )
-            else:
-                con.execute(
-                    f"UPDATE {tbl} SET diagnostician_id = ?, assigned_at = ?, modality = ?, extracode = ? WHERE exammoreid = ?",
-                    (diagnostician_id, assigned_at, modality, extracode, exammoreid)
-                )
+            set_clause = ", ".join(f"{c} = ?" for c in base_cols)
+            con.execute(
+                f"UPDATE {tbl} SET {set_clause} WHERE exammoreid = ?",
+                tuple(base_vals + [exammoreid]),
+            )
         else:
-            if has_vdate:
-                con.execute(
-                    f"INSERT INTO {tbl} (exammoreid, diagnostician_id, assigned_at, modality, extracode, visitdate) VALUES (?, ?, ?, ?, ?, ?)",
-                    (exammoreid, diagnostician_id, assigned_at, modality, extracode, visitdate_norm)
-                )
-            else:
-                con.execute(
-                    f"INSERT INTO {tbl} (exammoreid, diagnostician_id, assigned_at, modality, extracode) VALUES (?, ?, ?, ?, ?)",
-                    (exammoreid, diagnostician_id, assigned_at, modality, extracode)
-                )
+            ins_cols = ["exammoreid"] + base_cols
+            placeholders = ", ".join(["?"] * len(ins_cols))
+            con.execute(
+                f"INSERT INTO {tbl} ({', '.join(ins_cols)}) VALUES ({placeholders})",
+                tuple([exammoreid] + base_vals),
+            )
 
 
 def mark_local_assignment_synced(exammoreid: int, synced_at: str | None = None) -> bool:
-    remove_dismissed_auto_assignment(exammoreid)
-    return delete_local_assignment(exammoreid, record_dismissed=False)
+    tbl_local = _tbl("local_assignments")
+    tbl_dis = _tbl("dismissed_auto_assignments")
+    with _conn() as con:
+        _ensure_dismissed_table_exists(con)
+        con.execute(f"DELETE FROM {tbl_dis} WHERE exammoreid = ?", (exammoreid,))
+        cur = con.execute(f"DELETE FROM {tbl_local} WHERE exammoreid = ?", (exammoreid,))
+    return bool(cur.rowcount > 0)
 
 
 def finalize_synced_assignments_batch(entries: list[dict]) -> None:
     """
     Finalize a batch of Slis-pushed assignments in a single DB connection/transaction:
-      1. Removes exammoreids from df_local_assignments and df_dismissed_auto_assignments
-      2. Upserts them into df_assignment_log with normalized visitdate.
+      1. Deduplicates entries by exammoreid (last wins) and chunks IN (...) for MSSQL safety.
+      2. Removes exammoreids from df_local_assignments and df_dismissed_auto_assignments.
+      3. Upserts them into df_assignment_log with normalized visitdate & optional audit columns.
     """
     if not entries:
         return
+
+    # Deduplicate by exammoreid so duplicate IDs never trigger PK IntegrityError
+    deduped_map: dict[int, dict] = {}
+    for entry in entries:
+        deduped_map[int(entry["exammoreid"])] = entry
+    deduped_entries = list(deduped_map.values())
+    eids = list(deduped_map.keys())
 
     tbl_local = _tbl("local_assignments")
     tbl_dismissed = _tbl("dismissed_auto_assignments")
     tbl_log = _tbl("assignment_log")
 
-    eids = [int(e["exammoreid"]) for e in entries]
-
     with _conn() as con:
         _ensure_dismissed_table_exists(con)
-        placeholders = ",".join(["?"] * len(eids))
-        con.execute(f"DELETE FROM {tbl_local} WHERE exammoreid IN ({placeholders})", tuple(eids))
-        con.execute(f"DELETE FROM {tbl_dismissed} WHERE exammoreid IN ({placeholders})", tuple(eids))
+        for chunk in _chunked(eids):
+            placeholders = ",".join(["?"] * len(chunk))
+            con.execute(f"DELETE FROM {tbl_local} WHERE exammoreid IN ({placeholders})", tuple(chunk))
+            con.execute(f"DELETE FROM {tbl_dismissed} WHERE exammoreid IN ({placeholders})", tuple(chunk))
 
-        cols = _get_table_columns(con, tbl_log)
+        cols = set(_get_table_columns(con, tbl_log))
         has_vdate = "visitdate" in cols
+        has_audit = all(c in cols for c in _AUDIT_LOG_COLUMNS)
 
-        existing_rows = con.execute(
-            f"SELECT exammoreid FROM {tbl_log} WHERE exammoreid IN ({placeholders})",
-            tuple(eids),
-        ).fetchall()
-        existing_eids = {int(r["exammoreid"]) for r in existing_rows}
+        existing_eids: set[int] = set()
+        for chunk in _chunked(eids):
+            placeholders = ",".join(["?"] * len(chunk))
+            existing_rows = con.execute(
+                f"SELECT exammoreid FROM {tbl_log} WHERE exammoreid IN ({placeholders})",
+                tuple(chunk),
+            ).fetchall()
+            existing_eids.update(int(r["exammoreid"]) for r in existing_rows)
 
-        for entry in entries:
+        for entry in deduped_entries:
             eid = int(entry["exammoreid"])
             diag_id = int(entry["diagnostician_id"])
             assigned_at = entry.get("assigned_at") or datetime.now().isoformat()
@@ -1202,28 +1561,35 @@ def finalize_synced_assignments_batch(entries: list[dict]) -> None:
             extracode = entry.get("extracode")
             visitdate_norm = _normalize_date_str(entry.get("visitdate"))
 
+            base_cols = ["diagnostician_id", "assigned_at", "modality", "extracode"]
+            base_vals: list = [diag_id, assigned_at, modality, extracode]
+            if has_vdate:
+                base_cols.append("visitdate")
+                base_vals.append(visitdate_norm)
+            if has_audit:
+                base_cols.extend(_AUDIT_LOG_COLUMNS)
+                base_vals.extend([
+                    entry.get("suggested_diagnostician_id"),
+                    int(bool(entry.get("was_overridden", False))),
+                    entry.get("override_reason"),
+                    _serialize_json_field(entry.get("rules_fired")),
+                    _serialize_json_field(entry.get("score_breakdown")),
+                ])
+
             if eid in existing_eids:
-                if has_vdate:
-                    con.execute(
-                        f"UPDATE {tbl_log} SET diagnostician_id = ?, assigned_at = ?, modality = ?, extracode = ?, visitdate = ? WHERE exammoreid = ?",
-                        (diag_id, assigned_at, modality, extracode, visitdate_norm, eid),
-                    )
-                else:
-                    con.execute(
-                        f"UPDATE {tbl_log} SET diagnostician_id = ?, assigned_at = ?, modality = ?, extracode = ? WHERE exammoreid = ?",
-                        (diag_id, assigned_at, modality, extracode, eid),
-                    )
+                set_clause = ", ".join(f"{c} = ?" for c in base_cols)
+                con.execute(
+                    f"UPDATE {tbl_log} SET {set_clause} WHERE exammoreid = ?",
+                    tuple(base_vals + [eid]),
+                )
             else:
-                if has_vdate:
-                    con.execute(
-                        f"INSERT INTO {tbl_log} (exammoreid, diagnostician_id, assigned_at, modality, extracode, visitdate) VALUES (?, ?, ?, ?, ?, ?)",
-                        (eid, diag_id, assigned_at, modality, extracode, visitdate_norm),
-                    )
-                else:
-                    con.execute(
-                        f"INSERT INTO {tbl_log} (exammoreid, diagnostician_id, assigned_at, modality, extracode) VALUES (?, ?, ?, ?, ?)",
-                        (eid, diag_id, assigned_at, modality, extracode),
-                    )
+                ins_cols = ["exammoreid"] + base_cols
+                placeholders = ", ".join(["?"] * len(ins_cols))
+                con.execute(
+                    f"INSERT INTO {tbl_log} ({', '.join(ins_cols)}) VALUES ({placeholders})",
+                    tuple([eid] + base_vals),
+                )
+                existing_eids.add(eid)
 
 
 def _collect_resolved_assignments(
@@ -1343,23 +1709,25 @@ def _collect_resolved_assignments(
         except Exception:
             pass
     else:
-        # In production MSSQL mode, include assigned exams captured from Slis pulls/searches
+        # In production MSSQL mode, snapshot assigned exams from thread-safe Slis cache
         try:
-            from diagflow.services.assignment import _slis_assigned_cache
-            for eid, s_info in _slis_assigned_cache.items():
+            from diagflow.services.assignment import get_slis_assigned_cache_snapshot
+            slis_snapshot = get_slis_assigned_cache_snapshot()
+            for eid, s_info in slis_snapshot.items():
                 slis_assignment_map[eid] = {
                     "diagnostician_id": s_info.get("diagnostician_id"),
                     "extracode": s_info.get("extracode"),
                     "category": s_info.get("category") or s_info.get("modality"),
                     "visitdate": _normalize_date_str(s_info.get("visitdate")),
                 }
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("slis_assigned_cache_snapshot_failed", error=str(exc))
 
-    # Augment metadata with _exam_details_cache in memory if available
+    # Augment metadata with thread-safe snapshot of _exam_details_cache
     try:
-        from diagflow.services.assignment import _exam_details_cache
-        for eid, c_info in _exam_details_cache.items():
+        from diagflow.services.assignment import get_exam_details_cache_snapshot
+        details_snapshot = get_exam_details_cache_snapshot()
+        for eid, c_info in details_snapshot.items():
             c_vdate = _normalize_date_str(c_info.get("visitdate"))
             if eid not in exam_details:
                 exam_details[eid] = {
@@ -1374,8 +1742,8 @@ def _collect_resolved_assignments(
                     exam_details[eid]["extracode"] = c_info.get("extracode")
                 if not exam_details[eid].get("category") and (c_info.get("category") or c_info.get("modality")):
                     exam_details[eid]["category"] = c_info.get("category") or c_info.get("modality")
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("exam_details_cache_snapshot_failed", error=str(exc))
 
     all_assigned_eids = (
         set(local_assignment_map.keys())
@@ -1805,6 +2173,15 @@ def delete_modality_quota(quota_id: int) -> bool:
 # ── System Settings & Admin Users ─────────────────────────────────────────────
 
 def _ensure_admin_users_table(con):
+    """
+    Ensure admin_users table exists and seed default accounts ONLY when the table
+    is completely empty (first boot). Never resurrects renamed or deleted default
+    accounts once any admin user exists.
+    """
+    check_key = str(_DB_PATH.resolve()) if settings.use_mock_slis_db else "mssql"
+    if check_key in _admin_table_checked_keys:
+        return
+
     tbl = _tbl("admin_users")
     if settings.use_mock_slis_db:
         con.execute(
@@ -1816,19 +2193,24 @@ def _ensure_admin_users_table(con):
             "is_active INTEGER NOT NULL DEFAULT 1)"
         )
 
-    admin_row = con.execute(f"SELECT id FROM {tbl} WHERE username = ?", (DEFAULT_ADMIN_USERNAME,)).fetchone()
-    if not admin_row:
+    count_row = con.execute(f"SELECT COUNT(*) AS cnt FROM {tbl}").fetchone()
+    user_count = int(count_row["cnt"] if isinstance(count_row, dict) else count_row[0])
+    if user_count == 0:
         con.execute(
             f"INSERT INTO {tbl} (username, password_hash, role, is_active) VALUES (?, ?, 'admin', 1)",
-            (DEFAULT_ADMIN_USERNAME, DEFAULT_ADMIN_PASSWORD_HASH)
+            (DEFAULT_ADMIN_USERNAME, DEFAULT_ADMIN_PASSWORD_HASH),
         )
-
-    it_row = con.execute(f"SELECT id FROM {tbl} WHERE username = ?", (DEFAULT_IT_SUPPORT_USERNAME,)).fetchone()
-    if not it_row:
         con.execute(
             f"INSERT INTO {tbl} (username, password_hash, role, is_active) VALUES (?, ?, 'it_support', 1)",
-            (DEFAULT_IT_SUPPORT_USERNAME, DEFAULT_IT_SUPPORT_PASSWORD_HASH)
+            (DEFAULT_IT_SUPPORT_USERNAME, DEFAULT_IT_SUPPORT_PASSWORD_HASH),
         )
+    _admin_table_checked_keys.add(check_key)
+
+
+def ensure_admin_users_initialized() -> None:
+    """Explicit startup hook to ensure admin users table is initialized once."""
+    with _conn() as con:
+        _ensure_admin_users_table(con)
 
 
 def get_admin_user_by_username(username: str) -> dict | None:
@@ -1936,10 +2318,16 @@ def get_system_weights() -> dict:
 
 
 def update_system_weights(new_weights: dict) -> dict:
-    """Updates the AI scoring weights in the DB."""
+    """Updates whitelisted AI scoring weights in the DB."""
     tbl = _tbl("system_settings")
+    filtered = {k: float(v) for k, v in new_weights.items() if k in _ALLOWED_WEIGHT_KEYS}
     with _conn() as con:
-        for k, v in new_weights.items():
+        if settings.use_mock_slis_db:
+            con.execute(
+                f"CREATE TABLE IF NOT EXISTS {tbl} ("
+                "[key] TEXT PRIMARY KEY, [value] TEXT NOT NULL)"
+            )
+        for k, v in filtered.items():
             existing = con.execute(f"SELECT [key] FROM {tbl} WHERE [key] = ?", (k,)).fetchone()
             if existing:
                 con.execute(f"UPDATE {tbl} SET [value] = ? WHERE [key] = ?", (str(v), k))

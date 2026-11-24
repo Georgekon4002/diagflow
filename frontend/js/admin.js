@@ -3,10 +3,46 @@
 //  Apple Glass Custom Dropdown & Autocomplete Engine
 // ═══════════════════════════════════════════════════════
 
+let _adminCustomGlassListenerBound = false;
+
+function syncCustomGlassSelect(sel) {
+    if (!sel) return;
+    if (typeof sel === 'string') sel = document.getElementById(sel);
+    if (!sel) return;
+    const wrapper = sel.nextElementSibling;
+    if (!wrapper || !wrapper.classList.contains('custom-glass-dropdown-wrap')) return;
+    const trigger = wrapper.querySelector('.custom-glass-dropdown-trigger');
+    const label = wrapper.querySelector('.custom-glass-trigger-label');
+    const selectedOption = sel.options[sel.selectedIndex] || sel.options[0];
+    const text = selectedOption ? selectedOption.textContent : '— Επιλέξτε —';
+    if (label) label.textContent = text;
+    if (trigger) trigger.classList.toggle('placeholder-text', !sel.value);
+}
+
+function _bindAdminCustomGlassListener() {
+    if (_adminCustomGlassListenerBound) return;
+    _adminCustomGlassListenerBound = true;
+    document.addEventListener('click', (e) => {
+        document.querySelectorAll('.custom-glass-dropdown-wrap').forEach(w => {
+            if (!w.contains(e.target)) {
+                const m = w.querySelector('.custom-glass-dropdown-menu');
+                const t = w.querySelector('.custom-glass-dropdown-trigger');
+                if (m) m.style.display = 'none';
+                if (t) t.classList.remove('open');
+                w.classList.remove('open-active');
+                const parentCard = w.closest('.admin-card') || w.closest('.form-group') || w.closest('.modal-card');
+                if (parentCard) parentCard.classList.remove('has-open-dropdown');
+            }
+        });
+    });
+}
+
 function enhanceSelectWithCustomGlass(sel) {
     if (!sel) return;
     if (typeof sel === 'string') sel = document.getElementById(sel);
     if (!sel || sel.tagName !== 'SELECT') return;
+
+    _bindAdminCustomGlassListener();
 
     let wrapper = sel.nextElementSibling;
     if (!wrapper || !wrapper.classList.contains('custom-glass-dropdown-wrap')) {
@@ -84,6 +120,7 @@ function enhanceSelectWithCustomGlass(sel) {
                 trigger.classList.toggle('placeholder-text', !val);
                 menu.style.display = 'none';
                 trigger.classList.remove('open');
+                wrapper.classList.remove('open-active');
                 sel.dispatchEvent(new Event('change', { bubbles: true }));
             });
         });
@@ -113,49 +150,52 @@ function enhanceSelectWithCustomGlass(sel) {
     searchInput.addEventListener('input', (e) => {
         populateOptions(e.target.value);
     });
-
-    document.addEventListener('click', (e) => {
-        if (!wrapper.contains(e.target)) {
-            menu.style.display = 'none';
-            trigger.classList.remove('open');
-        }
-    });
 }
+
+let _partDocSearchReqSeq = 0;
 
 function debounceDoctorSearch() {
     clearTimeout(window._docSearchTimer);
-    window._docSearchTimer = setTimeout(() => {
-        const input = document.getElementById('part-doctor-search');
-        const box = document.getElementById('part-doctor-results');
-        if (!input || !box) return;
-        const q = input.value.trim();
-        if (!q) {
-            box.style.display = 'none';
-            return;
-        }
-        
-        const normQ = typeof normalizeGreek === 'function' ? normalizeGreek(q) : q.toUpperCase();
-        let matches = (doctors || []).filter(d => {
-            const nameNorm = typeof normalizeGreek === 'function' ? normalizeGreek(d.name || '') : (d.name || '').toUpperCase();
-            const idNorm = (d.id || '').toUpperCase();
-            return nameNorm.includes(normQ) || idNorm.includes(normQ);
-        });
+    const input = document.getElementById('part-doctor-search');
+    const idInput = document.getElementById('part-doctor-id');
+    const box = document.getElementById('part-doctor-results');
+    if (!input || !box) return;
 
-        if (!matches.length) {
-            box.innerHTML = '<div style="padding: 10px; font-size: 12px; color: var(--text-tertiary); text-align: center;">Δεν βρέθηκε ιατρός</div>';
+    const q = input.value.trim();
+    if (!q) {
+        if (idInput) idInput.value = '';
+        box.style.display = 'none';
+        return;
+    }
+    if (q.length < 2) {
+        box.style.display = 'none';
+        return;
+    }
+
+    window._docSearchTimer = setTimeout(async () => {
+        const reqId = ++_partDocSearchReqSeq;
+        try {
+            const data = await apiCall(`/admin/doctors?q=${encodeURIComponent(q)}&limit=15`);
+            if (reqId !== _partDocSearchReqSeq) return;
+            const matches = (data && Array.isArray(data.items)) ? data.items : [];
+            if (!matches.length) {
+                box.innerHTML = '<div style="padding: 10px; font-size: 12px; color: var(--text-tertiary); text-align: center;">Δεν βρέθηκε ιατρός</div>';
+                box.style.display = 'block';
+                return;
+            }
+
+            box.className = 'autocomplete-suggestions-box';
+            box.innerHTML = matches.map(d => `
+                <div class="autocomplete-item" data-doc-id="${escapeHtml(d.id)}" data-doc-name="${escapeHtml(d.name)}" onclick="selectPartDoctor(this.dataset.docId, this.dataset.docName)">
+                    <span style="font-weight: 600;">🩺 ${escapeHtml(d.name)}</span>
+                    <span style="font-size: 11px; color: var(--text-tertiary); font-family: monospace;">(${escapeHtml(d.id)})</span>
+                </div>
+            `).join('');
             box.style.display = 'block';
-            return;
+        } catch (err) {
+            console.warn('Doctor search failed:', err);
         }
-
-        box.className = 'autocomplete-suggestions-box';
-        box.innerHTML = matches.slice(0, 15).map(d => `
-            <div class="autocomplete-item" onclick="selectPartDoctor('${escapeHtml(d.id)}', '${escapeHtml(d.name)}')">
-                <span style="font-weight: 600;">🩺 ${escapeHtml(d.name)}</span>
-                <span style="font-size: 11px; color: var(--text-tertiary); font-family: monospace;">(${escapeHtml(d.id)})</span>
-            </div>
-        `).join('');
-        box.style.display = 'block';
-    }, 150);
+    }, 250);
 }
 
 function selectPartDoctor(id, name) {
@@ -165,6 +205,10 @@ function selectPartDoctor(id, name) {
     if (input) input.value = `${name} (${id})`;
     if (idInput) idInput.value = id;
     if (box) box.style.display = 'none';
+}
+
+function selectDoctor(id, name) {
+    selectPartDoctor(id, name);
 }
 
 document.addEventListener('click', (e) => {
@@ -502,6 +546,23 @@ function setTheme(theme) {
     localStorage.setItem('diagflow_theme', theme);
 }
 
+let _adminDirtySections = new Set();
+
+function markSectionDirty(sectionKey) {
+    _adminDirtySections.add(sectionKey);
+}
+
+function clearSectionDirty(sectionKey) {
+    _adminDirtySections.delete(sectionKey);
+}
+
+window.addEventListener('beforeunload', (e) => {
+    if (_adminDirtySections.size > 0) {
+        e.preventDefault();
+        e.returnValue = '';
+    }
+});
+
 document.addEventListener('DOMContentLoaded', async () => {
     initTheme();
     checkDbStatus();
@@ -510,6 +571,33 @@ document.addEventListener('DOMContentLoaded', async () => {
         setTimeout(() => window.location.href = 'index.html', 1500);
         return;
     }
+
+    // Mutual exclusion bindings for Advanced Routing Rules
+    const advPamEl = document.getElementById('adv-route-pam');
+    const advDocSearchEl = document.getElementById('adv-route-doc-search');
+    if (advPamEl) advPamEl.addEventListener('change', updateAdvRouteMutualExclusion);
+    if (advDocSearchEl) {
+        advDocSearchEl.addEventListener('input', () => {
+            if (!advDocSearchEl.value.trim()) {
+                const hiddenDoc = document.getElementById('adv-route-doc');
+                if (hiddenDoc) hiddenDoc.value = '';
+            }
+            updateAdvRouteMutualExclusion();
+        });
+    }
+
+    // Modal Escape / backdrop close for creds-modal
+    const credsModal = document.getElementById('creds-modal');
+    if (credsModal) {
+        credsModal.addEventListener('click', (e) => {
+            if (e.target === credsModal) closeChangeCredsModal();
+        });
+    }
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && credsModal && credsModal.style.display === 'flex') {
+            closeChangeCredsModal();
+        }
+    });
 
     const today = formatDateLocal(new Date());
     
@@ -522,7 +610,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         locale: "gr"
     };
     
-    if (typeof flatpickr !== 'undefined') {
+    if (typeof flatpickr === 'function') {
         const oncallEl = document.getElementById('oncall-date');
         if (oncallEl) flatpickr("#oncall-date", fpConfig);
         const availEl = document.getElementById('avail-date');
@@ -575,8 +663,9 @@ function hideAdminLoadingModal() {
 
 async function loadAll() {
     await loadExamCategories();
-    await Promise.all([
-        loadDiagnosticians(),
+    // Load diagnosticians first so selects & weekly schedule dropdowns have real options
+    await loadDiagnosticians();
+    const tasks = [
         loadPartnerships(),
         loadDoctors(),
         loadSkills(),
@@ -586,8 +675,11 @@ async function loadAll() {
         loadPamakristosOverrides(),
         loadAdvancedOptions(),
         loadSystemWeights(),
-        loadAdminUsers(),
-    ]);
+    ];
+    if (sessionStorage.getItem('adminRole') === 'it_support') {
+        tasks.push(loadAdminUsers());
+    }
+    await Promise.all(tasks);
 }
 
 
@@ -608,28 +700,23 @@ async function apiCall(endpoint, method = 'GET', body = null) {
     };
     if (body) options.body = JSON.stringify(body);
 
-    try {
-        const response = await fetch(`${API_BASE}${endpoint}`, options);
-        if (response.status === 401) {
-            if (!isLoggedOut) {
-                isLoggedOut = true;
-                showToast('Η σύνδεση έχει λήξει. Παρακαλώ συνδεθείτε ξανά.', 'error');
-                setTimeout(() => window.location.href = 'index.html', 2000);
-            }
-            return null;
+    const response = await fetch(`${API_BASE}${endpoint}`, options);
+    if (response.status === 401) {
+        if (!isLoggedOut) {
+            isLoggedOut = true;
+            adminToken = null;
+            sessionStorage.removeItem('adminToken');
+            sessionStorage.removeItem('adminRole');
+            showToast('Η σύνδεση έχει λήξει. Παρακαλώ συνδεθείτε ξανά.', 'error');
+            setTimeout(() => window.location.href = 'index.html', 1500);
         }
-        if (!response.ok) {
-            const err = await response.json().catch(() => ({ detail: response.statusText }));
-            throw new Error(err.detail || `HTTP ${response.status}`);
-        }
-        return await response.json();
-    } catch (err) {
-        if (err.message.includes('Failed to fetch') || err.message.includes('NetworkError')) {
-            console.warn('API not available — mock mode');
-            return null;
-        }
-        throw err;
+        throw new Error('Η σύνδεση έχει λήξει');
     }
+    if (!response.ok) {
+        const err = await response.json().catch(() => ({ detail: response.statusText }));
+        throw new Error(err.detail || `HTTP ${response.status}`);
+    }
+    return await response.json();
 }
 
 
@@ -645,13 +732,28 @@ const SECTION_TITLES = {
     partnerships: 'Συνεργασίες Ιατρών',
     doctors: 'Ιατροί',
     exams: 'Εξετάσεις',
+    users: 'Διαχείριση Χρηστών',
     advanced: 'Για Προχωρημένους'
 };
 
+let currentAdminSection = 'oncall';
+
 function showSection(name) {
-    // Hide all sections
+    if (currentAdminSection && currentAdminSection !== name && _adminDirtySections.has(currentAdminSection)) {
+        if (!confirm('Υπάρχουν μη αποθηκευμένες αλλαγές σε αυτή την ενότητα. Θέλετε να μεταβείτε χωρίς αποθήκευση;')) {
+            return;
+        }
+        _adminDirtySections.delete(currentAdminSection);
+    }
+    currentAdminSection = name;
+
+    // Hide all sections & floating action bars from other sections
     document.querySelectorAll('.admin-section').forEach(s => s.style.display = 'none');
     document.querySelectorAll('.admin-nav-item').forEach(b => b.classList.remove('active'));
+    ['exams-floating-bar', 'skills-floating-bar', 'partnerships-floating-bar'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.style.display = 'none';
+    });
 
     // Show target
     const sec = document.getElementById(`section-${name}`);
@@ -663,6 +765,10 @@ function showSection(name) {
 
     if (name === 'exams') {
         renderExamsSection();
+    } else if (name === 'skills') {
+        updateSkillsFloatingBar();
+    } else if (name === 'partnerships') {
+        updatePartnershipsFloatingBar();
     } else if (name === 'oncall') {
         loadOncall();
         loadPamakristosOverrides();
@@ -676,8 +782,22 @@ function goBack() {
     window.location.href = 'index.html';
 }
 
-function adminLogout() {
+async function adminLogout() {
+    const tokenToRevoke = adminToken;
+    adminToken = null;
     sessionStorage.removeItem('adminToken');
+    sessionStorage.removeItem('adminRole');
+    _adminDirtySections.clear();
+    if (tokenToRevoke) {
+        try {
+            await fetch(`${API_BASE}/admin/auth/logout`, {
+                method: 'POST',
+                headers: { 'X-Admin-Token': tokenToRevoke }
+            });
+        } catch {
+            // Best-effort revocation
+        }
+    }
     window.location.href = 'index.html';
 }
 
@@ -722,8 +842,14 @@ async function syncDoctors() {
 
 
 async function loadDiagnosticians() {
-    const data = await apiCall('/admin/diagnosticians');
-    diagnosticians = data || getMockDiagnosticians();
+    try {
+        const data = await apiCall('/admin/diagnosticians');
+        if (Array.isArray(data)) {
+            diagnosticians = data;
+        }
+    } catch (err) {
+        showToast(`Σφάλμα φόρτωσης διαγνωστών: ${err.message}`, 'error');
+    }
     renderDiagnosticians();
     populateDiagnosticianSelects();
     renderAvailability();
@@ -731,8 +857,12 @@ async function loadDiagnosticians() {
 }
 
 async function loadPartnerships() {
-    const data = await apiCall('/admin/partnerships');
-    partnerships = data || getMockPartnerships();
+    try {
+        const data = await apiCall('/admin/partnerships');
+        if (Array.isArray(data)) partnerships = data;
+    } catch (err) {
+        showToast(`Σφάλμα φόρτωσης συνεργασιών: ${err.message}`, 'error');
+    }
     renderPartnerships();
 }
 
@@ -741,24 +871,14 @@ async function loadDoctors(page = 0) {
     const skip = page * doctorsPageSize;
     const limit = doctorsPageSize;
     
-    let data;
     try {
-        data = await apiCall(`/admin/doctors?q=${encodeURIComponent(docSearchQuery)}&skip=${skip}&limit=${limit}`);
-    } catch {
-        data = null;
-    }
-
-    if (data && data.items) {
-        doctors = data.items;
-        totalDoctors = data.total;
-    } else {
-        let mock = getMockDoctors();
-        if (docSearchQuery) {
-            const lowerQ = docSearchQuery.toLowerCase();
-            mock = mock.filter(d => d.name.toLowerCase().includes(lowerQ) || String(d.id).includes(lowerQ) || (d.partner_name && d.partner_name.toLowerCase().includes(lowerQ)));
+        const data = await apiCall(`/admin/doctors?q=${encodeURIComponent(docSearchQuery)}&skip=${skip}&limit=${limit}`);
+        if (data && Array.isArray(data.items)) {
+            doctors = data.items;
+            totalDoctors = data.total ?? data.items.length;
         }
-        doctors = mock.slice(skip, skip + limit);
-        totalDoctors = mock.length;
+    } catch (err) {
+        showToast(`Σφάλμα φόρτωσης ιατρών: ${err.message}`, 'error');
     }
     renderDoctors();
     updateDoctorPagination();
@@ -800,38 +920,49 @@ function updateDoctorPagination() {
 }
 
 async function loadSkills() {
-    const data = await apiCall('/admin/skills');
-    skills = data || getMockSkills();
+    try {
+        const data = await apiCall('/admin/skills');
+        if (Array.isArray(data)) skills = data;
+    } catch (err) {
+        showToast(`Σφάλμα φόρτωσης δεξιοτήτων: ${err.message}`, 'error');
+    }
     renderSkills();
 }
 
 async function loadAvailability() {
-    const data = await apiCall('/admin/availability');
-    availability = data || getMockAvailability();
+    try {
+        const data = await apiCall('/admin/availability');
+        if (Array.isArray(data)) availability = data;
+    } catch (err) {
+        showToast(`Σφάλμα φόρτωσης αδειών: ${err.message}`, 'error');
+    }
     renderAvailability();
 }
 
 async function loadOncall() {
-    const data = await apiCall('/admin/oncall');
-    const oncall = data || { diagnostician_name: 'Παπαδόπουλος Γ.', date: formatDateLocal(new Date()) };
-    const el = document.getElementById('oncall-current');
-    if (el) {
-        el.innerHTML = `
-            <strong style="color:var(--text-primary);font-size:var(--font-size-md);">${oncall.diagnostician_name || '—'}</strong>
-            <span style="margin-left:8px;color:var(--text-tertiary);">(${formatDate(oncall.date)})</span>
-        `;
+    try {
+        const data = await apiCall('/admin/oncall');
+        const el = document.getElementById('oncall-current');
+        if (el) {
+            const diagName = (data && data.diagnostician_name) ? data.diagnostician_name : '—';
+            const dateStr = (data && data.date) ? data.date : formatDateLocal(new Date());
+            el.innerHTML = `
+                <strong style="color:var(--text-primary);font-size:var(--font-size-md);">${escapeHtml(diagName)}</strong>
+                <span style="margin-left:8px;color:var(--text-tertiary);">(${escapeHtml(formatDate(dateStr))})</span>
+            `;
+        }
+    } catch (err) {
+        console.warn('Could not load oncall:', err);
     }
     const oncallDateInput = document.getElementById('oncall-date');
     if (oncallDateInput && !oncallDateInput.value) {
-        const todayIso = new Date().toISOString().split('T')[0];
-        oncallDateInput.value = todayIso;
+        oncallDateInput.value = formatDateLocal(new Date());
     }
 }
 
 let weeklyScheduleData = [];
 
 async function loadPamakristosWeeklySchedule() {
-    setTimeout(() => { document.querySelectorAll(".pamakristos-schedule-select").forEach(sel => enhanceSelectWithCustomGlass(sel)); }, 50);
     try {
         const data = await apiCall('/admin/pamakristos/weekly-schedule');
         weeklyScheduleData = data || [];
@@ -863,20 +994,22 @@ function renderPamakristosWeeklySchedule() {
         diagnosticians.forEach(diag => {
             if (!diag.active) return;
             const sel = String(diag.id) === String(selectedId) ? 'selected' : '';
-            options += `<option value="${diag.id}" ${sel}>${diag.name}</option>`;
+            options += `<option value="${diag.id}" ${sel}>${escapeHtml(diag.name)}</option>`;
         });
 
         return `
             <tr>
                 <td style="font-weight:600; padding:12px;">${d.day_name}</td>
                 <td style="padding:8px 12px;">
-                    <select class="form-input filter-select pamakristos-schedule-select" data-weekday="${d.weekday}" style="width:100%; max-width:400px;">
+                    <select class="form-input filter-select pamakristos-schedule-select" data-weekday="${d.weekday}" style="width:100%; max-width:400px;" onchange="markSectionDirty('oncall')">
                         ${options}
                     </select>
                 </td>
             </tr>
         `;
     }).join('');
+
+    tbody.querySelectorAll('.pamakristos-schedule-select').forEach(sel => enhanceSelectWithCustomGlass(sel));
 }
 
 async function savePamakristosWeeklySchedule() {
@@ -895,6 +1028,7 @@ async function savePamakristosWeeklySchedule() {
 
     try {
         await apiCall('/admin/pamakristos/weekly-schedule', 'POST', items);
+        clearSectionDirty('oncall');
         showToast('✅ Το εβδομαδιαίο πρόγραμμα Παμμακάριστου αποθηκεύτηκε επιτυχώς!', 'success');
         await loadPamakristosWeeklySchedule();
     } catch (err) {
@@ -938,7 +1072,7 @@ function renderPamakristosOverrides() {
     const tbody = document.getElementById('pamakristos-overrides-tbody');
     if (!tbody) return;
 
-    const todayStr = new Date().toISOString().split('T')[0];
+    const todayStr = formatDateLocal(new Date());
     const filtered = (pamakristosOverridesData || []).filter(item => item && item.date >= todayStr);
 
     if (filtered.length === 0) {
@@ -948,7 +1082,7 @@ function renderPamakristosOverrides() {
 
     tbody.innerHTML = filtered.map(item => `
         <tr>
-            <td style="font-weight:600; padding:10px;">${formatDate(item.date)}</td>
+            <td style="font-weight:600; padding:10px;">${escapeHtml(formatDate(item.date))}</td>
             <td style="padding:10px;"><strong>${escapeHtml(item.diagnostician_name)}</strong></td>
             <td style="padding:10px; text-align:right;">
                 <button class="btn btn-danger btn-sm" onclick="deletePamakristosOverride(${item.id})" title="Διαγραφή ανάθεσης">🗑️ Διαγραφή</button>
@@ -978,7 +1112,7 @@ function populateDiagnosticianSelects() {
             let html = '<option value="">— Επιλέξτε —</option>';
             diagnosticians.forEach(d => {
                 if (!d.active) return;
-                html += `<option value="${d.id}" data-name="${d.name}">${d.name}</option>`;
+                html += `<option value="${d.id}" data-name="${escapeHtml(d.name)}">${escapeHtml(d.name)}</option>`;
             });
             sel.innerHTML = html;
         }
@@ -997,9 +1131,13 @@ function filterDiags(q) {
     renderDiagnosticians();
 }
 
+let _filterDoctorsTimer = null;
 function filterDoctors(q) {
     docSearchQuery = q;
-    loadDoctors(0);
+    clearTimeout(_filterDoctorsTimer);
+    _filterDoctorsTimer = setTimeout(() => {
+        loadDoctors(0);
+    }, 250);
 }
 
 function normalizeGreek(str) {
@@ -1038,7 +1176,7 @@ function renderDiagnosticians() {
 
     tbody.innerHTML = paginated.map(d => `
         <tr>
-            <td style="font-weight:600;">${d.name}</td>
+            <td style="font-weight:600;">${escapeHtml(d.name)}</td>
             <td>
                 <span class="status-badge ${d.active ? 'active' : 'inactive'}">
                     ${d.active ? '● Ενεργός' : '● Ανενεργός'}
@@ -1106,19 +1244,33 @@ function updateDiagPagination() {
 async function toggleDiagCT(id, newCanCT) {
     const d = diagnosticians.find(x => x.id === id);
     if (!d) return;
+    const prev = d.can_ct;
     d.can_ct = newCanCT;
-    try { await apiCall(`/admin/diagnosticians/${id}`, 'PUT', _buildDiagnosticianPayload(d)); } catch { /* mock mode */ }
-    populateDiagnosticianSelects();
-    showToast(`Η ικανότητα CT ενημερώθηκε: ${d.name}`, 'success');
+    try {
+        await apiCall(`/admin/diagnosticians/${id}`, 'PUT', _buildDiagnosticianPayload(d));
+        populateDiagnosticianSelects();
+        showToast(`Η ικανότητα CT ενημερώθηκε: ${d.name}`, 'success');
+    } catch (err) {
+        d.can_ct = prev;
+        renderDiagnosticians();
+        showToast(`Σφάλμα ενημέρωσης CT: ${err.message}`, 'error');
+    }
 }
 
 async function toggleDiagMRI(id, newCanMRI) {
     const d = diagnosticians.find(x => x.id === id);
     if (!d) return;
+    const prev = d.can_mri;
     d.can_mri = newCanMRI;
-    try { await apiCall(`/admin/diagnosticians/${id}`, 'PUT', _buildDiagnosticianPayload(d)); } catch { /* mock mode */ }
-    populateDiagnosticianSelects();
-    showToast(`Η ικανότητα MRI ενημερώθηκε: ${d.name}`, 'success');
+    try {
+        await apiCall(`/admin/diagnosticians/${id}`, 'PUT', _buildDiagnosticianPayload(d));
+        populateDiagnosticianSelects();
+        showToast(`Η ικανότητα MRI ενημερώθηκε: ${d.name}`, 'success');
+    } catch (err) {
+        d.can_mri = prev;
+        renderDiagnosticians();
+        showToast(`Σφάλμα ενημέρωσης MRI: ${err.message}`, 'error');
+    }
 }
 
 function renderAvailability() {
@@ -1221,14 +1373,15 @@ function renderAvailability() {
 
     tbody.innerHTML = finalRows.map(r => `
         <tr>
-            <td style="font-weight:500;">${r.diagnostician_name}</td>
-            <td class="date-cell">${r.dateDisplay}</td>
+            <td style="font-weight:500;">${escapeHtml(r.diagnostician_name)}</td>
+            <td class="date-cell">${escapeHtml(r.dateDisplay)}</td>
             <td>${r.statusBadge}</td>
-            <td style="color:var(--text-tertiary);">${r.notes}</td>
+            <td style="color:var(--text-tertiary);">${escapeHtml(r.notes)}</td>
             <td style="text-align:right;">
                 ${r.isExplicitLeave ? `
                     <button class="btn btn-ghost btn-sm" style="color:var(--accent-danger, #ef4444); padding: 4px 8px;" 
-                            onclick="removeLeave(${r.diagnostician_id}, '${r.sortDate}', '${r.endDate}', '${(r.diagnostician_name || '').replace(/'/g, "\\'")}')"
+                            data-diag-name="${escapeHtml(r.diagnostician_name || '')}"
+                            onclick="removeLeave(${r.diagnostician_id}, '${escapeHtml(r.sortDate)}', '${escapeHtml(r.endDate)}', this.dataset.diagName)"
                             title="Αφαίρεση αδείας">
                         🗑️ Αφαίρεση
                     </button>
@@ -1240,6 +1393,7 @@ function renderAvailability() {
 
 async function removeLeave(diagId, startDateStr, endDateStr, diagName) {
     if (!diagId || !startDateStr) return;
+    if (!confirm(`Να αφαιρεθεί η άδεια για ${diagName || 'τον διαγνώστη'};`)) return;
 
     const datesToRemove = [];
     let current = new Date(startDateStr + 'T00:00:00');
@@ -1257,10 +1411,9 @@ async function removeLeave(diagId, startDateStr, endDateStr, diagName) {
         }
         showToast(`✅ Αφαιρέθηκε η άδεια για: ${diagName}`, 'success');
     } catch (err) {
-        for (const dateVal of datesToRemove) {
-            availability = availability.filter(a => !(a.diagnostician_id === diagId && a.date === dateVal));
-        }
-        showToast(`✅ Αφαιρέθηκε η άδεια για: ${diagName}`, 'success');
+        showToast(`❌ Σφάλμα αφαίρεσης άδειας: ${err.message}`, 'error');
+        await loadAvailability();
+        return;
     }
 
     renderAvailability();
@@ -1438,7 +1591,6 @@ function renderSkills() {
         }
     }
     tbody.innerHTML = html;
-    setTimeout(() => { document.querySelectorAll(".pamakristos-schedule-select").forEach(sel => enhanceSelectWithCustomGlass(sel)); }, 50);
     updateSkillsFloatingBar();
 }
 
@@ -1568,20 +1720,30 @@ async function bulkSetSkillsPreference(isPreferred) {
     if (selectedSkillItemIds.size === 0) return;
     const ids = Array.from(selectedSkillItemIds);
     let updatedCount = 0;
+    let failedCount = 0;
     showAdminLoading(`⏳ Ενημέρωση προτίμησης ${ids.length} δεξιοτήτων...`);
     try {
         for (const idStr of ids) {
             const skillId = isNaN(Number(idStr)) ? idStr : Number(idStr);
             const s = skills.find(x => String(x.id) === idStr);
             if (!s) continue;
+            const prev = s.is_preferred;
             s.is_preferred = isPreferred;
             try {
                 await apiCall(`/admin/skills/${skillId}`, 'PUT', s);
                 updatedCount++;
-            } catch { /* mock mode */ updatedCount++; }
+            } catch {
+                s.is_preferred = prev;
+                failedCount++;
+            }
         }
         renderSkills();
-        showToast(`✅ Ενημερώθηκαν ${updatedCount} δεξιότητες (${isPreferred ? 'Προτιμάται' : 'Όχι προτίμηση'})`, 'success');
+        if (updatedCount > 0) {
+            showToast(`✅ Ενημερώθηκαν ${updatedCount} δεξιότητες (${isPreferred ? 'Προτιμάται' : 'Όχι προτίμηση'})`, 'success');
+        }
+        if (failedCount > 0) {
+            showToast(`❌ Αποτυχία ενημέρωσης ${failedCount} δεξιοτήτων`, 'error');
+        }
     } finally {
         hideAdminLoading();
     }
@@ -1592,19 +1754,23 @@ async function bulkDeleteSkills() {
     if (!confirm(`Διαγραφή ${selectedSkillItemIds.size} επιλεγμένων δεξιοτήτων;`)) return;
     const ids = Array.from(selectedSkillItemIds);
     let deletedCount = 0;
+    let failedCount = 0;
     showAdminLoading(`⏳ Διαγραφή ${ids.length} δεξιοτήτων...`);
     try {
         for (const idStr of ids) {
             const skillId = isNaN(Number(idStr)) ? idStr : Number(idStr);
             try {
                 await apiCall(`/admin/skills/${skillId}`, 'DELETE');
-            } catch { /* mock mode */ }
-            skills = skills.filter(s => String(s.id) !== idStr);
-            deletedCount++;
+                skills = skills.filter(s => String(s.id) !== idStr);
+                deletedCount++;
+            } catch {
+                failedCount++;
+            }
         }
         clearSkillsSelection();
         renderSkills();
-        showToast(`🗑️ Διαγράφηκαν ${deletedCount} δεξιότητες`, 'success');
+        if (deletedCount > 0) showToast(`🗑️ Διαγράφηκαν ${deletedCount} δεξιότητες`, 'success');
+        if (failedCount > 0) showToast(`❌ Αποτυχία διαγραφής ${failedCount} δεξιοτήτων`, 'error');
     } finally {
         hideAdminLoading();
     }
@@ -1683,13 +1849,13 @@ function renderPartnerships() {
         const allDiagChecked = diagPartners.length > 0 && diagPartners.every(p => selectedPartnershipItemIds.has(String(p.id)));
 
         html += `
-            <tr style="cursor:pointer; background:var(--surface-color); border-bottom:1px solid var(--border-color);" onclick="togglePartnershipsRow('${diagIdForCollapse}')">
+            <tr style="cursor:pointer; background:var(--surface-color); border-bottom:1px solid var(--border-color);" onclick="togglePartnershipsRow('${escapeHtml(diagIdForCollapse)}')">
                 <td style="width:40px; text-align:center; padding:12px;" onclick="event.stopPropagation();">
-                    <input type="checkbox" class="part-group-checkbox" id="chk-part-group-${diagIdForCollapse}" ${allDiagChecked ? 'checked' : ''} onclick="toggleSelectDiagPartnerships(event, '${diagIdForCollapse}')" style="accent-color:var(--accent-primary); width:16px; height:16px; cursor:pointer;" title="Επιλογή όλων του διαγνώστη">
+                    <input type="checkbox" class="part-group-checkbox" id="chk-part-group-${escapeHtml(diagIdForCollapse)}" ${allDiagChecked ? 'checked' : ''} onclick="toggleSelectDiagPartnerships(event, '${escapeHtml(diagIdForCollapse)}')" style="accent-color:var(--accent-primary); width:16px; height:16px; cursor:pointer;" title="Επιλογή όλων του διαγνώστη">
                 </td>
                 <td colspan="4" style="font-weight:600; padding:12px;">
-                    <span id="part-icon-${diagIdForCollapse}" style="display:inline-block; width:20px; transition:transform 0.2s; transform:${iconTransform};">▶</span> 
-                    <span style="color:var(--accent-primary);">${diagName}</span> <span style="color:var(--text-tertiary); font-weight:normal; font-size:13px;">(${diagPartners.length} συνεργασίες)</span>
+                    <span id="part-icon-${escapeHtml(diagIdForCollapse)}" style="display:inline-block; width:20px; transition:transform 0.2s; transform:${iconTransform};">▶</span> 
+                    <span style="color:var(--accent-primary);">${escapeHtml(diagName)}</span> <span style="color:var(--text-tertiary); font-weight:normal; font-size:13px;">(${diagPartners.length} συνεργασίες)</span>
                 </td>
             </tr>
         `;
@@ -1709,11 +1875,11 @@ function renderPartnerships() {
             const isChecked = selectedPartnershipItemIds.has(String(p.id));
             const rowClass = isChecked ? 'selected-row' : '';
             
-            html += `<tr class="part-row-${diagIdForCollapse} ${rowClass}" style="display:${displayStyle}; background:#fafafa;">
+            html += `<tr class="part-row-${escapeHtml(diagIdForCollapse)} ${rowClass}" style="display:${displayStyle}; background:var(--bg-secondary);">
                 <td style="width:40px; text-align:center; padding:8px 12px;">
-                    <input type="checkbox" class="row-checkbox part-chk-item part-chk-diag-${diagIdForCollapse}" value="${p.id}" ${isChecked ? 'checked' : ''} onchange="toggleSelectPartnershipItem('${p.id}')">
+                    <input type="checkbox" class="row-checkbox part-chk-item part-chk-diag-${escapeHtml(diagIdForCollapse)}" value="${p.id}" ${isChecked ? 'checked' : ''} onchange="toggleSelectPartnershipItem('${p.id}')">
                 </td>
-                <td style="font-weight:500;">${p.issuing_doctor_name} <span style="color:var(--text-tertiary);font-size:11px;">(${p.issuing_doctor_id})</span></td>
+                <td style="font-weight:500;">${escapeHtml(p.issuing_doctor_name)} <span style="color:var(--text-tertiary);font-size:11px;">(${escapeHtml(p.issuing_doctor_id)})</span></td>
                 <td>
                     <button class="btn btn-sm ${isActive ? 'btn-primary' : 'btn-secondary'}" onclick="togglePartnershipProperty(${p.id}, 'is_active', ${!isActive})" style="padding:4px 8px; font-size:12px;">
                         ${isActive ? 'Ενεργή' : 'Ανενεργή'}
@@ -1731,7 +1897,6 @@ function renderPartnerships() {
         });
     }
     tbody.innerHTML = html;
-    setTimeout(() => { document.querySelectorAll(".pamakristos-schedule-select").forEach(sel => enhanceSelectWithCustomGlass(sel)); }, 50);
     updatePartnershipsFloatingBar();
 }
 
@@ -1836,38 +2001,38 @@ async function bulkSetPartnershipsActive(isActive) {
     if (selectedPartnershipItemIds.size === 0) return;
     const ids = Array.from(selectedPartnershipItemIds);
     let updatedCount = 0;
+    let failedCount = 0;
     for (const idStr of ids) {
         const partId = isNaN(Number(idStr)) ? idStr : Number(idStr);
         try {
             await apiCall(`/admin/partnerships/${partId}`, 'PATCH', { is_active: isActive });
             updatedCount++;
         } catch {
-            const p = partnerships.find(x => String(x.id) === idStr);
-            if (p) p.is_active = isActive;
-            updatedCount++;
+            failedCount++;
         }
     }
     await loadPartnerships();
-    showToast(`✅ Ενημερώθηκαν ${updatedCount} συνεργασίες (${isActive ? 'Ενεργές' : 'Ανενεργές'})`, 'success');
+    if (updatedCount > 0) showToast(`✅ Ενημερώθηκαν ${updatedCount} συνεργασίες (${isActive ? 'Ενεργές' : 'Ανενεργές'})`, 'success');
+    if (failedCount > 0) showToast(`❌ Αποτυχία ενημέρωσης ${failedCount} συνεργασιών`, 'error');
 }
 
 async function bulkSetPartnershipsExclusive(isExclusive) {
     if (selectedPartnershipItemIds.size === 0) return;
     const ids = Array.from(selectedPartnershipItemIds);
     let updatedCount = 0;
+    let failedCount = 0;
     for (const idStr of ids) {
         const partId = isNaN(Number(idStr)) ? idStr : Number(idStr);
         try {
-            await apiCall(`/admin/partnerships/${idStr}`, 'PATCH', { exclusive: isExclusive });
+            await apiCall(`/admin/partnerships/${partId}`, 'PATCH', { exclusive: isExclusive });
             updatedCount++;
         } catch {
-            const p = partnerships.find(x => String(x.id) === idStr);
-            if (p) p.exclusive = isExclusive;
-            updatedCount++;
+            failedCount++;
         }
     }
     await loadPartnerships();
-    showToast(`✅ Ενημερώθηκαν ${updatedCount} συνεργασίες (${isExclusive ? 'Αποκλειστικές' : 'Όχι αποκλειστικές'})`, 'success');
+    if (updatedCount > 0) showToast(`✅ Ενημερώθηκαν ${updatedCount} συνεργασίες (${isExclusive ? 'Αποκλειστικές' : 'Όχι αποκλειστικές'})`, 'success');
+    if (failedCount > 0) showToast(`❌ Αποτυχία ενημέρωσης ${failedCount} συνεργασιών`, 'error');
 }
 
 async function bulkDeletePartnerships() {
@@ -1875,27 +2040,29 @@ async function bulkDeletePartnerships() {
     if (!confirm(`Διαγραφή ${selectedPartnershipItemIds.size} επιλεγμένων συνεργασιών;`)) return;
     const ids = Array.from(selectedPartnershipItemIds);
     let deletedCount = 0;
+    let failedCount = 0;
     for (const idStr of ids) {
         const partId = isNaN(Number(idStr)) ? idStr : Number(idStr);
         try {
             await apiCall(`/admin/partnerships/${partId}`, 'DELETE');
+            deletedCount++;
         } catch {
-            partnerships = partnerships.filter(p => String(p.id) !== idStr);
+            failedCount++;
         }
-        deletedCount++;
     }
     clearPartnershipsSelection();
     await loadPartnerships();
-    showToast(`🗑️ Διαγράφηκαν ${deletedCount} συνεργασίες`, 'success');
+    if (deletedCount > 0) showToast(`🗑️ Διαγράφηκαν ${deletedCount} συνεργασίες`, 'success');
+    if (failedCount > 0) showToast(`❌ Αποτυχία διαγραφής ${failedCount} συνεργασιών`, 'error');
 }
 
 function renderDoctors() {
     const tbody = document.getElementById('doc-tbody');
     tbody.innerHTML = doctors.map(d => `
         <tr>
-            <td style="color:var(--text-tertiary);font-size:var(--font-size-xs);">${d.id}</td>
-            <td style="font-weight:500;">${d.name}</td>
-            <td style="color:var(--text-secondary);">${d.partner_name || '—'}</td>
+            <td style="color:var(--text-tertiary);font-size:var(--font-size-xs);">${escapeHtml(d.id)}</td>
+            <td style="font-weight:500;">${escapeHtml(d.name)}</td>
+            <td style="color:var(--text-secondary);">${escapeHtml(d.partner_name || '—')}</td>
         </tr>
     `).join('');
 }
@@ -1905,65 +2072,48 @@ function renderDoctors() {
 //  Actions
 // ══════════════════════════════════════════════
 
-async function setOncall() {
-    const selEl = document.getElementById('oncall-diag-select');
-    const diagId = parseInt(selEl.value);
-    const diagName = selEl.options[selEl.selectedIndex]?.dataset?.name || '';
-    const dateVal = document.getElementById('oncall-date').value;
-
-    if (!diagId || !dateVal) { showToast('Επιλέξτε διαγνώστη και ημερομηνία', 'warning'); return; }
-
-    try {
-        await apiCall('/admin/oncall', 'POST', { diagnostician_id: diagId, diagnostician_name: diagName, date: dateVal });
-        showToast(`✅ Εφημερία ορίστηκε: ${diagName} (${formatDate(dateVal)})`, 'success');
-        await loadOncall();
-    } catch (err) {
-        // Mock mode
-        document.getElementById('oncall-current').innerHTML =
-            `<strong style="color:var(--text-primary);font-size:var(--font-size-md);">${diagName}</strong>
-             <span style="margin-left:8px;color:var(--text-tertiary);">(${formatDate(dateVal)})</span>`;
-        showToast(`✅ Εφημερία ορίστηκε: ${diagName} (mock)`, 'success');
-    }
-}
-
 async function addDiagnostician() {
     const name = document.getElementById('new-diag-name').value.trim();
-    const quota = parseInt(document.getElementById('new-diag-quota').value);
+    const quota = parseInt(document.getElementById('new-diag-quota').value, 10);
     const can_ct = document.getElementById('new-diag-ct').checked;
     const can_mri = document.getElementById('new-diag-mri').checked;
     const active = document.getElementById('new-diag-active').checked;
 
     if (!name) { showToast('Εισάγετε ονοματεπώνυμο', 'warning'); return; }
+    if (isNaN(quota) || quota < 0) { showToast('Εισάγετε έγκυρο ημερήσιο όριο (>= 0)', 'warning'); return; }
 
     try {
         const result = await apiCall('/admin/diagnosticians', 'POST', { name, active, can_ct, can_mri, quota_monday: quota, quota_tuesday: quota, quota_wednesday: quota, quota_thursday: quota, quota_friday: quota, quota_saturday: quota, quota_sunday: quota });
         if (result) diagnosticians.push(result);
-        else diagnosticians.push({ id: Date.now(), name, active, can_ct, can_mri, quota_monday: quota, quota_tuesday: quota, quota_wednesday: quota, quota_thursday: quota, quota_friday: quota, quota_saturday: quota, quota_sunday: quota });
-    } catch {
-        diagnosticians.push({ id: Date.now(), name, active, can_ct, can_mri, quota_monday: quota, quota_tuesday: quota, quota_wednesday: quota, quota_thursday: quota, quota_friday: quota, quota_saturday: quota, quota_sunday: quota });
+        renderDiagnosticians();
+        populateDiagnosticianSelects();
+        renderWeeklyScheduleGrid();
+        document.getElementById('new-diag-name').value = '';
+        showToast(`✅ Ο/Η ${name} προστέθηκε`, 'success');
+    } catch (err) {
+        showToast(`❌ Σφάλμα προσθήκης διαγνώστη: ${err.message}`, 'error');
     }
-
-    renderDiagnosticians();
-    populateDiagnosticianSelects();
-    renderWeeklyScheduleGrid();
-    document.getElementById('new-diag-name').value = '';
-    showToast(`✅ Ο/Η ${name} προστέθηκε`, 'success');
 }
 
 
 async function toggleDiagActive(id, newActive) {
     const d = diagnosticians.find(x => x.id === id);
     if (!d) return;
+    if (!newActive && !confirm(`Να απενεργοποιηθεί ο/η διαγνώστης "${d.name}";`)) return;
+    const prev = d.active;
     d.active = newActive;
 
     try {
         await apiCall(`/admin/diagnosticians/${id}`, 'PUT', _buildDiagnosticianPayload(d));
-    } catch { /* mock mode */ }
-
-    renderDiagnosticians();
-    populateDiagnosticianSelects();
-    renderWeeklyScheduleGrid();
-    showToast(`${newActive ? '✅ Ενεργοποίηση' : '⚠️ Απενεργοποίηση'}: ${d.name}`, newActive ? 'success' : 'warning');
+        renderDiagnosticians();
+        populateDiagnosticianSelects();
+        renderWeeklyScheduleGrid();
+        showToast(`${newActive ? '✅ Ενεργοποίηση' : '⚠️ Απενεργοποίηση'}: ${d.name}`, newActive ? 'success' : 'warning');
+    } catch (err) {
+        d.active = prev;
+        renderDiagnosticians();
+        showToast(`❌ Σφάλμα ενημέρωσης κατάστασης: ${err.message}`, 'error');
+    }
 }
 
 let selectedBulkSkillModalities = new Set();
@@ -2187,6 +2337,8 @@ async function setAvailability() {
     if (!diagId || datesToSave.length === 0) { showToast('Επιλέξτε διαγνώστη και ημερομηνία', 'warning'); return; }
 
     showAdminLoading(`⏳ Αποθήκευση άδειας για ${diagName}...`);
+    let savedDays = 0;
+    let failedDays = 0;
     try {
         for (const dateVal of datesToSave) {
             const record = { diagnostician_id: diagId, diagnostician_name: diagName, date: dateVal, status, notes };
@@ -2195,10 +2347,10 @@ async function setAvailability() {
                 if (result) {
                     availability = availability.filter(a => !(a.diagnostician_id === diagId && a.date === dateVal));
                     availability.push(result);
+                    savedDays++;
                 }
             } catch {
-                availability = availability.filter(a => !(a.diagnostician_id === diagId && a.date === dateVal));
-                availability.push({ id: Date.now(), ...record });
+                failedDays++;
             }
         }
     } finally {
@@ -2206,20 +2358,29 @@ async function setAvailability() {
     }
 
     renderAvailability();
-    document.getElementById('avail-notes').value = '';
-    showToast(`✅ Άδεια καταγράφηκε: ${diagName} (${datesToSave.length} ημερών)`, 'success');
+    if (savedDays > 0) {
+        document.getElementById('avail-notes').value = '';
+        showToast(`✅ Άδεια καταγράφηκε: ${diagName} (${savedDays} ημερών)`, 'success');
+    }
+    if (failedDays > 0) {
+        showToast(`❌ Αποτυχία αποθήκευσης για ${failedDays} ημέρες`, 'error');
+    }
 }
 
 async function updatePreferredLab(id, val) {
     const d = diagnosticians.find(x => x.id === id);
     if (!d) return;
+    const prev = d.preferred_lab_id;
     d.preferred_lab_id = val ? parseInt(val) : null;
 
     try {
         await apiCall(`/admin/diagnosticians/${id}`, 'PUT', _buildDiagnosticianPayload(d));
-    } catch { /* mock mode */ }
-
-    showToast(`✅ Προτίμηση εργαστηρίου ενημερώθηκε: ${d.name}`, 'success');
+        showToast(`✅ Προτίμηση εργαστηρίου ενημερώθηκε: ${d.name}`, 'success');
+    } catch (err) {
+        d.preferred_lab_id = prev;
+        renderDiagnosticians();
+        showToast(`❌ Σφάλμα ενημέρωσης εργαστηρίου: ${err.message}`, 'error');
+    }
 }
 
 function _buildDiagnosticianPayload(d) {
@@ -2479,7 +2640,9 @@ function toggleSelectAllGroupExams(event, groupId) {
     event.stopPropagation();
     const groupCheckbox = document.getElementById('chk-group-' + groupId);
     const headerCheckbox = document.getElementById('chk-tbl-header-' + groupId);
-    const isChecked = groupCheckbox ? groupCheckbox.checked : (headerCheckbox ? headerCheckbox.checked : false);
+    const isChecked = event && event.target && typeof event.target.checked === 'boolean'
+        ? event.target.checked
+        : (groupCheckbox ? groupCheckbox.checked : (headerCheckbox ? headerCheckbox.checked : false));
     
     if (groupCheckbox) groupCheckbox.checked = isChecked;
     if (headerCheckbox) headerCheckbox.checked = isChecked;
@@ -3053,25 +3216,32 @@ async function renderExamsSection() {
 }
 
 async function deleteSkill(id) {
+    if (!confirm('Διαγραφή αυτής της δεξιότητας;')) return;
     try {
         await apiCall(`/admin/skills/${id}`, 'DELETE');
-    } catch { /* mock mode */ }
-    skills = skills.filter(s => String(s.id) !== String(id));
-    renderSkills();
-    showToast('Η δεξιότητα διαγράφηκε', 'info');
+        skills = skills.filter(s => String(s.id) !== String(id));
+        renderSkills();
+        showToast('Η δεξιότητα διαγράφηκε', 'info');
+    } catch (err) {
+        showToast(`❌ Σφάλμα διαγραφής δεξιότητας: ${err.message}`, 'error');
+    }
 }
 
 async function toggleSkillPreference(id, newPreference) {
     const s = skills.find(x => String(x.id) === String(id));
     if (!s) return;
+    const prev = s.is_preferred;
     s.is_preferred = newPreference;
 
     try {
         await apiCall(`/admin/skills/${id}`, 'PUT', s);
-    } catch { /* mock mode */ }
-
-    renderSkills();
-    showToast(`✅ Προτίμηση ενημερώθηκε`, 'success');
+        renderSkills();
+        showToast(`✅ Προτίμηση ενημερώθηκε`, 'success');
+    } catch (err) {
+        s.is_preferred = prev;
+        renderSkills();
+        showToast(`❌ Σφάλμα ενημέρωσης προτίμησης: ${err.message}`, 'error');
+    }
 }
 
 async function addPartnership() {
@@ -3098,19 +3268,18 @@ async function addPartnership() {
     showAdminLoading(`⏳ Αποθήκευση συνεργασίας...`);
     try {
         const result = await apiCall('/admin/partnerships', 'POST', record);
-        partnerships.push(result || { id: Date.now(), ...record });
-    } catch {
-        partnerships.push({ id: Date.now(), ...record });
+        if (result) partnerships.push(result);
+        if (diagId) openPartnershipsGroups.add(String(diagId));
+        renderPartnerships();
+        document.getElementById('part-doctor-search').value = '';
+        document.getElementById('part-doctor-id').value = '';
+        document.getElementById('part-exclusive').checked = false;
+        showToast(`✅ Συνεργασία αποθηκεύτηκε`, 'success');
+    } catch (err) {
+        showToast(`❌ Σφάλμα αποθήκευσης συνεργασίας: ${err.message}`, 'error');
     } finally {
         hideAdminLoading();
     }
-
-    if (diagId) openPartnershipsGroups.add(String(diagId));
-    renderPartnerships();
-    document.getElementById('part-doctor-search').value = '';
-    document.getElementById('part-doctor-id').value = '';
-    document.getElementById('part-exclusive').checked = false;
-    showToast(`✅ Συνεργασία αποθηκεύτηκε`, 'success');
 }
 
 async function deletePartnership(id) {
@@ -3120,10 +3289,7 @@ async function deletePartnership(id) {
         showToast('Η συνεργασία διαγράφηκε', 'success');
         await loadPartnerships();
     } catch (err) {
-        // mock fallback
-        partnerships = partnerships.filter(p => String(p.id) !== String(id));
-        renderPartnerships();
-        showToast('Η συνεργασία διαγράφηκε (Mock)', 'success');
+        showToast(`❌ Σφάλμα διαγραφής συνεργασίας: ${err.message}`, 'error');
     }
 }
 
@@ -3136,13 +3302,7 @@ async function togglePartnershipProperty(id, property, newValue) {
         showToast(`${propName} της συνεργασίας ενημερώθηκε`, 'success');
         await loadPartnerships();
     } catch (err) {
-        // mock fallback
-        const p = partnerships.find(x => String(x.id) === String(id));
-        if (p) {
-            p[property] = newValue;
-        }
-        renderPartnerships();
-        showToast(`Ενημερώθηκε (Mock)`, 'success');
+        showToast(`❌ Σφάλμα ενημέρωσης συνεργασίας: ${err.message}`, 'error');
     }
 }
 async function addDoctor() {
@@ -3152,14 +3312,13 @@ async function addDoctor() {
 
     try {
         const result = await apiCall('/admin/doctors', 'POST', { name });
-        doctors.push(result || { id: `DR-${Date.now()}`, name });
-    } catch {
-        doctors.push({ id: `DR-${Date.now()}`, name });
+        if (result) doctors.push(result);
+        renderDoctors();
+        document.getElementById('new-doc-name').value = '';
+        showToast(`✅ Ο/Η ${name} προστέθηκε στη λίστα ιατρών`, 'success');
+    } catch (err) {
+        showToast(`❌ Σφάλμα προσθήκης ιατρού: ${err.message}`, 'error');
     }
-
-    renderDoctors();
-    document.getElementById('new-doc-name').value = '';
-    showToast(`✅ Ο/Η ${name} προστέθηκε στη λίστα ιατρών`, 'success');
 }
 
 
@@ -3200,7 +3359,7 @@ function showToast(message, type = 'info') {
     toast.className = `toast ${type}`;
     toast.innerHTML = `
         <span class="toast-icon">${icons[type] || 'ℹ️'}</span>
-        <span class="toast-message">${message}</span>
+        <span class="toast-message">${escapeHtml(message)}</span>
     `;
     container.appendChild(toast);
     setTimeout(() => {
@@ -3255,51 +3414,6 @@ function getMockAvailability() {
         { id: 1, diagnostician_id: 6, diagnostician_name: 'Αντωνίου Ζ.', date: today, status: 'on_leave', notes: 'Άδεια' },
     ];
 }
-
-// ══════════════════════════════════════════════
-//  Autocomplete for Doctor Search
-// ══════════════════════════════════════════════
-let doctorSearchTimeout = null;
-
-function debounceDoctorSearch() {
-    const q = document.getElementById('part-doctor-search').value.trim();
-    if (q.length < 2) {
-        document.getElementById('part-doctor-results').style.display = 'none';
-        return;
-    }
-    clearTimeout(doctorSearchTimeout);
-    doctorSearchTimeout = setTimeout(async () => {
-        const data = await apiCall(`/admin/doctors?q=${encodeURIComponent(q)}&limit=15`);
-        const resDiv = document.getElementById('part-doctor-results');
-        if (!data || !data.items || data.items.length === 0) {
-            resDiv.innerHTML = '<div style="padding:8px; color:var(--text-tertiary);">Δεν βρέθηκαν αποτελέσματα</div>';
-            resDiv.style.display = 'block';
-            return;
-        }
-        resDiv.innerHTML = data.items.map(d => `
-            <div style="padding:8px; cursor:pointer; border-bottom:1px solid var(--border-color);"
-                 onclick="selectDoctor('${d.id}', '${d.name.replace(/'/g, "\\'")}')" 
-                 onmouseover="this.style.background='var(--bg-tertiary)'"
-                 onmouseout="this.style.background='transparent'">
-                 ${d.name} <span style="color:var(--text-tertiary);font-size:0.85em;">(${d.id})</span>
-            </div>
-        `).join('');
-        resDiv.style.display = 'block';
-    }, 300);
-}
-
-function selectDoctor(id, name) {
-    document.getElementById('part-doctor-id').value = id;
-    document.getElementById('part-doctor-search').value = `${name} (${id})`;
-    document.getElementById('part-doctor-results').style.display = 'none';
-}
-
-document.addEventListener('click', (e) => {
-    const res = document.getElementById('part-doctor-results');
-    if (res && e.target.id !== 'part-doctor-search') {
-        res.style.display = 'none';
-    }
-});
 
 function renderWeeklyScheduleGrid() {
     const tbody = document.getElementById('weekly-schedule-tbody');
@@ -3431,11 +3545,11 @@ function renderAdvancedOptions() {
     if (routingTbody) {
         routingTbody.innerHTML = advRoutingRules.map(r => `
             <tr>
-                <td>${getLabName(r.lab_id)}</td>
-                <td>${r.is_pamakristos ? 'ΠΑΜΜΑΚΑΡΙΣΤΟΣ' : (r.issuing_doctor_name || '-')}</td>
-                <td class="wrap-text">${r.exam_codes}</td>
-                <td>${r.diagnostician_name}</td>
-                <td class="wrap-text">${r.description || '-'}</td>
+                <td>${escapeHtml(getLabName(r.lab_id))}</td>
+                <td>${r.is_pamakristos ? 'ΠΑΜΜΑΚΑΡΙΣΤΟΣ' : escapeHtml(r.issuing_doctor_name || '-')}</td>
+                <td class="wrap-text">${escapeHtml(r.exam_codes)}</td>
+                <td>${escapeHtml(r.diagnostician_name)}</td>
+                <td class="wrap-text">${escapeHtml(r.description || '-')}</td>
                 <td>
                     <button class="btn ${r.is_active ? 'btn-danger' : 'btn-success'} btn-sm" onclick="toggleAdvancedRule('routing', ${r.id}, ${!r.is_active})">
                         ${r.is_active ? 'Απενεργοποίηση' : 'Ενεργοποίηση'}
@@ -3449,15 +3563,13 @@ function renderAdvancedOptions() {
         `).join('');
     }
 
-    
-
     // 2. Exclusive Labs
     const exclTbody = document.getElementById('adv-excl-tbody');
     if (exclTbody) {
         exclTbody.innerHTML = advExclusiveRules.map(r => `
             <tr>
-                <td>${r.diagnostician_name}</td>
-                <td>${r.lab_name}</td>
+                <td>${escapeHtml(r.diagnostician_name)}</td>
+                <td>${escapeHtml(r.lab_name)}</td>
                 <td>
                     <button class="btn ${r.is_active ? 'btn-danger' : 'btn-success'} btn-sm" onclick="toggleAdvancedRule('exclusive', ${r.id}, ${!r.is_active})">
                         ${r.is_active ? 'Απενεργοποίηση' : 'Ενεργοποίηση'}
@@ -3476,9 +3588,9 @@ function renderAdvancedOptions() {
     if (quotaTbody) {
         quotaTbody.innerHTML = advModalityQuotas.map(r => `
             <tr>
-                <td>${r.diagnostician_name}</td>
-                <td>${r.modality}</td>
-                <td>${r.max_count}</td>
+                <td>${escapeHtml(r.diagnostician_name)}</td>
+                <td>${escapeHtml(r.modality)}</td>
+                <td>${escapeHtml(r.max_count)}</td>
                 <td>
                     <button class="btn ${r.is_active ? 'btn-danger' : 'btn-success'} btn-sm" onclick="toggleAdvancedRule('quota', ${r.id}, ${!r.is_active})">
                         ${r.is_active ? 'Απενεργοποίηση' : 'Ενεργοποίηση'}
@@ -3512,15 +3624,17 @@ function updateAdvRouteMutualExclusion() {
 }
 
 function checkRoutingRuleOverlap(payload, editId = null) {
-    const payloadCodes = payload.exam_codes.split(',').map(c => c.trim());
+    const payloadCodes = payload.exam_codes.split(',').map(c => c.trim()).filter(Boolean);
     for (let r of advRoutingRules) {
         if (!r.is_active) continue;
         if (editId && r.id === editId) continue;
         
-        const labMatch = r.lab_id == null || payload.lab_id == null || r.lab_id == payload.lab_id;
-        const pamIntersect = (!r.is_pamakristos) || (!payload.is_pamakristos) || (!!r.is_pamakristos === !!payload.is_pamakristos);
-        const docMatch = r.issuing_doctor_id == null || payload.issuing_doctor_id == null || r.issuing_doctor_id == payload.issuing_doctor_id;
-        const rCodes = (r.exam_codes || '').split(',').map(c => c.trim());
+        const labMatch = r.lab_id == null || payload.lab_id == null || Number(r.lab_id) === Number(payload.lab_id);
+        const pamConflict = (Boolean(r.is_pamakristos) && Boolean(payload.issuing_doctor_id) && !payload.is_pamakristos) ||
+                            (Boolean(payload.is_pamakristos) && Boolean(r.issuing_doctor_id) && !r.is_pamakristos);
+        const pamIntersect = !pamConflict;
+        const docMatch = r.issuing_doctor_id == null || payload.issuing_doctor_id == null || String(r.issuing_doctor_id) === String(payload.issuing_doctor_id);
+        const rCodes = (r.exam_codes || '').split(',').map(c => c.trim()).filter(Boolean);
         const codeIntersect = payloadCodes.some(c => rCodes.includes(c));
         
         if (labMatch && pamIntersect && docMatch && codeIntersect) {
@@ -3555,12 +3669,12 @@ async function addExamRoutingRule() {
     }
 
     const payload = {
-        lab_id: labId ? parseInt(labId) : null,
+        lab_id: labId ? parseInt(labId, 10) : null,
         issuing_doctor_id: docId || null,
         issuing_doctor_name: docName || null,
         is_pamakristos: isPam,
         exam_codes: codes,
-        diagnostician_id: parseInt(diagId),
+        diagnostician_id: parseInt(diagId, 10),
         description: desc || (isPam ? "Από Παμμακάριστο" : (labId ? `Εργ. ${labId}` : "Γενικός κανόνας"))
     };
 
@@ -3571,27 +3685,27 @@ async function addExamRoutingRule() {
         }
     }
 
-    const data = await apiCall('/admin/advanced/exam-routing-rules', 'POST', payload);
-    if (data) {
-        showToast('Ο κανόνας προστέθηκε.');
-        selectedRouteExamCodes.clear();
-        renderExamCodeTags('route');
-        document.getElementById('adv-route-lab').value = '';
-        if (document.getElementById('adv-route-codes-search')) document.getElementById('adv-route-codes-search').value = '';
-        document.getElementById('adv-route-doc').value = '';
-        document.getElementById('adv-route-doc-search').value = '';
-        document.getElementById('adv-route-desc').value = '';
-        document.getElementById('adv-route-pam').checked = false;
-        updateAdvRouteMutualExclusion();
-        await loadAdvancedOptions();
+    try {
+        const data = await apiCall('/admin/advanced/exam-routing-rules', 'POST', payload);
+        if (data) {
+            showToast('Ο κανόνας προστέθηκε.', 'success');
+            clearExamRoutingForm();
+            await loadAdvancedOptions();
+        }
+    } catch (err) {
+        showToast(`❌ Σφάλμα αποθήκευσης κανόνα: ${err.message}`, 'error');
     }
 }
 async function deleteExamRoutingRule(id) {
-    if(!confirm("Διαγραφή κανόνα;")) return;
-    const res = await apiCall(`/admin/advanced/exam-routing-rules/${id}`, 'DELETE');
-    if(res) {
-        showToast('Διαγράφηκε.');
-        await loadAdvancedOptions();
+    if (!confirm("Διαγραφή κανόνα;")) return;
+    try {
+        const res = await apiCall(`/admin/advanced/exam-routing-rules/${id}`, 'DELETE');
+        if (res) {
+            showToast('Διαγράφηκε.', 'success');
+            await loadAdvancedOptions();
+        }
+    } catch (err) {
+        showToast(`❌ Σφάλμα διαγραφής κανόνα: ${err.message}`, 'error');
     }
 }
 
@@ -3600,56 +3714,73 @@ async function addExclusiveLabRule() {
     const labSelect = document.getElementById('adv-excl-lab');
     const labId = labSelect.value;
     
-    if(!diagId || !labId) {
+    if (!diagId || !labId) {
         showToast('Συμπληρώστε διαγνώστη και εργαστήριο.', 'warning');
         return;
     }
     const name = labSelect.options[labSelect.selectedIndex].text;
-    const data = await apiCall('/admin/advanced/exclusive-lab-rules', 'POST', {
-        diagnostician_id: parseInt(diagId),
-        lab_id: parseInt(labId),
-        lab_name: name
-    });
-    if(data) {
-        showToast('Ο κανόνας προστέθηκε.');
-        labSelect.value = '';
-        await loadAdvancedOptions();
+    try {
+        const data = await apiCall('/admin/advanced/exclusive-lab-rules', 'POST', {
+            diagnostician_id: parseInt(diagId, 10),
+            lab_id: parseInt(labId, 10),
+            lab_name: name
+        });
+        if (data) {
+            showToast('Ο κανόνας προστέθηκε.', 'success');
+            clearExclusiveLabForm();
+            await loadAdvancedOptions();
+        }
+    } catch (err) {
+        showToast(`❌ Σφάλμα αποθήκευσης κανόνα: ${err.message}`, 'error');
     }
 }
 async function deleteExclusiveLabRule(id) {
-    if(!confirm("Διαγραφή κανόνα;")) return;
-    const res = await apiCall(`/admin/advanced/exclusive-lab-rules/${id}`, 'DELETE');
-    if(res) {
-        showToast('Διαγράφηκε.');
-        await loadAdvancedOptions();
+    if (!confirm("Διαγραφή κανόνα;")) return;
+    try {
+        const res = await apiCall(`/admin/advanced/exclusive-lab-rules/${id}`, 'DELETE');
+        if (res) {
+            showToast('Διαγράφηκε.', 'success');
+            await loadAdvancedOptions();
+        }
+    } catch (err) {
+        showToast(`❌ Σφάλμα διαγραφής κανόνα: ${err.message}`, 'error');
     }
 }
 
 async function addModalityQuota() {
     const diagId = document.getElementById('adv-quota-diag').value;
     const mod = document.getElementById('adv-quota-modality').value;
-    const count = document.getElementById('adv-quota-count').value;
-    if(!diagId || !count) {
-        showToast('Συμπληρώστε διαγνώστη και όριο.', 'warning');
+    const rawCount = document.getElementById('adv-quota-count').value;
+    const parsedCount = parseInt(rawCount, 10);
+    if (!diagId || rawCount === '' || isNaN(parsedCount) || parsedCount < 0) {
+        showToast('Συμπληρώστε διαγνώστη και έγκυρο όριο (>= 0).', 'warning');
         return;
     }
-    const data = await apiCall('/admin/advanced/modality-quotas', 'POST', {
-        diagnostician_id: parseInt(diagId),
-        modality: mod,
-        max_count: parseInt(count)
-    });
-    if(data) {
-        showToast('Ο κανόνας προστέθηκε.');
-        document.getElementById('adv-quota-count').value = '';
-        await loadAdvancedOptions();
+    try {
+        const data = await apiCall('/admin/advanced/modality-quotas', 'POST', {
+            diagnostician_id: parseInt(diagId, 10),
+            modality: mod,
+            max_count: parsedCount
+        });
+        if (data) {
+            showToast('Ο κανόνας προστέθηκε.', 'success');
+            clearModalityQuotaForm();
+            await loadAdvancedOptions();
+        }
+    } catch (err) {
+        showToast(`❌ Σφάλμα αποθήκευσης ορίου: ${err.message}`, 'error');
     }
 }
 async function deleteModalityQuota(id) {
-    if(!confirm("Διαγραφή κανόνα;")) return;
-    const res = await apiCall(`/admin/advanced/modality-quotas/${id}`, 'DELETE');
-    if(res) {
-        showToast('Διαγράφηκε.');
-        await loadAdvancedOptions();
+    if (!confirm("Διαγραφή κανόνα;")) return;
+    try {
+        const res = await apiCall(`/admin/advanced/modality-quotas/${id}`, 'DELETE');
+        if (res) {
+            showToast('Διαγράφηκε.', 'success');
+            await loadAdvancedOptions();
+        }
+    } catch (err) {
+        showToast(`❌ Σφάλμα διαγραφής ορίου: ${err.message}`, 'error');
     }
 }
 
@@ -3659,16 +3790,23 @@ async function toggleAdvancedRule(type, id, newStatus) {
     if (type === 'exclusive') endpoint = `/admin/advanced/exclusive-lab-rules/${id}`;
     if (type === 'quota') endpoint = `/admin/advanced/modality-quotas/${id}`;
     
-    const res = await apiCall(endpoint, 'PUT', { is_active: newStatus });
-    if (res) {
-        showToast(newStatus ? 'Ενεργοποιήθηκε' : 'Απενεργοποιήθηκε');
-        await loadAdvancedOptions();
+    try {
+        const res = await apiCall(endpoint, 'PUT', { is_active: newStatus });
+        if (res) {
+            showToast(newStatus ? 'Ενεργοποιήθηκε' : 'Απενεργοποιήθηκε', 'success');
+            await loadAdvancedOptions();
+        }
+    } catch (err) {
+        showToast(`❌ Σφάλμα ενημέρωσης κανόνα: ${err.message}`, 'error');
     }
 }
 
 // Clear / Reset Form Helpers for Advanced Options
 function clearExamRoutingForm() {
-    document.getElementById('adv-route-lab').value = '';
+    const labEl = document.getElementById('adv-route-lab');
+    const diagEl = document.getElementById('adv-route-diag');
+    if (labEl) { labEl.value = ''; syncCustomGlassSelect(labEl); }
+    if (diagEl) { diagEl.value = ''; syncCustomGlassSelect(diagEl); }
     document.getElementById('adv-route-doc').value = '';
     document.getElementById('adv-route-doc-search').value = '';
     document.getElementById('adv-route-pam').checked = false;
@@ -3687,7 +3825,10 @@ function clearExamRoutingForm() {
 }
 
 function clearExclusiveLabForm() {
-    document.getElementById('adv-excl-lab').value = '';
+    const diagEl = document.getElementById('adv-excl-diag');
+    const labEl = document.getElementById('adv-excl-lab');
+    if (diagEl) { diagEl.value = ''; syncCustomGlassSelect(diagEl); }
+    if (labEl) { labEl.value = ''; syncCustomGlassSelect(labEl); }
 
     const btn = document.getElementById('adv-excl-lab').closest('.admin-form').querySelector('button.btn-primary');
     btn.textContent = 'Προσθήκη';
@@ -3698,6 +3839,10 @@ function clearExclusiveLabForm() {
 }
 
 function clearModalityQuotaForm() {
+    const diagEl = document.getElementById('adv-quota-diag');
+    const modEl = document.getElementById('adv-quota-modality');
+    if (diagEl) { diagEl.value = ''; syncCustomGlassSelect(diagEl); }
+    if (modEl) { modEl.value = 'CT'; syncCustomGlassSelect(modEl); }
     document.getElementById('adv-quota-count').value = '';
 
     const btn = document.getElementById('adv-quota-count').closest('.admin-form').querySelector('button.btn-primary');
@@ -3712,7 +3857,10 @@ function clearModalityQuotaForm() {
 function editExamRoutingRule(id) {
     const r = advRoutingRules.find(x => x.id === id);
     if (!r) return;
-    document.getElementById('adv-route-lab').value = r.lab_id || '';
+    const labEl = document.getElementById('adv-route-lab');
+    const diagEl = document.getElementById('adv-route-diag');
+    labEl.value = r.lab_id || '';
+    syncCustomGlassSelect(labEl);
     document.getElementById('adv-route-doc').value = r.issuing_doctor_id || '';
     document.getElementById('adv-route-doc-search').value = r.issuing_doctor_name ? `${r.issuing_doctor_name} (${r.issuing_doctor_id})` : '';
     document.getElementById('adv-route-pam').checked = r.is_pamakristos;
@@ -3724,7 +3872,8 @@ function editExamRoutingRule(id) {
     renderExamCodeTags('route');
     if (document.getElementById('adv-route-codes-search')) document.getElementById('adv-route-codes-search').value = '';
 
-    document.getElementById('adv-route-diag').value = r.diagnostician_id;
+    diagEl.value = r.diagnostician_id;
+    syncCustomGlassSelect(diagEl);
     document.getElementById('adv-route-desc').value = r.description || '';
     
     updateAdvRouteMutualExclusion();
@@ -3765,12 +3914,12 @@ function editExamRoutingRule(id) {
         }
 
         const payload = {
-             lab_id: labId ? parseInt(labId) : null,
+             lab_id: labId ? parseInt(labId, 10) : null,
              issuing_doctor_id: docId || null,
              issuing_doctor_name: docName || null,
              is_pamakristos: document.getElementById('adv-route-pam').checked,
              exam_codes: codesValue,
-             diagnostician_id: parseInt(document.getElementById('adv-route-diag').value),
+             diagnostician_id: parseInt(document.getElementById('adv-route-diag').value, 10),
              description: desc
         };
 
@@ -3781,11 +3930,15 @@ function editExamRoutingRule(id) {
             }
         }
 
-        const data = await apiCall(`/admin/advanced/exam-routing-rules/${id}`, 'PUT', payload);
-        if(data) {
-             showToast('Αποθηκεύτηκε');
-             clearExamRoutingForm();
-             await loadAdvancedOptions();
+        try {
+            const data = await apiCall(`/admin/advanced/exam-routing-rules/${id}`, 'PUT', payload);
+            if (data) {
+                 showToast('Αποθηκεύτηκε', 'success');
+                 clearExamRoutingForm();
+                 await loadAdvancedOptions();
+            }
+        } catch (err) {
+            showToast(`❌ Σφάλμα αποθήκευσης: ${err.message}`, 'error');
         }
     };
 }
@@ -3793,8 +3946,12 @@ function editExamRoutingRule(id) {
 function editExclusiveLabRule(id) {
     const r = advExclusiveRules.find(x => x.id === id);
     if (!r) return;
-    document.getElementById('adv-excl-diag').value = r.diagnostician_id;
-    document.getElementById('adv-excl-lab').value = r.lab_id;
+    const diagEl = document.getElementById('adv-excl-diag');
+    const labEl = document.getElementById('adv-excl-lab');
+    diagEl.value = r.diagnostician_id;
+    labEl.value = r.lab_id;
+    syncCustomGlassSelect(diagEl);
+    syncCustomGlassSelect(labEl);
     
     const clearBtn = document.getElementById('adv-excl-clear-btn');
     if (clearBtn) clearBtn.style.display = 'inline-block';
@@ -3803,15 +3960,23 @@ function editExclusiveLabRule(id) {
     btn.textContent = 'Αποθήκευση';
     btn.onclick = async () => {
         const labSelect = document.getElementById('adv-excl-lab');
-        const data = await apiCall(`/admin/advanced/exclusive-lab-rules/${id}`, 'PUT', {
-             diagnostician_id: parseInt(document.getElementById('adv-excl-diag').value),
-             lab_id: parseInt(labSelect.value),
-             lab_name: labSelect.options[labSelect.selectedIndex].text
-        });
-        if(data) {
-             showToast('Αποθηκεύτηκε');
-             clearExclusiveLabForm();
-             await loadAdvancedOptions();
+        if (!diagEl.value || !labSelect.value) {
+            showToast('Συμπληρώστε διαγνώστη και εργαστήριο.', 'warning');
+            return;
+        }
+        try {
+            const data = await apiCall(`/admin/advanced/exclusive-lab-rules/${id}`, 'PUT', {
+                 diagnostician_id: parseInt(diagEl.value, 10),
+                 lab_id: parseInt(labSelect.value, 10),
+                 lab_name: labSelect.options[labSelect.selectedIndex].text
+            });
+            if (data) {
+                 showToast('Αποθηκεύτηκε', 'success');
+                 clearExclusiveLabForm();
+                 await loadAdvancedOptions();
+            }
+        } catch (err) {
+            showToast(`❌ Σφάλμα αποθήκευσης: ${err.message}`, 'error');
         }
     };
 }
@@ -3819,8 +3984,12 @@ function editExclusiveLabRule(id) {
 function editModalityQuota(id) {
     const r = advModalityQuotas.find(x => x.id === id);
     if (!r) return;
-    document.getElementById('adv-quota-diag').value = r.diagnostician_id;
-    document.getElementById('adv-quota-modality').value = r.modality;
+    const diagEl = document.getElementById('adv-quota-diag');
+    const modEl = document.getElementById('adv-quota-modality');
+    diagEl.value = r.diagnostician_id;
+    modEl.value = r.modality;
+    syncCustomGlassSelect(diagEl);
+    syncCustomGlassSelect(modEl);
     document.getElementById('adv-quota-count').value = r.max_count;
     
     const clearBtn = document.getElementById('adv-quota-clear-btn');
@@ -3829,15 +3998,25 @@ function editModalityQuota(id) {
     const btn = document.getElementById('adv-quota-count').closest('.admin-form').querySelector('button.btn-primary');
     btn.textContent = 'Αποθήκευση';
     btn.onclick = async () => {
-        const data = await apiCall(`/admin/advanced/modality-quotas/${id}`, 'PUT', {
-             diagnostician_id: parseInt(document.getElementById('adv-quota-diag').value),
-             modality: document.getElementById('adv-quota-modality').value,
-             max_count: parseInt(document.getElementById('adv-quota-count').value)
-        });
-        if(data) {
-             showToast('Αποθηκεύτηκε');
-             clearModalityQuotaForm();
-             await loadAdvancedOptions();
+        const rawCount = document.getElementById('adv-quota-count').value;
+        const parsedCount = parseInt(rawCount, 10);
+        if (!diagEl.value || rawCount === '' || isNaN(parsedCount) || parsedCount < 0) {
+            showToast('Συμπληρώστε διαγνώστη και έγκυρο όριο (>= 0).', 'warning');
+            return;
+        }
+        try {
+            const data = await apiCall(`/admin/advanced/modality-quotas/${id}`, 'PUT', {
+                 diagnostician_id: parseInt(diagEl.value, 10),
+                 modality: modEl.value,
+                 max_count: parsedCount
+            });
+            if (data) {
+                 showToast('Αποθηκεύτηκε', 'success');
+                 clearModalityQuotaForm();
+                 await loadAdvancedOptions();
+            }
+        } catch (err) {
+            showToast(`❌ Σφάλμα αποθήκευσης: ${err.message}`, 'error');
         }
     };
 }
@@ -3963,38 +4142,62 @@ function updateWeightsTotal() {
 }
 
 async function saveSystemWeights() {
-    const payload = {};
-    WEIGHT_KEYS.forEach(k => {
+    const vals = {};
+    for (const k of WEIGHT_KEYS) {
         const id = k.replaceAll('_', '-');
         const el = document.getElementById(id);
-        if (el) {
-            // Convert back to absolute (0 to 1) for the DB
-            payload[k] = (parseFloat(el.value || 0) / 100).toString();
+        const v = el ? parseFloat(el.value) : 0;
+        if (isNaN(v) || v < 0 || v > 100) {
+            showToast('Όλες οι τιμές βαρών πρέπει να είναι μεταξύ 0% και 100%.', 'warning');
+            return;
         }
+        vals[k] = v;
+    }
+
+    if (vals.pts_skills_pref < vals.pts_skills_neut || vals.pts_skills_neut < vals.pts_skills_none) {
+        showToast('Στα Skills πρέπει να ισχύει: Προτίμηση >= Ουδέτερο >= Χωρίς Δεδομένα.', 'warning');
+        return;
+    }
+    if (vals.pts_lab_pref < vals.pts_lab_neut || vals.pts_lab_neut < vals.pts_lab_other) {
+        showToast('Στα Εργαστήρια πρέπει να ισχύει: Το Προτιμάει >= Ουδέτερο >= Προτιμά Άλλο.', 'warning');
+        return;
+    }
+
+    const payload = {};
+    WEIGHT_KEYS.forEach(k => {
+        payload[k] = (vals[k] / 100).toString();
     });
     
     try {
         await apiCall('/assignments/weights', 'PUT', payload);
+        clearSectionDirty('advanced');
         
         // Show success
         const btn = document.getElementById('btn-save-weights');
         const origText = btn.textContent;
         btn.textContent = 'Αποθηκεύτηκαν!';
         btn.classList.add('btn-success');
+        showToast('✅ Τα βάρη αξιολόγησης αποθηκεύτηκαν!', 'success');
         setTimeout(() => {
             btn.textContent = origText;
             btn.classList.remove('btn-success');
         }, 2000);
         
     } catch (err) {
-        alert(err.message);
+        showToast(`❌ Σφάλμα αποθήκευσης βαρών: ${err.message}`, 'error');
     }
 }
 
 // Add event listeners to all weight inputs to update the total
-document.querySelectorAll('.weight-input').forEach(input => {
-    input.addEventListener('input', updateWeightsTotal);
-    input.addEventListener('change', updateWeightsTotal);
+document.querySelectorAll('.weight-input, .weight-range-slider').forEach(input => {
+    input.addEventListener('input', () => {
+        markSectionDirty('advanced');
+        updateWeightsTotal();
+    });
+    input.addEventListener('change', () => {
+        markSectionDirty('advanced');
+        updateWeightsTotal();
+    });
 });
 
 // Advanced Routing Doctor Search
@@ -4018,8 +4221,9 @@ async function searchAdvDoctors() {
         if (data && data.items && data.items.length > 0) {
             resEl.innerHTML = data.items.map(d => `
                 <div style="padding:8px 12px; cursor:pointer; border-bottom:1px solid var(--border-color);" 
-                     onclick="selectAdvDoctor(${d.id}, '${d.name.replace(/'/g, "\'")}')">
-                    <strong>${d.name}</strong> <span style="color:var(--text-secondary);font-size:0.85em;">(${d.id})</span>
+                     data-doc-id="${escapeHtml(d.id)}" data-doc-name="${escapeHtml(d.name)}"
+                     onclick="selectAdvDoctor(this.dataset.docId, this.dataset.docName)">
+                    <strong>${escapeHtml(d.name)}</strong> <span style="color:var(--text-secondary);font-size:0.85em;">(${escapeHtml(d.id)})</span>
                 </div>
             `).join('');
             resEl.style.display = 'block';
@@ -4105,6 +4309,13 @@ async function submitChangeCreds(e) {
         return;
     }
 
+    if (newPassword && newPassword.length < 8) {
+        const errorMsg = 'Ο νέος κωδικός πρόσβασης πρέπει να έχει τουλάχιστον 8 χαρακτήρες.';
+        showCredsModalMessage(errorMsg, false);
+        showToast(errorMsg, 'warning');
+        return;
+    }
+
     try {
         const payload = {
             old_password: oldPassword,
@@ -4177,7 +4388,7 @@ function renderAdminUsers() {
             const toggleText = u.is_active ? 'Απενεργοποίηση' : 'Ενεργοποίηση';
             actions += ` <button class="btn ${toggleClass} btn-sm" onclick="toggleAdminUser(${u.id})">${toggleText}</button>`;
             
-            actions += ` <button class="btn btn-secondary btn-sm" onclick="resetAdminUser(${u.id})">Επαναφορά (admin/admin1234)</button>`;
+            actions += ` <button class="btn btn-secondary btn-sm" onclick="resetAdminUser(${u.id})">Επαναφορά Κωδικού</button>`;
         }
         
         let roleBadge = '';
@@ -4188,7 +4399,7 @@ function renderAdminUsers() {
         }
             
         tr.innerHTML = `
-            <td>${u.username}</td>
+            <td>${escapeHtml(u.username)}</td>
             <td>${roleBadge}</td>
             <td>${u.is_active ? '<span style="color:var(--success-color);">Ενεργός</span>' : '<span style="color:var(--error-color);">Ανενεργός</span>'}</td>
             <td style="display:flex; gap:6px;">${actions}</td>
@@ -4199,11 +4410,15 @@ function renderAdminUsers() {
 
 async function createAdminUser() {
     const username = document.getElementById('new-user-username').value.trim();
-    const password = document.getElementById('new-user-password').value.trim();
+    const password = document.getElementById('new-user-password').value;
     const role = document.getElementById('new-user-role').value;
     
     if (!username || !password) {
         showToast('Συμπληρώστε όνομα χρήστη και κωδικό.', 'warning');
+        return;
+    }
+    if (password.length < 8) {
+        showToast('Ο κωδικός πρόσβασης πρέπει να έχει τουλάχιστον 8 χαρακτήρες.', 'warning');
         return;
     }
     
@@ -4234,11 +4449,17 @@ async function deleteAdminUser(id) {
 }
 
 async function resetAdminUser(id) {
-    if (!confirm('Είστε σίγουροι ότι θέλετε να επαναφέρετε τα στοιχεία αυτού του διαχειριστή σε admin / admin1234;')) return;
+    if (!confirm('Θέλετε να δημιουργήσετε νέο προσωρινό κωδικό πρόσβασης για αυτόν τον διαχειριστή; (Όλες οι ενεργές συνεδρίες του θα τερματιστούν)')) return;
     try {
         const res = await apiCall(`/admin/users/${id}/reset`, 'POST');
         if (res) {
-            showToast('Τα στοιχεία επαναφέρθηκαν επιτυχώς.', 'success');
+            if (res.temporary_password) {
+                prompt(
+                    `Νέος προσωρινός κωδικός για τον χρήστη "${res.username || ''}":\n(Αντιγράψτε τον τώρα — δεν εμφανίζεται ξανά)`,
+                    res.temporary_password
+                );
+            }
+            showToast(res.message || 'Ο κωδικός επαναφέρθηκε επιτυχώς.', 'success');
             loadAdminUsers();
         }
     } catch (e) {
@@ -4247,6 +4468,9 @@ async function resetAdminUser(id) {
 }
 
 async function toggleAdminUser(id) {
+    const user = adminUsers.find(u => u.id === id);
+    const actionLabel = user && user.is_active ? 'απενεργοποιήσετε' : 'ενεργοποιήσετε';
+    if (!confirm(`Θέλετε να ${actionLabel} τον χρήστη "${user ? user.username : id}";`)) return;
     try {
         const res = await apiCall(`/admin/users/${id}/toggle`, 'POST');
         if (res) {

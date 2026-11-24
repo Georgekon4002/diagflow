@@ -19,6 +19,7 @@
 --   12. df_system_settings         — Scoring engine weights and tuneable thresholds
 --   13. df_assignment_log          — Audit trail of pushed exam assignments
 --   14. df_local_assignments       — Staged/pending assignments shared across all PCs
+--   15. df_dismissed_auto_assignments — Dismissed auto-assignment exclusions
 -- =============================================================================
 
 SET ANSI_NULLS ON;
@@ -172,7 +173,7 @@ BEGIN
         issuing_doctor_name NVARCHAR(200)  NULL,
         is_active           BIT            NOT NULL DEFAULT 1,
         CONSTRAINT FK_df_routing_diag FOREIGN KEY (diagnostician_id) 
-            REFERENCES df_diagnosticians(id)
+            REFERENCES df_diagnosticians(id) ON DELETE CASCADE
     );
     PRINT 'Created table df_exam_routing_rules';
 END
@@ -190,7 +191,7 @@ BEGIN
         lab_name         NVARCHAR(200) NULL,
         is_active        BIT           NOT NULL DEFAULT 1,
         CONSTRAINT FK_df_labrule_diag FOREIGN KEY (diagnostician_id) 
-            REFERENCES df_diagnosticians(id)
+            REFERENCES df_diagnosticians(id) ON DELETE CASCADE
     );
     PRINT 'Created table df_exclusive_lab_rules';
 END
@@ -208,7 +209,7 @@ BEGIN
         max_count        INT          NOT NULL,
         is_active        BIT          NOT NULL DEFAULT 1,
         CONSTRAINT FK_df_modquota_diag FOREIGN KEY (diagnostician_id) 
-            REFERENCES df_diagnosticians(id)
+            REFERENCES df_diagnosticians(id) ON DELETE CASCADE
     );
     PRINT 'Created table df_modality_quotas';
 END
@@ -223,7 +224,7 @@ BEGIN
         weekday          INT PRIMARY KEY,  -- 0=Monday, 1=Tuesday, 2=Wednesday, 3=Thursday, 4=Friday
         diagnostician_id INT NOT NULL,
         CONSTRAINT FK_df_pamakristos_diag FOREIGN KEY (diagnostician_id) 
-            REFERENCES df_diagnosticians(id)
+            REFERENCES df_diagnosticians(id) ON DELETE CASCADE
     );
     PRINT 'Created table df_pamakristos_schedule';
 END
@@ -248,15 +249,21 @@ GO
 IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'df_assignment_log')
 BEGIN
     CREATE TABLE df_assignment_log (
-        exammoreid       INT           PRIMARY KEY,
-        diagnostician_id INT           NOT NULL,
-        assigned_at      NVARCHAR(50)  NOT NULL,
-        modality         NVARCHAR(50)  NULL,
-        extracode        NVARCHAR(100) NULL,
-        visitdate        NVARCHAR(50)  NULL
+        exammoreid                 INT           PRIMARY KEY,
+        diagnostician_id           INT           NOT NULL,
+        assigned_at                NVARCHAR(50)  NOT NULL,
+        modality                   NVARCHAR(50)  NULL,
+        extracode                  NVARCHAR(100) NULL,
+        visitdate                  NVARCHAR(50)  NULL,
+        suggested_diagnostician_id INT           NULL,
+        was_overridden             BIT           NOT NULL DEFAULT 0,
+        override_reason            NVARCHAR(500) NULL,
+        rules_fired                NVARCHAR(MAX) NULL,
+        score_breakdown            NVARCHAR(MAX) NULL
     );
     CREATE INDEX idx_df_assignlog_diag ON df_assignment_log(diagnostician_id);
     CREATE INDEX idx_df_assignlog_date ON df_assignment_log(assigned_at);
+    CREATE INDEX idx_df_assignlog_visitdate ON df_assignment_log(visitdate);
     PRINT 'Created table df_assignment_log';
 END
 GO
@@ -278,6 +285,7 @@ BEGIN
         visitdate          NVARCHAR(50)  NULL
     );
     CREATE INDEX idx_df_localassign_diag ON df_local_assignments(diagnostician_id);
+    CREATE INDEX idx_df_localassign_visitdate ON df_local_assignments(visitdate);
     PRINT 'Created table df_local_assignments';
 END
 GO

@@ -23,7 +23,7 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=['torch', 'torchvision', 'scipy', 'skimage', 'easyocr', 'cv2', 'pandas', 'numpy', 'pytest', 'sympy', 'matplotlib', 'PIL', 'openpyxl'],
+    excludes=['torch', 'torchvision', 'scipy', 'skimage', 'easyocr', 'cv2', 'pandas', 'pytest', 'sympy', 'matplotlib', 'PIL', 'openpyxl'],
     noarchive=False,
     optimize=0,
 )
@@ -39,7 +39,7 @@ exe = EXE(
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,
+    upx=False,
     upx_exclude=[],
     runtime_tmpdir=None,
     console=False,

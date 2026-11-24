@@ -47,6 +47,7 @@ class ExamContext:
     is_pamakristos: bool = False  # Is this from Παμακάριστος hospital?
     request_date: Optional[date] = None
     oldpers: Optional[int] = None  # ID of the diagnostician who diagnosed past exam
+    extracode: str = ""  # Order ID for same-order consistency
 
 
 @dataclass
@@ -205,7 +206,7 @@ def filter_by_modality(
     """
     modality = exam.modality.upper()
     is_ct = modality == "CT"
-    is_mri = modality == "MRI"
+    is_mri = modality in ("MRI", "MRA")
 
     if is_ct and not candidate.can_ct:
         return FilterResult(
@@ -221,7 +222,7 @@ def filter_by_modality(
         )
     return FilterResult(
         passed=True,
-        rule_name="modality_filter",
+        rule_name="modality",
         reason=f"Μπορεί να αξιολογήσει {modality}",
     )
 
@@ -309,17 +310,28 @@ def apply_hard_filters(
         if candidate.id in excluded_by_comment:
             candidate.is_excluded_by_comment = True
 
+    # Pre-group active exclusive lab rules per diagnostician so multiple allowed labs work as OR (not AND)
+    exclusive_labs_by_diag: dict[int, tuple[set[str], list[str]]] = {}
+    for rule in exclusive_rules:
+        if not rule.get("is_active", True):
+            continue
+        did = rule["diagnostician_id"]
+        lab_ids, lab_names = exclusive_labs_by_diag.setdefault(did, (set(), []))
+        lab_ids.add(str(rule["lab_id"]))
+        lname = rule.get("lab_name") or str(rule["lab_id"])
+        if lname not in lab_names:
+            lab_names.append(lname)
+
     def filter_by_exclusive_lab_dynamic(candidate: CandidateDiagnostician, exam: ExamContext) -> FilterResult:
-        for rule in exclusive_rules:
-            if not rule.get("is_active", True):
-                continue
-            if candidate.id == rule["diagnostician_id"]:
-                if str(exam.lab_id) != str(rule["lab_id"]):
-                    return FilterResult(
-                        passed=False,
-                        rule_name="exclusive_lab_constraint",
-                        reason=f"Αποκλειστικό εργαστήριο ({rule['lab_name']})",
-                    )
+        entry = exclusive_labs_by_diag.get(candidate.id)
+        if entry:
+            allowed_lab_ids, allowed_lab_names = entry
+            if str(exam.lab_id) not in allowed_lab_ids:
+                return FilterResult(
+                    passed=False,
+                    rule_name="exclusive_lab_constraint",
+                    reason=f"Αποκλειστικό εργαστήριο ({', '.join(allowed_lab_names)})",
+                )
         return FilterResult(passed=True, rule_name="exclusive_lab_constraint", reason="OK")
 
     def filter_by_modality_quotas_dynamic(candidate: CandidateDiagnostician, exam: ExamContext) -> FilterResult:

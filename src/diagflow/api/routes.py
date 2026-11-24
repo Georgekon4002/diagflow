@@ -28,10 +28,22 @@ Admin endpoints (backed by diagflow.db — persistent):
 
 from datetime import date, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
+import asyncio
+import hashlib
+import hmac
+import math
+import secrets
+import sqlite3
+import sys
+import threading
+import time
 
-from fastapi import APIRouter, Depends, HTTPException, Header
-from pydantic import BaseModel, field_validator
+import bcrypt
+from fastapi import APIRouter, Body, Depends, Header, HTTPException, Request
+from pydantic import BaseModel, Field, field_validator
+from sqlalchemy.exc import IntegrityError as SAIntegrityError
+import structlog
 
 from diagflow.config import settings
 from diagflow.api.dependencies import (
@@ -59,49 +71,99 @@ from diagflow.api.schemas import (
     SuggestionResponse,
     UnassignRequest,
     BulkUnassignRequest,
+    _validate_iso_date_str,
 )
 from diagflow.engine.filters import ExamContext
 from diagflow.engine.pipeline import AssignmentSuggestion
-from diagflow.services.assignment import AssignmentService
+from diagflow.services.assignment import (
+    AssignmentService,
+    _is_pamakristos_row,
+    get_exam_details_cache_snapshot,
+)
 from diagflow.services.diagnostician import DiagnosticianService
 from diagflow.services.pamakristos import PamakristosScheduler
+from diagflow.services.slis_sync import normalize_modality
 import diagflow.db.diagflow_db as cfg_db
-from fastapi import APIRouter, Depends, HTTPException, Header, Request
-
-import asyncio
-import hashlib
-import hmac
-import time
-import bcrypt
-import structlog
 
 logger = structlog.get_logger()
 
 router = APIRouter()
 
-# ── In-memory suggestion cache (for confirm/override flow) ──
+# ── Thread-safe route state lock ──
+_route_state_lock = threading.RLock()
+
+# ── In-memory suggestion cache (bounded, for confirm/override flow) ──
+_SUGGESTION_CACHE_MAX = 2000
 _suggestion_cache: dict = {}
 
-# ── Session suggestion counter — tracks virtual suggestions per (exam_id -> (diag_id, exam_date))
-#    so the load-balancing tie-breaker works per examination date across sequential API calls
-#    without bleeding counts across different dates or double-counting re-suggested/confirmed exams.
-_session_suggestion_counts: dict[int, int] = {}
-_session_suggestions_by_exam: dict[str, tuple[int, str]] = {}
+# ── Session suggestion counter — tracks virtual suggestions per
+#    exam_id -> (diag_id, exam_date_str, normalized_modality)
+#    so both daily total AND modality quotas work across batch suggestions.
+_session_suggestions_by_exam: dict[str, tuple[int, str, str]] = {}
 
 
-def _get_session_virtual_count(diag_id: int, exam_date_str: str, exclude_exam_id: str | None = None) -> int:
-    """Count pending in-session virtual suggestions for a diagnostician on a specific exam date."""
+def _get_session_virtual_counts(
+    diag_id: int,
+    exam_date_str: str,
+    exclude_exam_id: str | None = None,
+) -> tuple[int, int, int]:
+    """Return (total, mri_or_mra, ct) pending virtual suggestions for a doctor on a date."""
     excl = str(exclude_exam_id) if exclude_exam_id is not None else None
-    return sum(
-        1
-        for eid, (did, dt_s) in _session_suggestions_by_exam.items()
-        if did == diag_id and dt_s == exam_date_str and (excl is None or eid != excl)
-    )
+    total = 0
+    mri = 0
+    ct = 0
+    with _route_state_lock:
+        items = list(_session_suggestions_by_exam.items())
+    for eid, entry in items:
+        did = entry[0]
+        dt_s = entry[1]
+        mod = entry[2] if len(entry) >= 3 else ""
+        if did == diag_id and dt_s == exam_date_str and (excl is None or eid != excl):
+            total += 1
+            if mod == "CT":
+                ct += 1
+            elif mod in ("MRI", "MRA"):
+                mri += 1
+    return total, mri, ct
+
+
+def _get_session_virtual_count(
+    diag_id: int,
+    exam_date_str: str,
+    exclude_exam_id: str | None = None,
+) -> int:
+    """Count pending in-session virtual suggestions for a diagnostician on a specific exam date."""
+    return _get_session_virtual_counts(diag_id, exam_date_str, exclude_exam_id=exclude_exam_id)[0]
+
+
+def _store_suggestion_cache(exam_id: str, suggestion: AssignmentSuggestion) -> None:
+    with _route_state_lock:
+        if len(_suggestion_cache) >= _SUGGESTION_CACHE_MAX:
+            for old_k in list(_suggestion_cache.keys())[: _SUGGESTION_CACHE_MAX // 5]:
+                _suggestion_cache.pop(old_k, None)
+        _suggestion_cache[exam_id] = suggestion
+        _suggestion_cache[str(exam_id)] = suggestion
+
+
+def _get_cached_suggestion(exam_id: str | int) -> AssignmentSuggestion | None:
+    with _route_state_lock:
+        s = _suggestion_cache.get(str(exam_id))
+        if s is None and str(exam_id).isdigit():
+            s = _suggestion_cache.get(int(exam_id))
+        return s
+
+
+def _pop_cached_suggestion(exam_id: str | int) -> None:
+    with _route_state_lock:
+        _suggestion_cache.pop(str(exam_id), None)
+        if str(exam_id).isdigit():
+            _suggestion_cache.pop(int(exam_id), None)
 
 
 def _clear_session_suggestion(exam_id: str | int) -> None:
     """Remove an exam from virtual session suggestion tracking (e.g. after confirm/override/unassign)."""
-    _session_suggestions_by_exam.pop(str(exam_id), None)
+    with _route_state_lock:
+        _session_suggestions_by_exam.pop(str(exam_id), None)
 
 
 def _parse_exam_date(raw_val: Any) -> date | None:
@@ -114,9 +176,35 @@ def _parse_exam_date(raw_val: Any) -> date | None:
             return None
     return None
 
-# ── Admin session & rate limit stores ──
+
+# ── Admin session & rate limit stores (protected by _route_state_lock) ──
+_ADMIN_SESSIONS_MAX = 200
+_MIN_PASSWORD_LEN = 8
 _admin_sessions: dict[str, dict] = {}
 _failed_login_attempts: dict[str, list[float]] = {}
+
+
+def _prune_expired_sessions() -> None:
+    now = time.time()
+    with _route_state_lock:
+        expired = [tok for tok, s in _admin_sessions.items() if s.get("expires_at", 0) <= now]
+        for tok in expired:
+            _admin_sessions.pop(tok, None)
+
+
+def _revoke_user_sessions(user_id: int, keep_token: str | None = None) -> None:
+    """Immediately revoke active admin tokens for a user (on disable/delete/role or password change)."""
+    with _route_state_lock:
+        to_remove = [
+            tok for tok, s in _admin_sessions.items()
+            if s.get("id") == user_id and (keep_token is None or tok != keep_token)
+        ]
+        for tok in to_remove:
+            _admin_sessions.pop(tok, None)
+
+
+def _is_integrity_error(exc: Exception) -> bool:
+    return isinstance(exc, (sqlite3.IntegrityError, SAIntegrityError))
 
 
 # ─────────────────────────────────────────────────────
@@ -135,10 +223,38 @@ class AdminLoginResponse(BaseModel):
 
 
 def _require_admin(x_admin_token: str = Header(default="")):
-    """Dependency: require a valid admin token."""
-    if not x_admin_token or x_admin_token not in _admin_sessions:
+    """Dependency: require a valid, non-expired admin token for an active user."""
+    if not x_admin_token:
         raise HTTPException(status_code=401, detail="Απαιτείται σύνδεση διαχειριστή")
-    return _admin_sessions[x_admin_token]
+
+    now = time.time()
+    with _route_state_lock:
+        session = _admin_sessions.get(x_admin_token)
+        if not session:
+            raise HTTPException(status_code=401, detail="Απαιτείται σύνδεση διαχειριστή")
+        if "expires_at" in session and session["expires_at"] <= now:
+            _admin_sessions.pop(x_admin_token, None)
+            raise HTTPException(status_code=401, detail="Η συνεδρία έληξε. Παρακαλώ συνδεθείτε ξανά.")
+        session_copy = dict(session)
+        session_copy["_token"] = x_admin_token
+
+    # Re-verify account is still active and role is current in DB
+    db_user = cfg_db.get_admin_user_by_id(session_copy["id"])
+    if not db_user or not db_user.get("is_active", 1):
+        _revoke_user_sessions(session_copy["id"])
+        raise HTTPException(status_code=401, detail="Η συνεδρία δεν είναι πλέον έγκυρη")
+
+    # Sync live role & username and slide TTL forward
+    new_exp = now + (settings.admin_session_ttl_minutes * 60)
+    with _route_state_lock:
+        if x_admin_token in _admin_sessions:
+            _admin_sessions[x_admin_token]["role"] = db_user["role"]
+            _admin_sessions[x_admin_token]["username"] = db_user["username"]
+            _admin_sessions[x_admin_token]["expires_at"] = new_exp
+    session_copy["role"] = db_user["role"]
+    session_copy["username"] = db_user["username"]
+    return session_copy
+
 
 def _require_it_support(session: dict = Depends(_require_admin)):
     """Dependency: require it_support role."""
@@ -146,78 +262,96 @@ def _require_it_support(session: dict = Depends(_require_admin)):
         raise HTTPException(status_code=403, detail="Απαιτούνται δικαιώματα IT support")
     return session
 
+
 @router.post("/admin/auth/login", response_model=AdminLoginResponse)
 async def admin_login(request: AdminLoginRequest, raw_request: Request):
-    """Authenticate admin user with rate limiting and bcrypt password verification.
-    
-    Includes a transparent SHA-256 → bcrypt migration path: if the stored hash
-    is a legacy SHA-256 hex string, the password is verified with SHA-256 and the
-    hash is immediately re-stored as bcrypt (cost=12). No admin action required.
-    """
+    """Authenticate admin user with rate limiting and non-blocking bcrypt verification."""
     client_ip = raw_request.client.host if raw_request.client else "unknown"
     now = time.time()
 
-    # Rate limiting: allow max 5 failed attempts per 60 seconds per IP
-    attempts = [t for t in _failed_login_attempts.get(client_ip, []) if now - t < 60.0]
-    _failed_login_attempts[client_ip] = attempts
+    with _route_state_lock:
+        attempts = [t for t in _failed_login_attempts.get(client_ip, []) if now - t < 60.0]
+        if attempts:
+            _failed_login_attempts[client_ip] = attempts
+        else:
+            _failed_login_attempts.pop(client_ip, None)
 
-    if len(attempts) >= 5:
-        raise HTTPException(
-            status_code=429,
-            detail="Πολλές αποτυχημένες προσπάθειες. Παρακαλώ περιμένετε 1 λεπτό."
-        )
+        if len(attempts) >= 5:
+            raise HTTPException(
+                status_code=429,
+                detail="Πολλές αποτυχημένες προσπάθειες. Παρακαλώ περιμένετε 1 λεπτό."
+            )
 
-    user = cfg_db.get_admin_user_by_username(request.username.strip())
-    password_bytes = request.password.encode("utf-8")
+    def _verify_credentials():
+        user = cfg_db.get_admin_user_by_username(request.username.strip())
+        password_bytes = request.password.encode("utf-8")
+        username_valid = user is not None
+        password_valid = False
 
-    username_valid = user is not None
-    password_valid = False
-
-    if user:
-        db_password_hash = user["password_hash"]
-        is_legacy_sha256 = len(db_password_hash) == 64 and not db_password_hash.startswith("$2")
-
-        if is_legacy_sha256:
-            input_sha256 = hashlib.sha256(password_bytes).hexdigest()
-            if hmac.compare_digest(input_sha256, db_password_hash):
-                password_valid = True
-                new_hash = bcrypt.hashpw(password_bytes, bcrypt.gensalt(rounds=12)).decode()
-                cfg_db.update_admin_user(user["id"], password_hash=new_hash)
+        if user:
+            db_password_hash = user["password_hash"]
+            is_legacy_sha256 = len(db_password_hash) == 64 and not db_password_hash.startswith("$2")
+            if is_legacy_sha256:
+                input_sha256 = hashlib.sha256(password_bytes).hexdigest()
+                if hmac.compare_digest(input_sha256, db_password_hash):
+                    password_valid = True
+                    new_hash = bcrypt.hashpw(password_bytes, bcrypt.gensalt(rounds=12)).decode()
+                    cfg_db.update_admin_user(user["id"], password_hash=new_hash)
+            else:
+                try:
+                    password_valid = bcrypt.checkpw(password_bytes, db_password_hash.encode("utf-8"))
+                except Exception:
+                    pass
         else:
             try:
-                password_valid = bcrypt.checkpw(password_bytes, db_password_hash.encode("utf-8"))
+                bcrypt.checkpw(password_bytes, b"$2b$12$0qxEPV2WtZ00AhsmOgAbJOQuiessOk/m5jq4x55CB/c680fNiW13i")
             except Exception:
                 pass
-    else:
-        # Dummy check to prevent timing attacks
-        try:
-            bcrypt.checkpw(password_bytes, b"$2b$12$0qxEPV2WtZ00AhsmOgAbJOQuiessOk/m5jq4x55CB/c680fNiW13i")
-        except Exception:
-            pass
+        return user, username_valid, password_valid
+
+    user, username_valid, password_valid = await asyncio.to_thread(_verify_credentials)
 
     if not (username_valid and password_valid):
-        _failed_login_attempts.setdefault(client_ip, []).append(now)
-        await asyncio.sleep(1.0)  # Throttling delay against automated brute-force attacks
+        with _route_state_lock:
+            _failed_login_attempts.setdefault(client_ip, []).append(now)
+        await asyncio.sleep(1.0)
         raise HTTPException(status_code=401, detail="Λάθος στοιχεία σύνδεσης")
 
     if user and not user.get("is_active", 1):
         raise HTTPException(status_code=403, detail="Ο λογαριασμός σας έχει απενεργοποιηθεί")
 
-    # Clear failed attempts on success
-    _failed_login_attempts.pop(client_ip, None)
-
-    import secrets
-    token = secrets.token_hex(16)
-    _admin_sessions[token] = {"id": user["id"], "username": user["username"], "role": user["role"]}
+    _prune_expired_sessions()
+    token = secrets.token_hex(24)
+    expires_at = time.time() + (settings.admin_session_ttl_minutes * 60)
+    with _route_state_lock:
+        _failed_login_attempts.pop(client_ip, None)
+        if len(_admin_sessions) >= _ADMIN_SESSIONS_MAX:
+            oldest_tok = min(_admin_sessions, key=lambda t: _admin_sessions[t].get("expires_at", 0))
+            _admin_sessions.pop(oldest_tok, None)
+        _admin_sessions[token] = {
+            "id": user["id"],
+            "username": user["username"],
+            "role": user["role"],
+            "expires_at": expires_at,
+        }
     return AdminLoginResponse(token=token, username=user["username"], role=user["role"])
 
 
+@router.post("/admin/auth/logout")
+def admin_logout(x_admin_token: str = Header(default="")):
+    """Server-side logout: immediately invalidates the provided admin token."""
+    if x_admin_token:
+        with _route_state_lock:
+            _admin_sessions.pop(x_admin_token, None)
+    return {"status": "ok"}
+
+
 @router.post("/admin/auth/change-credentials", response_model=AdminChangeCredentialsResponse)
-async def change_admin_credentials(
+def change_admin_credentials(
     req: AdminChangeCredentialsRequest,
-    session: dict = Depends(_require_admin)
+    session: dict = Depends(_require_admin),
 ):
-    """Update admin username and/or password. New password is stored as bcrypt hash."""
+    """Update admin username and/or password. Enforces min password length and revokes other sessions."""
     user = cfg_db.get_admin_user_by_id(session["id"])
     if not user:
         raise HTTPException(status_code=404, detail="Ο χρήστης δεν βρέθηκε")
@@ -237,9 +371,16 @@ async def change_admin_credentials(
     if not old_password_valid:
         raise HTTPException(status_code=400, detail="Ο τρέχων κωδικός πρόσβασης είναι λανθασμένος")
 
+    new_pass = req.new_password if req.new_password and req.new_password.strip() else None
+    if new_pass is not None and len(new_pass) < _MIN_PASSWORD_LEN:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Ο νέος κωδικός πρόσβασης πρέπει να έχει τουλάχιστον {_MIN_PASSWORD_LEN} χαρακτήρες",
+        )
+
     new_hash = (
-        bcrypt.hashpw(req.new_password.encode("utf-8"), bcrypt.gensalt(rounds=12)).decode()
-        if req.new_password and req.new_password.strip()
+        bcrypt.hashpw(new_pass.encode("utf-8"), bcrypt.gensalt(rounds=12)).decode()
+        if new_pass
         else None
     )
     new_user = req.new_username.strip() if req.new_username and req.new_username.strip() else None
@@ -247,105 +388,157 @@ async def change_admin_credentials(
     if not new_user and not new_hash:
         raise HTTPException(status_code=400, detail="Δεν δόθηκαν νέα στοιχεία προς ενημέρωση")
 
-    updated_user = cfg_db.update_admin_user(user["id"], username=new_user, password_hash=new_hash)
+    try:
+        updated_user = cfg_db.update_admin_user(user["id"], username=new_user, password_hash=new_hash)
+    except Exception as exc:
+        if _is_integrity_error(exc):
+            raise HTTPException(status_code=409, detail="Το όνομα χρήστη υπάρχει ήδη") from exc
+        raise
+
     if not updated_user:
         raise HTTPException(status_code=500, detail="Αποτυχία ενημέρωσης")
-    
-    # Update current session username if changed
-    if new_user:
-        session["username"] = updated_user["username"]
+
+    # Revoke any other active tokens for this user when credentials change
+    current_token = session.get("_token")
+    if new_hash:
+        _revoke_user_sessions(user["id"], keep_token=current_token)
+    if new_user and current_token:
+        with _route_state_lock:
+            if current_token in _admin_sessions:
+                _admin_sessions[current_token]["username"] = updated_user["username"]
 
     return AdminChangeCredentialsResponse(
         message="Τα στοιχεία σύνδεσης ενημερώθηκαν επιτυχώς",
         username=updated_user["username"]
     )
 
+
 # ─────────────────────────────────────────────────────
-#  Admin — Users Management (super_admin only)
+#  Admin — Users Management (it_support only)
 # ─────────────────────────────────────────────────────
 
 class AdminUserCreateRequest(BaseModel):
-    username: str
-    password: str
-    role: str = "admin"
+    username: str = Field(..., min_length=2, max_length=100)
+    password: str = Field(..., min_length=_MIN_PASSWORD_LEN)
+    role: Literal["admin", "it_support"] = "admin"
+
 
 class AdminUserUpdateRequest(BaseModel):
-    username: str | None = None
+    username: str | None = Field(default=None, min_length=2, max_length=100)
     password: str | None = None
-    role: str | None = None
+    role: Literal["admin", "it_support"] | None = None
     is_active: bool | None = None
 
+
 @router.get("/admin/users")
-async def get_admin_users(session: dict = Depends(_require_it_support)):
+def get_admin_users(session: dict = Depends(_require_it_support)):
     users = cfg_db.get_all_admin_users()
-    # Don't expose password hashes
     for u in users:
         u.pop("password_hash", None)
     return users
 
+
 @router.post("/admin/users")
-async def create_admin_user(req: AdminUserCreateRequest, session: dict = Depends(_require_it_support)):
-    existing = cfg_db.get_admin_user_by_username(req.username.strip())
+def create_admin_user(req: AdminUserCreateRequest, session: dict = Depends(_require_it_support)):
+    clean_username = req.username.strip()
+    if not clean_username:
+        raise HTTPException(status_code=400, detail="Απαιτείται όνομα χρήστη")
+    existing = cfg_db.get_admin_user_by_username(clean_username)
     if existing:
         raise HTTPException(status_code=400, detail="Το όνομα χρήστη υπάρχει ήδη")
     new_hash = bcrypt.hashpw(req.password.encode("utf-8"), bcrypt.gensalt(rounds=12)).decode()
-    user = cfg_db.create_admin_user(req.username.strip(), new_hash, req.role)
+    try:
+        user = cfg_db.create_admin_user(clean_username, new_hash, req.role)
+    except Exception as exc:
+        if _is_integrity_error(exc):
+            raise HTTPException(status_code=409, detail="Το όνομα χρήστη υπάρχει ήδη") from exc
+        raise
     user.pop("password_hash", None)
     return user
 
+
 @router.put("/admin/users/{user_id}")
-async def update_admin_user(user_id: int, req: AdminUserUpdateRequest, session: dict = Depends(_require_it_support)):
+def update_admin_user(user_id: int, req: AdminUserUpdateRequest, session: dict = Depends(_require_it_support)):
     new_hash = None
     if req.password and req.password.strip():
+        if len(req.password) < _MIN_PASSWORD_LEN:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Ο κωδικός πρόσβασης πρέπει να έχει τουλάχιστον {_MIN_PASSWORD_LEN} χαρακτήρες",
+            )
         new_hash = bcrypt.hashpw(req.password.encode("utf-8"), bcrypt.gensalt(rounds=12)).decode()
-    
-    updated = cfg_db.update_admin_user(
-        user_id,
-        username=req.username.strip() if req.username else None,
-        password_hash=new_hash,
-        role=req.role,
-        is_active=req.is_active
-    )
+
+    try:
+        updated = cfg_db.update_admin_user(
+            user_id,
+            username=req.username.strip() if req.username else None,
+            password_hash=new_hash,
+            role=req.role,
+            is_active=req.is_active
+        )
+    except Exception as exc:
+        if _is_integrity_error(exc):
+            raise HTTPException(status_code=409, detail="Το όνομα χρήστη υπάρχει ήδη") from exc
+        raise
+
     if not updated:
         raise HTTPException(status_code=404, detail="Ο χρήστης δεν βρέθηκε")
+
+    # Revoke active sessions if password, role, or active flag changed
+    if new_hash is not None or req.role is not None or req.is_active is False:
+        _revoke_user_sessions(user_id)
+
     updated.pop("password_hash", None)
     return updated
 
+
 @router.post("/admin/users/{user_id}/reset")
-async def reset_admin_user(user_id: int, session: dict = Depends(_require_it_support)):
+def reset_admin_user(user_id: int, session: dict = Depends(_require_it_support)):
+    """Reset a user's password to a freshly generated temporary password without clobbering username."""
     target_user = cfg_db.get_admin_user_by_id(user_id)
     if not target_user:
         raise HTTPException(status_code=404, detail="Ο χρήστης δεν βρέθηκε")
     if target_user["role"] == "it_support":
         raise HTTPException(status_code=400, detail="Δεν επιτρέπεται η επαναφορά του it_support")
-    
-    new_hash = bcrypt.hashpw(b"admin1234", bcrypt.gensalt(rounds=12)).decode()
-    updated = cfg_db.update_admin_user(user_id, username="admin", password_hash=new_hash)
+
+    temp_password = secrets.token_urlsafe(9)
+    new_hash = bcrypt.hashpw(temp_password.encode("utf-8"), bcrypt.gensalt(rounds=12)).decode()
+    updated = cfg_db.update_admin_user(user_id, password_hash=new_hash)
     if not updated:
         raise HTTPException(status_code=500, detail="Αποτυχία επαναφοράς")
-    return {"message": "Τα στοιχεία επαναφέρθηκαν επιτυχώς σε admin / admin1234"}
+
+    _revoke_user_sessions(user_id)
+    return {
+        "message": f"Ο κωδικός για τον χρήστη '{target_user['username']}' επαναφέρθηκε. Προσωρινός κωδικός: {temp_password}",
+        "username": target_user["username"],
+        "temporary_password": temp_password,
+    }
 
 
 @router.post("/admin/users/{user_id}/toggle")
-async def toggle_admin_user(user_id: int, session: dict = Depends(_require_it_support)):
+def toggle_admin_user(user_id: int, session: dict = Depends(_require_it_support)):
     target_user = cfg_db.get_admin_user_by_id(user_id)
     if not target_user:
         raise HTTPException(status_code=404, detail="Ο χρήστης δεν βρέθηκε")
     if target_user["role"] == "it_support":
         raise HTTPException(status_code=400, detail="Δεν επιτρέπεται η αλλαγή του it_support")
-    
+
     new_active = not bool(target_user["is_active"])
     updated = cfg_db.update_admin_user(user_id, is_active=new_active)
     if not updated:
         raise HTTPException(status_code=500, detail="Αποτυχία ενημέρωσης")
+    if not new_active:
+        _revoke_user_sessions(user_id)
     return {"message": "Η κατάσταση του χρήστη ενημερώθηκε", "is_active": updated["is_active"]}
 
+
 @router.delete("/admin/users/{user_id}")
-async def delete_admin_user(user_id: int, session: dict = Depends(_require_it_support)):
+def delete_admin_user(user_id: int, session: dict = Depends(_require_it_support)):
     if user_id == session["id"]:
         raise HTTPException(status_code=400, detail="Δεν μπορείτε να διαγράψετε τον εαυτό σας")
     if not cfg_db.delete_admin_user(user_id):
         raise HTTPException(status_code=404, detail="Ο χρήστης δεν βρέθηκε")
+    _revoke_user_sessions(user_id)
     return {"status": "ok"}
 
 
@@ -383,22 +576,23 @@ def _build_exam_context(exam_data: dict) -> tuple[ExamContext, date | None]:
     raw_exam_date = exam_data.get("visitdate") or exam_data.get("request_date")
     parsed_req_date = _parse_exam_date(raw_exam_date)
     ctx = ExamContext(
-        exam_id=exam_data["exam_id"],
-        patient_id=exam_data["patient_id"],
-        patient_name=exam_data.get("patient_name", ""),
+        exam_id=str(exam_data["exam_id"]),
+        patient_id=str(exam_data.get("patient_id") or ""),
+        patient_name=exam_data.get("patient_name") or "",
         age=exam_data.get("age"),
-        modality=exam_data["modality"],
-        body_part=exam_data["body_part"],
-        exam_code=str(exam_data.get("examnumcode", "")),
-        exam_name=exam_data.get("examname", ""),
-        lab_id=exam_data["lab_id"],
-        lab_name=exam_data["lab_name"],
-        issuing_doctor_id=exam_data["issuing_doctor_id"],
-        issuing_doctor_name=exam_data["issuing_doctor_name"],
-        comments=exam_data.get("comments", ""),
-        is_pamakristos="ΠΑΜΜΑΚΑΡΙΣΤΟΣ" in exam_data.get("issuing_doctor_name", "").upper(),
+        modality=normalize_modality(exam_data.get("modality") or exam_data.get("category")),
+        body_part=exam_data.get("body_part") or "",
+        exam_code=str(exam_data.get("examnumcode") or ""),
+        exam_name=exam_data.get("examname") or "",
+        lab_id=str(exam_data.get("lab_id") or ""),
+        lab_name=exam_data.get("lab_name") or "",
+        issuing_doctor_id=str(exam_data.get("issuing_doctor_id") or ""),
+        issuing_doctor_name=exam_data.get("issuing_doctor_name") or "",
+        comments=exam_data.get("comments") or "",
+        is_pamakristos=_is_pamakristos_row(exam_data),
         oldpers=exam_data.get("oldpers"),
         request_date=parsed_req_date,
+        extracode=str(exam_data.get("extracode") or ""),
     )
     return ctx, parsed_req_date
 
@@ -411,7 +605,7 @@ async def _generate_suggestion_for_exam(
     preloaded_candidates_map: dict[str, list] | None = None,
     preloaded_config: dict | None = None,
 ) -> AssignmentSuggestion | None:
-    """Core suggestion generator with multi-exam order alignment and virtual workload tracking."""
+    """Core suggestion generator with multi-exam order alignment and modality-aware virtual workload tracking."""
     import copy
 
     exam, parsed_req_date = _build_exam_context(exam_data)
@@ -433,9 +627,12 @@ async def _generate_suggestion_for_exam(
             exam_date=parsed_req_date,
         )
 
-    # Apply date-scoped session-level virtual workload (excluding this exam itself)
+    # Apply date-scoped & modality-aware session virtual workload (excluding this exam itself)
     for c in candidates:
-        c.current_day_count += _get_session_virtual_count(c.id, exam_date_key, exclude_exam_id=exam.exam_id)
+        v_tot, v_mri, v_ct = _get_session_virtual_counts(c.id, exam_date_key, exclude_exam_id=exam.exam_id)
+        c.current_day_count += v_tot
+        c.current_day_mri_count += v_mri
+        c.current_day_ct_count += v_ct
 
     cfg = preloaded_config or {}
 
@@ -460,7 +657,7 @@ async def _generate_suggestion_for_exam(
             e_item_id = str(e_item["exam_id"])
             if e_item_id == str(exam_data["exam_id"]):
                 continue
-            cached = _suggestion_cache.get(e_item_id)
+            cached = _get_cached_suggestion(e_item_id)
             if cached and cached.suggested_diagnostician_id:
                 existing_order_diag_id = cached.suggested_diagnostician_id
                 break
@@ -487,6 +684,7 @@ async def _generate_suggestion_for_exam(
             order_contexts = []
             for e_dict in order_exams:
                 e_ctx, parsed_e_date = _build_exam_context(e_dict)
+                e_date_key = (parsed_e_date or date.today()).isoformat()
                 if preloaded_candidates_map is not None and str(e_ctx.exam_id) in preloaded_candidates_map:
                     e_cands = [copy.copy(c) for c in preloaded_candidates_map[str(e_ctx.exam_id)]]
                 else:
@@ -503,6 +701,10 @@ async def _generate_suggestion_for_exam(
                         exam_date=parsed_e_date,
                     )
                 for c in e_cands:
+                    vt, vm, vc = _get_session_virtual_counts(c.id, e_date_key, exclude_exam_id=e_ctx.exam_id)
+                    c.current_day_count += vt
+                    c.current_day_mri_count += vm
+                    c.current_day_ct_count += vc
                     cand_info[c.id] = c
                 order_contexts.append((e_ctx, e_cands))
 
@@ -544,8 +746,41 @@ async def _generate_suggestion_for_exam(
         if suggestion and best_cand_id:
             best_cand = next((c for c in candidates if c.id == best_cand_id), cand_info.get(best_cand_id))
             if best_cand and suggestion.suggested_diagnostician_id != best_cand_id:
+                # Recompute score breakdown & alternatives for the aligned diagnostician so UI metadata stays accurate
+                passed_cur, filter_res_cur = apply_hard_filters(
+                    candidates,
+                    exam,
+                    exclusive_rules=cfg.get("exclusive_rules"),
+                    modality_quotas=cfg.get("modality_quotas"),
+                    comment_rule_enabled=cfg.get("comment_rule_enabled"),
+                )
+                scored_cur = score_all_candidates(passed_cur, exam, weights=cfg.get("weights")) if passed_cur else []
+                aligned_score = next((s for s in scored_cur if s.diagnostician_id == best_cand_id), None)
+
                 suggestion.suggested_diagnostician_id = best_cand_id
                 suggestion.suggested_diagnostician_name = best_cand.name
+                if aligned_score:
+                    suggestion.confidence_score = round(aligned_score.total_score, 3)
+                    suggestion.score_breakdown = [
+                        {
+                            "rule": comp.rule_name,
+                            "display_name": comp.display_name,
+                            "raw_score": round(comp.raw_score, 3),
+                            "weight": comp.weight,
+                            "weighted_score": round(comp.weighted_score, 3),
+                            "explanation": comp.explanation,
+                        }
+                        for comp in aligned_score.components
+                    ]
+                    suggestion.rules_fired = [
+                        comp.rule_name for comp in aligned_score.components if comp.weighted_score > 0
+                    ]
+                suggestion.alternatives = assign_svc.pipeline._build_alternatives(
+                    best_cand_id,
+                    scored_cur,
+                    candidates,
+                    filter_res_cur,
+                )
                 if "Multi-exam Order Alignment" not in suggestion.rules_fired:
                     suggestion.rules_fired.insert(0, "Multi-exam Order Alignment")
     else:
@@ -554,10 +789,10 @@ async def _generate_suggestion_for_exam(
     if suggestion:
         if suggestion.suggested_diagnostician_id:
             diag_id = suggestion.suggested_diagnostician_id
-            _session_suggestions_by_exam[str(exam.exam_id)] = (diag_id, exam_date_key)
+            with _route_state_lock:
+                _session_suggestions_by_exam[str(exam.exam_id)] = (diag_id, exam_date_key, exam.modality.upper())
 
-        _suggestion_cache[exam.exam_id] = suggestion
-        _suggestion_cache[str(exam.exam_id)] = suggestion
+        _store_suggestion_cache(str(exam.exam_id), suggestion)
 
     return suggestion
 
@@ -568,9 +803,9 @@ async def suggest_batch_assignments(
     assign_svc: AssignmentService = Depends(get_assignment_service),
     diag_svc: DiagnosticianService = Depends(get_diagnostician_service),
 ):
-    """Generate assignment suggestions for multiple exams in a single ultra-fast pass."""
-    pending = assign_svc.get_pending_exams()
-    assigned = assign_svc.get_assigned_exams()
+    """Generate assignment suggestions for multiple exams in a single ultra-fast non-blocking pass."""
+    pending = await asyncio.to_thread(assign_svc.get_pending_exams)
+    assigned = await asyncio.to_thread(assign_svc.get_assigned_exams)
     all_exams = pending + assigned
     exams_map = {str(e["exam_id"]): e for e in all_exams}
 
@@ -597,12 +832,16 @@ async def suggest_batch_assignments(
 
     batch_contexts = [_build_exam_context(ed)[0] for ed in batch_exam_dicts.values()]
     preloaded_candidates_map = await diag_svc.get_candidates_for_exams_batch(batch_contexts) if batch_contexts else {}
-    preloaded_config = {
-        "exclusive_rules": cfg_db.get_all_exclusive_lab_rules(),
-        "modality_quotas": cfg_db.get_all_modality_quotas(),
-        "comment_rule_enabled": cfg_db.get_comment_auto_assign_enabled(),
-        "weights": cfg_db.get_system_weights(),
-    }
+
+    def _load_batch_cfg():
+        return {
+            "exclusive_rules": cfg_db.get_all_exclusive_lab_rules(),
+            "modality_quotas": cfg_db.get_all_modality_quotas(),
+            "comment_rule_enabled": cfg_db.get_comment_auto_assign_enabled(),
+            "weights": cfg_db.get_system_weights(),
+        }
+
+    preloaded_config = await asyncio.to_thread(_load_batch_cfg)
 
     results = {}
     for exam_id_str in request.exam_ids:
@@ -654,8 +893,8 @@ async def suggest_assignment(
     diag_svc: DiagnosticianService = Depends(get_diagnostician_service),
 ):
     """Generate an assignment suggestion for a specific exam."""
-    pending = assign_svc.get_pending_exams()
-    assigned = assign_svc.get_assigned_exams()
+    pending = await asyncio.to_thread(assign_svc.get_pending_exams)
+    assigned = await asyncio.to_thread(assign_svc.get_assigned_exams)
     all_exams = pending + assigned
     exam_data = next((e for e in all_exams if str(e["exam_id"]) == str(request.exam_id)), None)
 
@@ -691,15 +930,20 @@ async def confirm_assignment(
     svc: AssignmentService = Depends(get_assignment_service),
 ):
     """Confirm the suggested assignment (no override)."""
-    suggestion = _suggestion_cache.get(request.exam_id) or _suggestion_cache.get(str(request.exam_id))
+    if request.diagnostician_id <= 0:
+        raise HTTPException(status_code=422, detail="Μη έγκυρος κωδικός διαγνώστη")
+    diag = await asyncio.to_thread(cfg_db.get_diagnostician, request.diagnostician_id)
+    if not diag:
+        raise HTTPException(status_code=404, detail=f"Ο διαγνώστης {request.diagnostician_id} δεν βρέθηκε")
+
+    suggestion = _get_cached_suggestion(request.exam_id)
     if not suggestion:
-        from diagflow.engine.pipeline import AssignmentSuggestion
         suggestion = AssignmentSuggestion(
             exam_id=str(request.exam_id),
             patient_id="",
             exam_summary="",
             suggested_diagnostician_id=request.diagnostician_id,
-            suggested_diagnostician_name="",
+            suggested_diagnostician_name=diag["name"],
             confidence_score=1.0,
             score_breakdown=[],
             alternatives=[],
@@ -712,10 +956,10 @@ async def confirm_assignment(
     result = await svc.confirm_assignment(
         exam_id=request.exam_id,
         diagnostician_id=request.diagnostician_id,
+        diagnostician_name=diag["name"],
         suggestion=suggestion,
     )
-    _suggestion_cache.pop(request.exam_id, None)
-    _suggestion_cache.pop(str(request.exam_id), None)
+    _pop_cached_suggestion(request.exam_id)
     _clear_session_suggestion(request.exam_id)
 
     return AssignmentConfirmation(
@@ -733,9 +977,14 @@ async def override_assignment(
     svc: AssignmentService = Depends(get_assignment_service),
 ):
     """Override the suggested assignment with a different diagnostician."""
-    suggestion = _suggestion_cache.get(request.exam_id) or _suggestion_cache.get(str(request.exam_id))
+    if request.override_diagnostician_id <= 0:
+        raise HTTPException(status_code=422, detail="Μη έγκυρος κωδικός διαγνώστη")
+    diag = await asyncio.to_thread(cfg_db.get_diagnostician, request.override_diagnostician_id)
+    if not diag:
+        raise HTTPException(status_code=404, detail=f"Ο διαγνώστης {request.override_diagnostician_id} δεν βρέθηκε")
+
+    suggestion = _get_cached_suggestion(request.exam_id)
     if not suggestion:
-        from diagflow.engine.pipeline import AssignmentSuggestion
         suggestion = AssignmentSuggestion(
             exam_id=str(request.exam_id),
             patient_id="",
@@ -758,8 +1007,7 @@ async def override_assignment(
         reason=request.reason,
         suggestion=suggestion,
     )
-    _suggestion_cache.pop(request.exam_id, None)
-    _suggestion_cache.pop(str(request.exam_id), None)
+    _pop_cached_suggestion(request.exam_id)
     _clear_session_suggestion(request.exam_id)
 
     return AssignmentConfirmation(
@@ -784,27 +1032,29 @@ async def bulk_eligible_diagnosticians(
     if not request.exam_ids:
         return BulkEligibleResponse(diagnosticians=[])
 
-    from diagflow.engine.filters import apply_hard_filters, get_elimination_reason, ExamContext
+    from diagflow.engine.filters import apply_hard_filters, get_elimination_reason
 
-    all_exams = assign_svc.get_pending_exams() + assign_svc.get_assigned_exams()
+    pending = await asyncio.to_thread(assign_svc.get_pending_exams)
+    assigned = await asyncio.to_thread(assign_svc.get_assigned_exams)
+    all_exams = pending + assigned
     req_ids = {str(x) for x in request.exam_ids}
     selected_exams = [e for e in all_exams if str(e.get("exam_id")) in req_ids or (e.get("exammoreid") and str(e.get("exammoreid")) in req_ids)]
 
     found_eids = {str(e.get("exam_id")) for e in selected_exams} | {str(e.get("exammoreid")) for e in selected_exams if e.get("exammoreid")}
     missing_ids = list(req_ids - found_eids)
 
-    # First resolve missing exams from in-memory _exam_details_cache (works in both MSSQL and mock modes)
+    # First resolve missing exams from thread-safe _exam_details_cache
     if missing_ids:
-        from diagflow.services.assignment import _exam_details_cache
+        details_snapshot = get_exam_details_cache_snapshot()
         still_missing = []
         for mid in missing_ids:
-            c_data = _exam_details_cache.get(int(mid)) if str(mid).isdigit() else None
+            c_data = details_snapshot.get(int(mid)) if str(mid).isdigit() else None
             if c_data:
                 selected_exams.append({
                     "exam_id": str(c_data.get("exammoreid") or mid),
                     "patient_id": str(c_data.get("demogid") or ""),
                     "patient_name": str(c_data.get("patient_name") or ""),
-                    "modality": str(c_data.get("category") or c_data.get("modality") or ""),
+                    "modality": normalize_modality(c_data.get("category") or c_data.get("modality") or ""),
                     "body_part": "",
                     "examnumcode": str(c_data.get("examnumcode") or ""),
                     "examname": str(c_data.get("examname") or ""),
@@ -813,7 +1063,7 @@ async def bulk_eligible_diagnosticians(
                     "issuing_doctor_id": str(c_data.get("wcode") or ""),
                     "issuing_doctor_name": str(c_data.get("wname") or ""),
                     "comments": str(c_data.get("notes") or ""),
-                    "visitdate": str(c_data.get("visitdate") or "")[:10],
+                    "visitdate": cfg_db._normalize_date_str(c_data.get("visitdate")) or "",
                     "oldpers": c_data.get("oldpers"),
                 })
             else:
@@ -821,32 +1071,38 @@ async def bulk_eligible_diagnosticians(
         missing_ids = still_missing
 
     if missing_ids and settings.use_mock_slis_db:
-        try:
-            from diagflow.services.assignment import _get_mock_db
-            con = _get_mock_db()
-            placeholders = ",".join("?" * len(missing_ids))
-            rows = con.execute(f"SELECT * FROM slis_exams WHERE exammoreid IN ({placeholders})", tuple(missing_ids)).fetchall()
-            con.close()
-            for r in rows:
-                r_dict = dict(r)
-                selected_exams.append({
-                    "exam_id": str(r_dict.get("exammoreid")),
-                    "patient_id": str(r_dict.get("demogid") or r_dict.get("patientid") or ""),
-                    "patient_name": f"{r_dict.get('fname', '')} {r_dict.get('lname', '')}".strip() if (r_dict.get('fname') or r_dict.get('lname')) else str(r_dict.get("patient_name") or ""),
-                    "modality": str(r_dict.get("category") or r_dict.get("modality") or ""),
-                    "body_part": str(r_dict.get("bodypart") or ""),
-                    "examnumcode": str(r_dict.get("examnumcode") or ""),
-                    "examname": str(r_dict.get("examname") or ""),
-                    "lab_id": str(r_dict.get("labcodeid") or r_dict.get("labid") or ""),
-                    "lab_name": str(r_dict.get("labname") or r_dict.get("laboratoryname") or ""),
-                    "issuing_doctor_id": str(r_dict.get("wcode") or r_dict.get("doctorid") or ""),
-                    "issuing_doctor_name": str(r_dict.get("wname") or r_dict.get("issuing_doctor_name") or ""),
-                    "comments": str(r_dict.get("notes") or r_dict.get("comments") or ""),
-                    "visitdate": cfg_db._normalize_date_str(r_dict.get("visitdate")) or "",
-                    "oldpers": r_dict.get("oldpers"),
-                })
-        except Exception as ex:
-            pass
+        def _load_missing_mock(mids: list[str]) -> list[dict]:
+            out = []
+            try:
+                from diagflow.services.assignment import _get_mock_db
+                con = _get_mock_db()
+                for chunk in cfg_db._chunked(mids):
+                    placeholders = ",".join("?" * len(chunk))
+                    rows = con.execute(f"SELECT * FROM slis_exams WHERE exammoreid IN ({placeholders})", tuple(chunk)).fetchall()
+                    for r in rows:
+                        r_dict = dict(r)
+                        out.append({
+                            "exam_id": str(r_dict.get("exammoreid")),
+                            "patient_id": str(r_dict.get("demogid") or r_dict.get("patientid") or ""),
+                            "patient_name": f"{r_dict.get('fname', '')} {r_dict.get('lname', '')}".strip() if (r_dict.get('fname') or r_dict.get('lname')) else str(r_dict.get("patient_name") or ""),
+                            "modality": normalize_modality(r_dict.get("category") or r_dict.get("modality") or ""),
+                            "body_part": str(r_dict.get("bodypart") or ""),
+                            "examnumcode": str(r_dict.get("examnumcode") or ""),
+                            "examname": str(r_dict.get("examname") or ""),
+                            "lab_id": str(r_dict.get("labcodeid") or r_dict.get("labid") or ""),
+                            "lab_name": str(r_dict.get("labname") or r_dict.get("laboratoryname") or ""),
+                            "issuing_doctor_id": str(r_dict.get("wcode") or r_dict.get("doctorid") or ""),
+                            "issuing_doctor_name": str(r_dict.get("wname") or r_dict.get("issuing_doctor_name") or ""),
+                            "comments": str(r_dict.get("notes") or r_dict.get("comments") or ""),
+                            "visitdate": cfg_db._normalize_date_str(r_dict.get("visitdate")) or "",
+                            "oldpers": r_dict.get("oldpers"),
+                        })
+                con.close()
+            except Exception as ex:
+                logger.warning("bulk_eligible_mock_fallback_failed", error=str(ex))
+            return out
+
+        selected_exams.extend(await asyncio.to_thread(_load_missing_mock, missing_ids))
 
     if not selected_exams:
         return BulkEligibleResponse(diagnosticians=[])
@@ -857,33 +1113,19 @@ async def bulk_eligible_diagnosticians(
     reasons: dict[int, str | None] = {d_id: None for d_id in eligible_diags}
     is_eligible = {d_id: True for d_id in eligible_diags}
 
-    exam_contexts = []
-    for exam_data in selected_exams:
-        raw_b_date = exam_data.get("visitdate") or exam_data.get("request_date")
-        parsed_b_date = _parse_exam_date(raw_b_date)
+    exam_contexts = [_build_exam_context(exam_data)[0] for exam_data in selected_exams]
 
-        exam_contexts.append(
-            ExamContext(
-                exam_id=exam_data["exam_id"],
-                patient_id=exam_data["patient_id"],
-                patient_name=exam_data.get("patient_name", ""),
-                modality=exam_data["modality"],
-                body_part=exam_data["body_part"],
-                exam_code=str(exam_data.get("examnumcode", "")),
-                exam_name=exam_data.get("examname", ""),
-                lab_id=exam_data["lab_id"],
-                lab_name=exam_data["lab_name"],
-                issuing_doctor_id=exam_data["issuing_doctor_id"],
-                issuing_doctor_name=exam_data["issuing_doctor_name"],
-                comments=exam_data.get("comments", ""),
-                is_pamakristos="ΠΑΜΜΑΚΑΡΙΣΤΟΣ" in exam_data.get("issuing_doctor_name", "").upper(),
-                oldpers=exam_data.get("oldpers"),
-                request_date=parsed_b_date,
-            )
+    # Pre-fetch candidate evaluations and rules ONCE for the whole check
+    batch_candidates = await diag_svc.get_candidates_for_exams_batch(exam_contexts)
+
+    def _load_filter_cfg():
+        return (
+            cfg_db.get_all_exclusive_lab_rules(),
+            cfg_db.get_all_modality_quotas(),
+            cfg_db.get_comment_auto_assign_enabled(),
         )
 
-    # Pre-fetch candidate evaluations for all selected exams in one batch
-    batch_candidates = await diag_svc.get_candidates_for_exams_batch(exam_contexts)
+    excl_rules, mod_quotas, comment_enabled = await asyncio.to_thread(_load_filter_cfg)
 
     for exam in exam_contexts:
         candidates = batch_candidates.get(str(exam.exam_id), [])
@@ -901,10 +1143,13 @@ async def bulk_eligible_diagnosticians(
                 exam_date=exam.request_date,
             )
 
-        # Run filters for this exam
+        # Safe lookup via .get(c.id, False) prevents KeyError if a doctor was added mid-request
         passed, results_dict = apply_hard_filters(
-            candidates=[c for c in candidates if is_eligible[c.id]],
-            exam=exam
+            candidates=[c for c in candidates if is_eligible.get(c.id, False)],
+            exam=exam,
+            exclusive_rules=excl_rules,
+            modality_quotas=mod_quotas,
+            comment_rule_enabled=comment_enabled,
         )
         passed_ids = {p.id for p in passed}
 
@@ -930,7 +1175,7 @@ async def bulk_confirm_assignments(
     assign_svc: AssignmentService = Depends(get_assignment_service),
     diag_svc: DiagnosticianService = Depends(get_diagnostician_service),
 ):
-    """Confirm suggested assignments for multiple exams with on-the-fly suggestion fallback."""
+    """Confirm suggested assignments for multiple exams with preloaded batch fallback."""
     targets: list[tuple[str, int | None]] = []
     if request.items:
         for it in request.items:
@@ -944,11 +1189,12 @@ async def bulk_confirm_assignments(
 
     all_exams_list: list[dict] = []
     all_exams_map: dict[str, dict] | None = None
+    preloaded_candidates_map: dict[str, list] | None = None
+    preloaded_config: dict | None = None
 
     results = []
     for exam_id_str, explicit_diag_id in targets:
-        eid_lookup = int(exam_id_str) if exam_id_str.isdigit() else exam_id_str
-        suggestion = _suggestion_cache.get(exam_id_str) or _suggestion_cache.get(eid_lookup)
+        suggestion = _get_cached_suggestion(exam_id_str)
 
         diag_id_to_use = None
         if explicit_diag_id:
@@ -958,14 +1204,31 @@ async def bulk_confirm_assignments(
 
         if not diag_id_to_use:
             if all_exams_map is None:
-                pending = assign_svc.get_pending_exams()
-                assigned = assign_svc.get_assigned_exams()
+                pending = await asyncio.to_thread(assign_svc.get_pending_exams)
+                assigned = await asyncio.to_thread(assign_svc.get_assigned_exams)
                 all_exams_list = pending + assigned
                 all_exams_map = {str(e["exam_id"]): e for e in all_exams_list}
+                missing_exam_dicts = [all_exams_map[eid] for eid, d in targets if not d and eid in all_exams_map]
+                if missing_exam_dicts:
+                    ctxs = [_build_exam_context(ed)[0] for ed in missing_exam_dicts]
+                    preloaded_candidates_map = await diag_svc.get_candidates_for_exams_batch(ctxs)
+                    preloaded_config = await asyncio.to_thread(lambda: {
+                        "exclusive_rules": cfg_db.get_all_exclusive_lab_rules(),
+                        "modality_quotas": cfg_db.get_all_modality_quotas(),
+                        "comment_rule_enabled": cfg_db.get_comment_auto_assign_enabled(),
+                        "weights": cfg_db.get_system_weights(),
+                    })
 
             exam_data = all_exams_map.get(exam_id_str)
             if exam_data:
-                suggestion = await _generate_suggestion_for_exam(exam_data, all_exams_list, assign_svc, diag_svc)
+                suggestion = await _generate_suggestion_for_exam(
+                    exam_data,
+                    all_exams_list,
+                    assign_svc,
+                    diag_svc,
+                    preloaded_candidates_map=preloaded_candidates_map,
+                    preloaded_config=preloaded_config,
+                )
                 if suggestion and suggestion.suggested_diagnostician_id:
                     diag_id_to_use = suggestion.suggested_diagnostician_id
 
@@ -973,7 +1236,6 @@ async def bulk_confirm_assignments(
             continue
 
         if not suggestion:
-            from diagflow.engine.pipeline import AssignmentSuggestion
             suggestion = AssignmentSuggestion(
                 exam_id=exam_id_str,
                 patient_id="",
@@ -994,8 +1256,7 @@ async def bulk_confirm_assignments(
             diagnostician_id=diag_id_to_use,
             suggestion=suggestion,
         )
-        _suggestion_cache.pop(exam_id_str, None)
-        _suggestion_cache.pop(eid_lookup, None)
+        _pop_cached_suggestion(exam_id_str)
         _clear_session_suggestion(exam_id_str)
 
         results.append(
@@ -1016,11 +1277,16 @@ async def bulk_override_assignments(
     svc: AssignmentService = Depends(get_assignment_service),
 ):
     """Override suggested assignments for multiple exams."""
+    if request.override_diagnostician_id <= 0:
+        raise HTTPException(status_code=422, detail="Μη έγκυρος κωδικός διαγνώστη")
+    diag = await asyncio.to_thread(cfg_db.get_diagnostician, request.override_diagnostician_id)
+    if not diag:
+        raise HTTPException(status_code=404, detail=f"Ο διαγνώστης {request.override_diagnostician_id} δεν βρέθηκε")
+
     results = []
     for exam_id in request.exam_ids:
         exam_id_str = str(exam_id)
-        eid_lookup = int(exam_id_str) if exam_id_str.isdigit() else exam_id_str
-        suggestion = _suggestion_cache.get(exam_id_str) or _suggestion_cache.get(eid_lookup)
+        suggestion = _get_cached_suggestion(exam_id_str)
         original_diagnostician_id = suggestion.suggested_diagnostician_id if suggestion else 0
 
         result = await svc.override_assignment(
@@ -1030,8 +1296,7 @@ async def bulk_override_assignments(
             reason=request.reason,
             suggestion=suggestion,
         )
-        _suggestion_cache.pop(exam_id_str, None)
-        _suggestion_cache.pop(eid_lookup, None)
+        _pop_cached_suggestion(exam_id_str)
         _clear_session_suggestion(exam_id_str)
 
         results.append(
@@ -1051,12 +1316,15 @@ def unassign_exam_by_id(exam_id: str):
     """Remove an exam from local staged assignments without affecting Slis."""
     try:
         eid_int = int(exam_id)
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(status_code=422, detail="Μη έγκυρος κωδικός εξέτασης") from exc
+    try:
         success = cfg_db.delete_local_assignment(eid_int)
         _clear_session_suggestion(exam_id)
         return {"success": success, "exam_id": exam_id}
     except Exception as e:
         logger.error("unassign_exam_by_id_error", exam_id=exam_id, error=str(e))
-        return {"success": False, "exam_id": exam_id, "error": str(e)}
+        raise HTTPException(status_code=500, detail="Αποτυχία αναίρεσης ανάθεσης") from e
 
 
 @router.post("/assignments/unassign")
@@ -1064,18 +1332,22 @@ def unassign_exam(request: UnassignRequest):
     """Remove an exam from local staged assignments without affecting Slis."""
     try:
         eid_int = int(request.exam_id)
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(status_code=422, detail="Μη έγκυρος κωδικός εξέτασης") from exc
+    try:
         success = cfg_db.delete_local_assignment(eid_int)
         _clear_session_suggestion(request.exam_id)
         return {"success": success, "exam_id": str(request.exam_id)}
     except Exception as e:
         logger.error("unassign_exam_error", exam_id=request.exam_id, error=str(e))
-        return {"success": False, "exam_id": str(request.exam_id), "error": str(e)}
+        raise HTTPException(status_code=500, detail="Αποτυχία αναίρεσης ανάθεσης") from e
 
 
 @router.post("/assignments/bulk-unassign")
 def bulk_unassign_exams(request: BulkUnassignRequest):
     """Remove multiple exams from local staged assignments without affecting Slis."""
     unassigned = []
+    failed_ids = []
     for eid in request.exam_ids:
         try:
             eid_int = int(eid)
@@ -1084,8 +1356,13 @@ def bulk_unassign_exams(request: BulkUnassignRequest):
             _clear_session_suggestion(eid)
         except Exception as e:
             logger.warning("bulk_unassign_item_failed", exam_id=eid, error=str(e))
-            continue
-    return {"success": True, "unassigned_count": len(unassigned), "unassigned_ids": unassigned}
+            failed_ids.append(str(eid))
+    return {
+        "success": len(failed_ids) == 0,
+        "unassigned_count": len(unassigned),
+        "unassigned_ids": unassigned,
+        "failed_ids": failed_ids,
+    }
 
 
 # ─────────────────────────────────────────────────────
@@ -1103,60 +1380,78 @@ async def list_diagnosticians(
 @router.get("/doctors")
 def list_doctors_public(q: str = "", limit: int = 200):
     """Public doctor list/search endpoint for autocompletion."""
-    return cfg_db.get_all_doctors(q=q, skip=0, limit=limit)
+    return cfg_db.get_all_doctors(q=q, skip=0, limit=max(0, min(limit, 500)))
 
 
 @router.get("/dashboard")
 def get_dashboard(date: str | None = None):
     """Get assigned exams per diagnostician for a given date (defaults to today)."""
+    if date:
+        norm_date = cfg_db._normalize_date_str(date)
+        if not norm_date:
+            raise HTTPException(status_code=422, detail="Μη έγκυρη μορφή ημερομηνίας (YYYY-MM-DD)")
+        date = norm_date
+
     dashboard_data = cfg_db.get_dashboard_data(target_date=date)
-    
+
     try:
-        from diagflow.services.assignment import _exam_details_cache
+        details_snapshot = get_exam_details_cache_snapshot()
         dict_entries = cfg_db.get_exam_dictionary()
         exam_dict_map = {str(e["code"]).strip(): e["name"] for e in dict_entries if e.get("code") and e.get("name")}
-
         local_assigns = cfg_db.get_all_local_assignments()
-        
+
+        # Batch fetch any missing exam names from mock_slis.db in ONE query (eliminates N+1 connection loop)
+        mock_names_map: dict[int, str] = {}
+        if settings.use_mock_slis_db:
+            missing_for_mock: list[int] = []
+            for d in dashboard_data:
+                for eid in d.get("assigned_exam_ids", []):
+                    eid_int = int(eid)
+                    c_info = details_snapshot.get(eid_int) or {}
+                    if not c_info.get("examname"):
+                        missing_for_mock.append(eid_int)
+            if missing_for_mock:
+                from diagflow.services.assignment import _get_mock_db
+                con = _get_mock_db()
+                try:
+                    for chunk in cfg_db._chunked(list(set(missing_for_mock))):
+                        placeholders = ",".join("?" * len(chunk))
+                        rows = con.execute(
+                            f"SELECT exammoreid, examname, examnumcode FROM slis_exams WHERE exammoreid IN ({placeholders})",
+                            tuple(chunk),
+                        ).fetchall()
+                        for r in rows:
+                            nm = (r["examname"] or "").strip() or (
+                                exam_dict_map.get(str(r["examnumcode"]).strip()) if r["examnumcode"] else ""
+                            )
+                            if nm:
+                                mock_names_map[int(r["exammoreid"])] = nm
+                finally:
+                    con.close()
+
         for d in dashboard_data:
             d["exam_names"] = {}
             for eid in d.get("assigned_exam_ids", []):
                 eid_int = int(eid)
-                eid_str = str(eid)
-                
-                # Check local assignment store first
                 loc = local_assigns.get(eid_int) or {}
-                name = loc.get("examname")
-                
-                # Check in-memory cache
-                if not name:
-                    c_info = _exam_details_cache.get(eid_int) or {}
-                    name = c_info.get("examname")
-                    if not name and c_info.get("examnumcode"):
-                        name = exam_dict_map.get(str(c_info["examnumcode"]).strip())
+                c_info = details_snapshot.get(eid_int) or {}
 
-                # Check mock slis DB if in mock mode
-                if not name and settings.use_mock_slis_db:
-                    try:
-                        from diagflow.services.assignment import _get_mock_db
-                        con = _get_mock_db()
-                        r = con.execute("SELECT examname, examnumcode FROM slis_exams WHERE exammoreid = ?", (eid_int,)).fetchone()
-                        if r:
-                            name = (r["examname"] or "").strip() or (exam_dict_map.get(str(r["examnumcode"]).strip()) if r["examnumcode"] else "")
-                        con.close()
-                    except Exception:
-                        pass
+                name = c_info.get("examname")
+                if not name and c_info.get("examnumcode"):
+                    name = exam_dict_map.get(str(c_info["examnumcode"]).strip())
+                if not name:
+                    name = mock_names_map.get(eid_int)
 
                 if not name or name.startswith("Εξέταση ") or "Εξέταση 20" in name:
-                    # Look up modality to give clean descriptive name
-                    mod = loc.get("modality") or "Εξέταση"
-                    name = f"{mod} Απεικόνιση"
+                    mod = normalize_modality(loc.get("modality") or c_info.get("modality") or "")
+                    name = f"{mod} Απεικόνιση" if mod else "Απεικόνιση"
 
                 d["exam_names"][name] = d["exam_names"].get(name, 0) + 1
     except Exception as e:
-        print(f"Failed to process dashboard exam names: {e}")
-        
+        logger.warning("dashboard_exam_names_enrichment_failed", error=str(e))
+
     return dashboard_data
+
 
 # ─────────────────────────────────────────────────────
 #  Παμμακάριστος
@@ -1170,7 +1465,7 @@ async def get_pamakristos_oncall(
 
 
 @router.get("/pamakristos/schedule")
-async def get_pamakristos_weekly_schedule():
+def get_pamakristos_weekly_schedule():
     weekly = cfg_db.get_pamakristos_weekly_schedule_db()
     day_names = {0: "Δευτέρα", 1: "Τρίτη", 2: "Τετάρτη", 3: "Πέμπτη", 4: "Παρασκευή", 5: "Σάββατο", 6: "Κυριακή"}
     return [
@@ -1187,19 +1482,26 @@ async def get_pamakristos_weekly_schedule():
 @router.post("/pamakristos/oncall")
 async def set_pamakristos_oncall(
     request: SetOncallRequest,
+    _=Depends(_require_admin),
     scheduler: PamakristosScheduler = Depends(get_pamakristos_scheduler),
 ):
-    target_date = date.fromisoformat(request.date)
-    return await scheduler.set_oncall_diagnostician(target_date, request.diagnostician_id)
+    try:
+        target_date = date.fromisoformat(request.date)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="Μη έγκυρη ημερομηνία (YYYY-MM-DD)") from exc
+    try:
+        return await scheduler.set_oncall_diagnostician(target_date, request.diagnostician_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 class WeeklyScheduleItem(BaseModel):
-    weekday: int
-    diagnostician_id: int
+    weekday: int = Field(..., ge=0, le=6)
+    diagnostician_id: int = Field(..., gt=0)
 
 
 @router.get("/admin/pamakristos/weekly-schedule")
-async def admin_get_weekly_schedule(_=Depends(_require_admin)):
+def admin_get_weekly_schedule(_=Depends(_require_admin)):
     weekly = cfg_db.get_pamakristos_weekly_schedule_db()
     day_names = {0: "Δευτέρα", 1: "Τρίτη", 2: "Τετάρτη", 3: "Πέμπτη", 4: "Παρασκευή", 5: "Σάββατο", 6: "Κυριακή"}
     return [
@@ -1214,11 +1516,16 @@ async def admin_get_weekly_schedule(_=Depends(_require_admin)):
 
 
 @router.post("/admin/pamakristos/weekly-schedule")
-async def admin_update_weekly_schedule(
+def admin_update_weekly_schedule(
     items: list[WeeklyScheduleItem],
     _=Depends(_require_admin),
 ):
-    cfg_db.update_pamakristos_weekly_schedule_db([item.model_dump() for item in items])
+    try:
+        cfg_db.update_pamakristos_weekly_schedule_db([item.model_dump() for item in items])
+    except Exception as exc:
+        if _is_integrity_error(exc):
+            raise HTTPException(status_code=400, detail="Μη έγκυρος διαγνώστης στο πρόγραμμα") from exc
+        raise
     return {"status": "ok", "updated": len(items)}
 
 
@@ -1226,38 +1533,51 @@ async def admin_update_weekly_schedule(
 #  Admin — Diagnosticians  (diagflow.db — persistent)
 # ─────────────────────────────────────────────────────
 
+def _resolve_mock_slis_db_path() -> Path:
+    p = Path(settings.mock_slis_db_path)
+    if p.is_absolute():
+        return p
+    base = Path(sys.executable).parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parent.parent.parent.parent
+    return base / p
+
+
 @router.get("/admin/exam-categories")
-async def admin_get_exam_categories(_=Depends(_require_admin)):
+def admin_get_exam_categories(_=Depends(_require_admin)):
     items = cfg_db.get_exam_dictionary()
     if not items and settings.use_mock_slis_db:
-        slis_db_path = Path(settings.mock_slis_db_path)
+        slis_db_path = _resolve_mock_slis_db_path()
         if slis_db_path.exists():
-            import sqlite3
-            with sqlite3.connect(slis_db_path) as con:
+            with sqlite3.connect(slis_db_path, timeout=10.0) as con:
                 con.row_factory = sqlite3.Row
                 rows = con.execute(
                     "SELECT DISTINCT examnumcode AS examnumcode, examname AS name, category FROM slis_exams "
                     "WHERE examnumcode IS NOT NULL AND examnumcode != ''"
                 ).fetchall()
-                items = [dict(r) for r in rows]
-                for item in items:
-                    cfg_db.upsert_exam_dictionary_entry(
-                        str(item["examnumcode"]), str(item.get("name") or ""), str(item.get("category") or "")
+                batch_entries = [
+                    (
+                        str(r["examnumcode"]).strip(),
+                        str(r["name"] or "").strip(),
+                        normalize_modality(r["category"]),
                     )
+                    for r in rows
+                ]
+                cfg_db.upsert_exam_dictionary_batch(batch_entries)
+            items = cfg_db.get_exam_dictionary()
     return items
 
+
 class DiagnosticianCreateRequest(BaseModel):
-    name: str
+    name: str = Field(..., min_length=1, max_length=200)
     active: bool = True
     can_ct: bool = True
     can_mri: bool = True
-    quota_monday: int = 15
-    quota_tuesday: int = 15
-    quota_wednesday: int = 15
-    quota_thursday: int = 15
-    quota_friday: int = 15
-    quota_saturday: int = 0
-    quota_sunday: int = 0
+    quota_monday: int = Field(default=15, ge=0)
+    quota_tuesday: int = Field(default=15, ge=0)
+    quota_wednesday: int = Field(default=15, ge=0)
+    quota_thursday: int = Field(default=15, ge=0)
+    quota_friday: int = Field(default=15, ge=0)
+    quota_saturday: int = Field(default=0, ge=0)
+    quota_sunday: int = Field(default=0, ge=0)
     preferred_lab_id: int | None = None
 
     @field_validator("active", "can_ct", "can_mri", mode="before")
@@ -1357,31 +1677,38 @@ class PartnershipUpdateRequest(BaseModel):
 
 
 @router.get("/admin/partnerships")
-async def admin_list_partnerships(_=Depends(_require_admin)):
+def admin_list_partnerships(_=Depends(_require_admin)):
     return cfg_db.get_all_partnerships()
 
 
 @router.post("/admin/partnerships")
-async def admin_create_partnership(
+def admin_create_partnership(
     req: PartnershipCreateRequest,
     _=Depends(_require_admin),
 ):
-    return cfg_db.create_partnership(
-        issuing_doctor_id=req.issuing_doctor_id,
-        issuing_doctor_name=req.issuing_doctor_name,
-        preferred_diagnostician_id=req.preferred_diagnostician_id,
-        priority=req.priority,
-        exclusive=req.exclusive,
-        is_active=req.is_active,
-    )
+    try:
+        return cfg_db.create_partnership(
+            issuing_doctor_id=req.issuing_doctor_id,
+            issuing_doctor_name=req.issuing_doctor_name,
+            preferred_diagnostician_id=req.preferred_diagnostician_id,
+            priority=req.priority,
+            exclusive=req.exclusive,
+            is_active=req.is_active,
+        )
+    except Exception as exc:
+        if _is_integrity_error(exc):
+            raise HTTPException(status_code=400, detail="Μη έγκυρος διαγνώστης ή διπλότυπη σύμπραξη") from exc
+        raise
 
 
 @router.patch("/admin/partnerships/{part_id}")
-async def admin_update_partnership(
+def admin_update_partnership(
     part_id: int,
     req: PartnershipUpdateRequest,
     _=Depends(_require_admin),
 ):
+    if req.exclusive is None and req.is_active is None:
+        raise HTTPException(status_code=400, detail="Δεν δόθηκαν πεδία προς ενημέρωση")
     record = cfg_db.update_partnership(
         part_id=part_id,
         exclusive=req.exclusive,
@@ -1393,7 +1720,7 @@ async def admin_update_partnership(
 
 
 @router.delete("/admin/partnerships/{part_id}")
-async def admin_delete_partnership(part_id: int, _=Depends(_require_admin)):
+def admin_delete_partnership(part_id: int, _=Depends(_require_admin)):
     if not cfg_db.delete_partnership(part_id):
         raise HTTPException(status_code=404, detail="Η σύμπραξη δεν βρέθηκε")
     return {"deleted": part_id}
@@ -1405,7 +1732,7 @@ async def admin_delete_partnership(part_id: int, _=Depends(_require_admin)):
 
 class DoctorCreateRequest(BaseModel):
     id: str = ""
-    name: str
+    name: str = Field(..., min_length=1, max_length=200)
 
 
 @router.get("/admin/doctors")
@@ -1415,18 +1742,17 @@ def admin_list_doctors(
     limit: int = 50,
     _=Depends(_require_admin)
 ):
-    return cfg_db.get_all_doctors(q=q, skip=skip, limit=limit)
+    return cfg_db.get_all_doctors(q=q, skip=max(0, skip), limit=max(0, min(limit, 500)))
 
 
 @router.post("/admin/doctors")
-async def admin_create_doctor(req: DoctorCreateRequest, _=Depends(_require_admin)):
-    import secrets
-    doc_id = req.id if req.id else f"DR-{secrets.token_hex(4).upper()}"
-    return cfg_db.upsert_doctor(doctor_id=doc_id, name=req.name)
+def admin_create_doctor(req: DoctorCreateRequest, _=Depends(_require_admin)):
+    doc_id = req.id.strip() if req.id and req.id.strip() else f"DR-{secrets.token_hex(4).upper()}"
+    return cfg_db.upsert_doctor(doctor_id=doc_id, name=req.name.strip())
 
 
 @router.delete("/admin/doctors/{doctor_id}")
-async def admin_delete_doctor(doctor_id: str, _=Depends(_require_admin)):
+def admin_delete_doctor(doctor_id: str, _=Depends(_require_admin)):
     if not cfg_db.delete_doctor(doctor_id):
         raise HTTPException(status_code=404, detail="Ο γιατρός δεν βρέθηκε")
     return {"deleted": doctor_id}
@@ -1437,40 +1763,56 @@ async def admin_delete_doctor(doctor_id: str, _=Depends(_require_admin)):
 # ─────────────────────────────────────────────────────
 
 class AvailabilitySetRequest(BaseModel):
-    diagnostician_id: int
+    diagnostician_id: int = Field(..., gt=0)
     date: str
-    status: str = "available"
+    status: Literal["available", "on_leave"] = "available"
     is_pamakristos_oncall: bool = False
     notes: str = ""
 
+    @field_validator("date")
+    @classmethod
+    def validate_avail_date(cls, v: str) -> str:
+        res = _validate_iso_date_str(v)
+        if not res:
+            raise ValueError("Μη έγκυρη ημερομηνία (YYYY-MM-DD)")
+        return res
+
 
 @router.get("/admin/availability")
-async def admin_list_availability(_=Depends(_require_admin)):
+def admin_list_availability(_=Depends(_require_admin)):
     return cfg_db.get_all_availability()
 
 
 @router.post("/admin/availability")
-async def admin_set_availability(
+def admin_set_availability(
     req: AvailabilitySetRequest,
     _=Depends(_require_admin),
 ):
-    return cfg_db.upsert_availability(
-        diagnostician_id=req.diagnostician_id,
-        date=req.date,
-        status=req.status,
-        is_pamakristos_oncall=req.is_pamakristos_oncall,
-        notes=req.notes,
-    )
+    try:
+        return cfg_db.upsert_availability(
+            diagnostician_id=req.diagnostician_id,
+            date=req.date,
+            status=req.status,
+            is_pamakristos_oncall=req.is_pamakristos_oncall,
+            notes=req.notes,
+        )
+    except Exception as exc:
+        if _is_integrity_error(exc):
+            raise HTTPException(status_code=400, detail="Μη έγκυρος διαγνώστης") from exc
+        raise
 
 
 @router.delete("/admin/availability/{diagnostician_id}/{date}")
-async def admin_delete_availability(
+def admin_delete_availability(
     diagnostician_id: int,
     date: str,
     _=Depends(_require_admin),
 ):
-    success = cfg_db.delete_availability(diagnostician_id, date)
-    return {"success": success, "diagnostician_id": diagnostician_id, "date": date}
+    norm_d = cfg_db._normalize_date_str(date)
+    if not norm_d:
+        raise HTTPException(status_code=422, detail="Μη έγκυρη ημερομηνία (YYYY-MM-DD)")
+    success = cfg_db.delete_availability(diagnostician_id, norm_d)
+    return {"success": success, "diagnostician_id": diagnostician_id, "date": norm_d}
 
 
 # ─────────────────────────────────────────────────────
@@ -1478,8 +1820,8 @@ async def admin_delete_availability(
 # ─────────────────────────────────────────────────────
 
 class SkillSetRequest(BaseModel):
-    diagnostician_id: int
-    exam_code: str
+    diagnostician_id: int = Field(..., gt=0)
+    exam_code: str = Field(..., min_length=1, max_length=50)
     is_preferred: bool = False
 
 
@@ -1487,12 +1829,8 @@ class SkillUpdateRequest(BaseModel):
     is_preferred: bool = False
 
 
-class SkillDeleteRequest(BaseModel):
-    skill_id: int
-
-
 @router.get("/admin/skills")
-async def admin_list_skills(
+def admin_list_skills(
     diagnostician_id: int | None = None,
     _=Depends(_require_admin),
 ):
@@ -1500,7 +1838,7 @@ async def admin_list_skills(
 
 
 @router.post("/admin/skills")
-async def admin_set_skill(req: SkillSetRequest, _=Depends(_require_admin)):
+def admin_set_skill(req: SkillSetRequest, _=Depends(_require_admin)):
     diag_id = req.diagnostician_id
     code = req.exam_code.strip()
 
@@ -1523,7 +1861,8 @@ async def admin_set_skill(req: SkillSetRequest, _=Depends(_require_admin)):
     dict_entries = cfg_db.get_exam_dictionary()
     matched = next((e for e in dict_entries if str(e.get("examnumcode") or e.get("code") or "").strip() == str(code).strip()), None)
     if matched:
-        category = (matched.get("category") or "").upper().strip()
+        raw_cat = (matched.get("category") or "").strip()
+        category = normalize_modality(raw_cat) if raw_cat else ""
         name = matched.get("name") or ""
     else:
         name = ""
@@ -1534,7 +1873,11 @@ async def admin_set_skill(req: SkillSetRequest, _=Depends(_require_admin)):
             category = "CT"
         elif "MRA" in name_upper or "ΑΓΓΕΙΟ" in name_upper or code.startswith("228"):
             category = "MRA"
-        elif "MRI" in name_upper or "ΜΑΓΝΗΤ" in name_upper or code.startswith("22"):
+        elif "MRI" in name_upper or "ΜΑΓΝΗΤ" in name_upper:
+            category = "MRI"
+        elif code in ("22140", "22141"):
+            category = "CT"
+        elif code.startswith("22"):
             category = "MRI"
         else:
             category = "CT" if code.startswith("21") else "MRI"
@@ -1560,7 +1903,7 @@ async def admin_set_skill(req: SkillSetRequest, _=Depends(_require_admin)):
 
 
 @router.put("/admin/skills/{skill_id}")
-async def admin_update_skill(skill_id: int, req: SkillUpdateRequest, _=Depends(_require_admin)):
+def admin_update_skill(skill_id: int, req: SkillUpdateRequest, _=Depends(_require_admin)):
     if not cfg_db.update_skill_preference(skill_id, req.is_preferred):
         raise HTTPException(status_code=404, detail="Η δεξιότητα δεν βρέθηκε")
     DiagnosticianService.clear_cache()
@@ -1568,12 +1911,11 @@ async def admin_update_skill(skill_id: int, req: SkillUpdateRequest, _=Depends(_
 
 
 @router.delete("/admin/skills/{skill_id}")
-async def admin_delete_skill(skill_id: int, _=Depends(_require_admin)):
+def admin_delete_skill(skill_id: int, _=Depends(_require_admin)):
     if not cfg_db.delete_skill(skill_id):
         raise HTTPException(status_code=404, detail="Η δεξιότητα δεν βρέθηκε")
     DiagnosticianService.clear_cache()
     return {"deleted": skill_id}
-
 
 
 # ─────────────────────────────────────────────────────
@@ -1581,55 +1923,48 @@ async def admin_delete_skill(skill_id: int, _=Depends(_require_admin)):
 # ─────────────────────────────────────────────────────
 
 class OncallSetRequest(BaseModel):
-    diagnostician_id: int
+    diagnostician_id: int = Field(..., gt=0)
     date: str
+
+    @field_validator("date")
+    @classmethod
+    def validate_oncall_date(cls, v: str) -> str:
+        res = _validate_iso_date_str(v)
+        if not res:
+            raise ValueError("Μη έγκυρη ημερομηνία (YYYY-MM-DD)")
+        return res
 
 
 @router.get("/admin/oncall")
-async def admin_get_oncall(_=Depends(_require_admin)):
+def admin_get_oncall(_=Depends(_require_admin)):
     today = str(date.today())
     record = cfg_db.get_oncall_diagnostician(today)
     if record:
         return record
-    # Fallback: check scheduler
     return {"diagnostician_id": None, "diagnostician_name": None, "date": today}
 
 
 @router.post("/admin/oncall")
-async def admin_set_oncall(
+def admin_set_oncall(
     req: OncallSetRequest,
     _=Depends(_require_admin),
     scheduler: PamakristosScheduler = Depends(get_pamakristos_scheduler),
 ):
-    # Clear any existing on-call for the date first
-    existing = cfg_db.get_all_availability()
-    for a in existing:
-        if a["date"] == req.date and a["is_pamakristos_oncall"]:
-            cfg_db.upsert_availability(
-                diagnostician_id=a["diagnostician_id"],
-                date=req.date,
-                status=a["status"],
-                is_pamakristos_oncall=False,
-                notes=a["notes"] or "",
-            )
-
-    record = cfg_db.upsert_availability(
-        diagnostician_id=req.diagnostician_id,
-        date=req.date,
-        status="available",
-        is_pamakristos_oncall=True,
-    )
+    diag = cfg_db.get_diagnostician(req.diagnostician_id)
+    if not diag:
+        raise HTTPException(status_code=404, detail="Ο διαγνώστης δεν βρέθηκε")
+    record = cfg_db.set_pamakristos_oncall_for_date(req.date, req.diagnostician_id)
     scheduler.set_manual_override_from_admin(record)
     return record
 
 
 @router.get("/admin/pamakristos/overrides")
-async def admin_get_pamakristos_overrides(_=Depends(_require_admin)):
+def admin_get_pamakristos_overrides(_=Depends(_require_admin)):
     return cfg_db.get_pamakristos_manual_overrides()
 
 
 @router.delete("/admin/pamakristos/overrides/{avail_id}")
-async def admin_delete_pamakristos_override(avail_id: int, _=Depends(_require_admin)):
+def admin_delete_pamakristos_override(avail_id: int, _=Depends(_require_admin)):
     success = cfg_db.delete_pamakristos_manual_override(avail_id)
     if not success:
         raise HTTPException(status_code=404, detail="Override not found")
@@ -1648,18 +1983,14 @@ class PushSelectedRequest(BaseModel):
 def slis_pull():
     """
     Pull fresh exam data from Slis (or refresh the mock DB).
-    Runs automatically on startup; can also be triggered via the
-    'Ανανέωση' button on the frontend.
+    Atomic cache swap inside _fetch_slis_period_rows prevents empty-cache windows during refresh.
     """
     from diagflow.services.slis_sync import pull_from_slis
-    from diagflow.services.assignment import _exam_details_cache, _slis_assigned_cache, invalidate_slis_period_cache
-    # Reset the session suggestion and exam caches
-    _session_suggestion_counts.clear()
-    _session_suggestions_by_exam.clear()
-    _suggestion_cache.clear()
+    from diagflow.services.assignment import invalidate_slis_period_cache
+    with _route_state_lock:
+        _session_suggestions_by_exam.clear()
+        _suggestion_cache.clear()
     if not settings.use_mock_slis_db:
-        _exam_details_cache.clear()
-        _slis_assigned_cache.clear()
         invalidate_slis_period_cache()
     result = pull_from_slis()
     return {
@@ -1679,75 +2010,59 @@ def slis_status():
 
 @router.post("/slis/push-all")
 def slis_push_all():
-    """
-    Push ALL assigned-but-not-yet-synced exams to Slis in one operation.
-    After a successful push the exam's slis_synced_at is set and it will
-    be removed from the Assigned tab.
-    """
+    """Push ALL assigned-but-not-yet-synced exams to Slis in one operation."""
     from diagflow.services.slis_sync import push_all_to_slis
-    result = push_all_to_slis()
-    return result
+    return push_all_to_slis()
 
 
 @router.post("/slis/push-selected")
 def slis_push_selected(req: PushSelectedRequest):
-    """
-    Push a specific list of exams (by exammoreid) to Slis.
-    Used when the user selects individual rows in the Assigned tab.
-    """
+    """Push a specific list of exams (by exammoreid) to Slis."""
     from diagflow.services.slis_sync import push_selected_to_slis
-    result = push_selected_to_slis(req.exammoreid_list)
-    return result
+    return push_selected_to_slis(req.exammoreid_list)
 
 
 @router.post("/slis/search")
 def slis_search_exams(req: SlisSearchRequest):
-    """
-    Search exams directly in Slis (production MSSQL or mock DB) by filters.
-    Defaults to last 7 days if date range is empty.
-    """
+    """Search exams directly in Slis (production MSSQL or mock DB) by filters."""
     from diagflow.services.slis_sync import search_slis_exams
-    return search_slis_exams(
-        start_date=req.start_date,
-        end_date=req.end_date,
-        extracode=req.extracode,
-        patient_query=req.patient_query,
-        doctor_query=req.doctor_query,
-        diagnostician_query=req.diagnostician_query,
-    )
+    try:
+        return search_slis_exams(
+            start_date=req.start_date,
+            end_date=req.end_date,
+            extracode=req.extracode,
+            patient_query=req.patient_query,
+            doctor_query=req.doctor_query,
+            diagnostician_query=req.diagnostician_query,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.post("/slis/reassign")
 def slis_reassign_exam(req: SlisReassignRequest):
-    """
-    Re-assign an exam to a new diagnostician and immediately update Slis.
-    Overrides any existing Slis assignment without optimistic locking conflicts.
-    """
+    """Re-assign an exam to a new diagnostician and immediately update Slis."""
     from diagflow.services.slis_sync import push_exam_to_slis
-    result = push_exam_to_slis(
+    return push_exam_to_slis(
         exammoreid=req.exammoreid,
         diagnostician_id=req.diagnostician_id,
         diagnostician_name=req.diagnostician_name,
         force=req.force,
     )
-    return result
-
 
 
 @router.post("/admin/sync-diagnosticians")
-def admin_sync_diagnosticians(_=Depends(_require_admin)):
+def admin_sync_diagnosticians_legacy(_=Depends(_require_admin)):
     """Manual trigger to pull diagnosticians from Slis DB into diagflow.db."""
     from diagflow.services.slis_sync import sync_diagnosticians
-    result = sync_diagnosticians()
-    return result
+    return sync_diagnosticians()
 
 
 @router.post("/admin/sync-doctors")
-def admin_sync_doctors(_=Depends(_require_admin)):
+def admin_sync_doctors_legacy(_=Depends(_require_admin)):
     """Manual trigger to pull doctors from Slis DB into diagflow.db."""
     from diagflow.services.slis_sync import sync_doctors
-    result = sync_doctors()
-    return result
+    return sync_doctors()
 
 # ─────────────────────────────────────────────────────
 #  Admin Advanced Options
@@ -1760,85 +2075,100 @@ from diagflow.api.schemas import (
 )
 
 @router.get('/admin/advanced/exam-routing-rules', response_model=list[ExamRoutingRuleResponse])
-async def get_exam_routing_rules(_=Depends(_require_admin)):
+def get_exam_routing_rules(_=Depends(_require_admin)):
     return cfg_db.get_all_exam_routing_rules()
 
 @router.post('/admin/advanced/exam-routing-rules', response_model=ExamRoutingRuleResponse)
-async def add_exam_routing_rule(req: ExamRoutingRuleCreate, _=Depends(_require_admin)):
-    return cfg_db.create_exam_routing_rule(
-        lab_id=req.lab_id,
-        issuing_doctor_id=req.issuing_doctor_id,
-        issuing_doctor_name=req.issuing_doctor_name,
-        is_pamakristos=req.is_pamakristos,
-        exam_codes=req.exam_codes,
-        diagnostician_id=req.diagnostician_id,
-        description=req.description,
-        is_active=req.is_active
-    )
+def add_exam_routing_rule(req: ExamRoutingRuleCreate, _=Depends(_require_admin)):
+    try:
+        return cfg_db.create_exam_routing_rule(
+            lab_id=req.lab_id,
+            issuing_doctor_id=req.issuing_doctor_id,
+            issuing_doctor_name=req.issuing_doctor_name,
+            is_pamakristos=req.is_pamakristos,
+            exam_codes=req.exam_codes,
+            diagnostician_id=req.diagnostician_id,
+            description=req.description,
+            is_active=req.is_active
+        )
+    except Exception as exc:
+        if _is_integrity_error(exc):
+            raise HTTPException(status_code=400, detail="Μη έγκυρος διαγνώστης στον κανόνα") from exc
+        raise
 
 @router.put('/admin/advanced/exam-routing-rules/{rule_id}', response_model=ExamRoutingRuleResponse)
-async def edit_exam_routing_rule(rule_id: int, req: ExamRoutingRuleUpdate, _=Depends(_require_admin)):
+def edit_exam_routing_rule(rule_id: int, req: ExamRoutingRuleUpdate, _=Depends(_require_admin)):
     result = cfg_db.update_exam_routing_rule(rule_id, req.model_dump(exclude_unset=True))
     if not result:
         raise HTTPException(status_code=404, detail='Rule not found')
     return result
 
 @router.delete('/admin/advanced/exam-routing-rules/{rule_id}')
-async def remove_exam_routing_rule(rule_id: int, _=Depends(_require_admin)):
+def remove_exam_routing_rule(rule_id: int, _=Depends(_require_admin)):
     success = cfg_db.delete_exam_routing_rule(rule_id)
     if not success:
         raise HTTPException(status_code=404, detail='Rule not found')
     return {'success': True}
 
 @router.get('/admin/advanced/exclusive-lab-rules', response_model=list[ExclusiveLabRuleResponse])
-async def get_exclusive_lab_rules(_=Depends(_require_admin)):
+def get_exclusive_lab_rules(_=Depends(_require_admin)):
     return cfg_db.get_all_exclusive_lab_rules()
 
 @router.post('/admin/advanced/exclusive-lab-rules', response_model=ExclusiveLabRuleResponse)
-async def add_exclusive_lab_rule(req: ExclusiveLabRuleCreate, _=Depends(_require_admin)):
-    return cfg_db.create_exclusive_lab_rule(
-        diagnostician_id=req.diagnostician_id,
-        lab_id=req.lab_id,
-        lab_name=req.lab_name or '',
-        is_active=req.is_active
-    )
+def add_exclusive_lab_rule(req: ExclusiveLabRuleCreate, _=Depends(_require_admin)):
+    try:
+        return cfg_db.create_exclusive_lab_rule(
+            diagnostician_id=req.diagnostician_id,
+            lab_id=req.lab_id,
+            lab_name=req.lab_name or '',
+            is_active=req.is_active
+        )
+    except Exception as exc:
+        if _is_integrity_error(exc):
+            raise HTTPException(status_code=400, detail="Μη έγκυρος διαγνώστης στον κανόνα") from exc
+        raise
 
 @router.put('/admin/advanced/exclusive-lab-rules/{rule_id}', response_model=ExclusiveLabRuleResponse)
-async def edit_exclusive_lab_rule(rule_id: int, req: ExclusiveLabRuleUpdate, _=Depends(_require_admin)):
+def edit_exclusive_lab_rule(rule_id: int, req: ExclusiveLabRuleUpdate, _=Depends(_require_admin)):
     result = cfg_db.update_exclusive_lab_rule(rule_id, req.model_dump(exclude_unset=True))
     if not result:
         raise HTTPException(status_code=404, detail='Rule not found')
     return result
 
 @router.delete('/admin/advanced/exclusive-lab-rules/{rule_id}')
-async def remove_exclusive_lab_rule(rule_id: int, _=Depends(_require_admin)):
+def remove_exclusive_lab_rule(rule_id: int, _=Depends(_require_admin)):
     success = cfg_db.delete_exclusive_lab_rule(rule_id)
     if not success:
         raise HTTPException(status_code=404, detail='Rule not found')
     return {'success': True}
 
 @router.get('/admin/advanced/modality-quotas', response_model=list[ModalityQuotaResponse])
-async def get_modality_quotas(_=Depends(_require_admin)):
+def get_modality_quotas(_=Depends(_require_admin)):
     return cfg_db.get_all_modality_quotas()
 
 @router.post('/admin/advanced/modality-quotas', response_model=ModalityQuotaResponse)
-async def add_modality_quota(req: ModalityQuotaCreate, _=Depends(_require_admin)):
-    return cfg_db.create_modality_quota(
-        diagnostician_id=req.diagnostician_id,
-        modality=req.modality,
-        max_count=req.max_count,
-        is_active=req.is_active
-    )
+def add_modality_quota(req: ModalityQuotaCreate, _=Depends(_require_admin)):
+    try:
+        return cfg_db.create_modality_quota(
+            diagnostician_id=req.diagnostician_id,
+            modality=req.modality,
+            max_count=req.max_count,
+            is_active=req.is_active
+        )
+    except Exception as exc:
+        if _is_integrity_error(exc):
+            raise HTTPException(status_code=400, detail="Μη έγκυρος διαγνώστης στο όριο") from exc
+        raise
 
 @router.put('/admin/advanced/modality-quotas/{rule_id}', response_model=ModalityQuotaResponse)
-async def edit_modality_quota(rule_id: int, req: ModalityQuotaUpdate, _=Depends(_require_admin)):
+def edit_modality_quota(rule_id: int, req: ModalityQuotaUpdate, _=Depends(_require_admin)):
     result = cfg_db.update_modality_quota(rule_id, req.model_dump(exclude_unset=True))
     if not result:
         raise HTTPException(status_code=404, detail='Rule not found')
     return result
 
 @router.delete('/admin/advanced/modality-quotas/{rule_id}')
-async def remove_modality_quota(rule_id: int, _=Depends(_require_admin)):
+def remove_modality_quota(rule_id: int, _=Depends(_require_admin)):
     success = cfg_db.delete_modality_quota(rule_id)
     if not success:
         raise HTTPException(status_code=404, detail='Rule not found')
@@ -1846,33 +2176,51 @@ async def remove_modality_quota(rule_id: int, _=Depends(_require_admin)):
 
 # ── Scoring System Weights ──────────────────────────────────────────────────────────
 
-from fastapi import Body
-
 @router.get("/assignments/weights")
 def get_weights():
     """Retrieve dynamic scoring weights from the DB."""
-    from diagflow.db.diagflow_db import get_system_weights
-    return get_system_weights()
+    return cfg_db.get_system_weights()
 
 @router.put("/assignments/weights")
-def update_weights(weights: dict = Body(...)):
-    """Update dynamic scoring weights."""
-    from diagflow.db.diagflow_db import update_system_weights
-    import math
-    
-    # Calculate sum of maximum points from each category
+def update_weights(weights: dict[str, Any] = Body(...), _=Depends(_require_admin)):
+    """Update whitelisted dynamic scoring weights (admin-protected with strict validation)."""
+    unknown_keys = set(weights.keys()) - cfg_db._ALLOWED_WEIGHT_KEYS
+    if unknown_keys:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Μη επιτρεπτά κλειδιά βαρών: {', '.join(sorted(unknown_keys))}",
+        )
+
+    parsed: dict[str, float] = {}
+    for k, raw_v in weights.items():
+        try:
+            v = float(raw_v)
+        except (ValueError, TypeError) as exc:
+            raise HTTPException(status_code=422, detail=f"Μη έγκυρη αριθμητική τιμή για {k}") from exc
+        if math.isnan(v) or math.isinf(v) or v < 0.0 or v > 1.0:
+            raise HTTPException(status_code=400, detail=f"Η τιμή του {k} πρέπει να είναι μεταξύ 0% και 100%")
+        parsed[k] = v
+
+    # Merge with existing weights to validate sum & sub-tier ordering
+    merged = cfg_db.get_system_weights()
+    merged.update(parsed)
+
+    if merged["pts_skills_pref"] < merged["pts_skills_neut"] or merged["pts_skills_neut"] < merged["pts_skills_none"]:
+        raise HTTPException(status_code=400, detail="Τα επίπεδα Εξειδίκευσης πρέπει να τηρούν: Προτίμηση >= Ουδέτερο >= Χωρίς δεδομένα")
+    if merged["pts_lab_pref"] < merged["pts_lab_neut"] or merged["pts_lab_neut"] < merged["pts_lab_other"]:
+        raise HTTPException(status_code=400, detail="Τα επίπεδα Εργαστηρίου πρέπει να τηρούν: Προτίμηση >= Ουδέτερο >= Άλλο")
+
     max_pts = (
-        float(weights.get("pts_partnership", 0)) +
-        float(weights.get("pts_history", 0)) +
-        float(weights.get("pts_skills_pref", 0)) +
-        float(weights.get("pts_lab_pref", 0)) +
-        float(weights.get("pts_capacity", 0))
+        merged["pts_partnership"]
+        + merged["pts_history"]
+        + merged["pts_skills_pref"]
+        + merged["pts_lab_pref"]
+        + merged["pts_capacity"]
     )
-    
     if not math.isclose(max_pts, 1.0, abs_tol=0.01):
         raise HTTPException(status_code=400, detail=f"Το άθροισμα των μέγιστων πόντων πρέπει να είναι ακριβώς 100%. (Βρέθηκε {max_pts*100:.1f}%)")
-        
-    updated = update_system_weights(weights)
+
+    updated = cfg_db.update_system_weights(parsed)
     return {"message": "Τα βάρη αποθηκεύτηκαν επιτυχώς", "weights": updated}
 
 
@@ -1882,12 +2230,12 @@ class CommentRuleToggleRequest(BaseModel):
     enabled: bool
 
 @router.get("/admin/advanced/comment-rule")
-async def get_comment_rule_status():
+def get_comment_rule_status():
     """Get the current enabled state of the comment-based auto-assign rule."""
     return {"enabled": cfg_db.get_comment_auto_assign_enabled()}
 
 @router.post("/admin/advanced/comment-rule")
-async def toggle_comment_rule(req: CommentRuleToggleRequest, _=Depends(_require_admin)):
+def toggle_comment_rule(req: CommentRuleToggleRequest, _=Depends(_require_admin)):
     """Enable or disable the comment-based auto-assign rule."""
     new_state = cfg_db.set_comment_auto_assign_enabled(req.enabled)
     return {

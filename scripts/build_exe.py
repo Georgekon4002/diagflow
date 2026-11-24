@@ -51,6 +51,7 @@ def build():
         "--clean",
         "--onefile",
         "--noconsole",               # No terminal window — desktop app feel
+        "--noupx",                   # Avoid Windows Defender false positives
         "--name", "DiagFlow",
         "--icon", str(ROOT / "media" / "logos" / "logo.ico"),  # Use .ico format for Windows EXE
         # Include frontend directory and db templates as bundled data
@@ -111,7 +112,7 @@ def build():
         "--hidden-import", "clr_loader",
         "--hidden-import", "ortools",
         "--hidden-import", "ortools.sat.python.cp_model",
-        # Exclude unused heavy libraries in .venv
+        # Exclude unused heavy libraries in .venv (keep numpy for OR-Tools CP-SAT!)
         "--exclude-module", "torch",
         "--exclude-module", "torchvision",
         "--exclude-module", "scipy",
@@ -119,7 +120,6 @@ def build():
         "--exclude-module", "easyocr",
         "--exclude-module", "cv2",
         "--exclude-module", "pandas",
-        "--exclude-module", "numpy",
         "--exclude-module", "pytest",
         "--exclude-module", "sympy",
         "--exclude-module", "matplotlib",
@@ -147,13 +147,11 @@ def build():
         if env_example.exists():
             print("  Copying .env.example to dist...")
             shutil.copy(env_example, ROOT / "dist" / ".env.example")
-            if not (ROOT / "dist" / ".env").exists():
-                shutil.copy(env_example, ROOT / "dist" / ".env")
 
         print("\n" + "=" * 60)
         print("  BUILD SUCCESSFUL!")
         print(f"  EXE location: {ROOT / 'dist' / 'DiagFlow.exe'}")
-        print("  Standalone distribution contains only DiagFlow.exe and .env")
+        print("  Copy dist/.env.example to dist/.env and configure credentials.")
         print("=" * 60)
     else:
         print("\n" + "=" * 60)

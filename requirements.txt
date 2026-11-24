@@ -16,9 +16,9 @@ pydantic-settings>=2.3.0
 # Constraint solver
 ortools>=9.10.4067
 
-# Environment
+# Environment & HTTP
 python-dotenv>=1.0.1
-
+httpx>=0.27.0
 
 # Structured logging
 structlog>=24.2.0
@@ -26,6 +26,8 @@ structlog>=24.2.0
 # Security & Password Hashing
 bcrypt>=4.0.0
 
-# --- Dev dependencies (install with: pip install -r requirements.txt -r requirements-dev.txt) ---
-# See pyproject.toml [project.optional-dependencies] for dev & audit extras
+# Background Scheduling & Desktop Launcher
 apscheduler>=3.10.4
+pywebview>=5.0.0
+
+# --- Dev dependencies: pip install -e ".[dev]" (see pyproject.toml) ---

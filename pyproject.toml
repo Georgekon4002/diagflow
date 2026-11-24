@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "diagflow"
-version = "0.1.0"
+version = "2.4.0"
 description = "Automated CT/MRI report assignment engine for Kosmoiatriki"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -25,6 +25,8 @@ dependencies = [
     "httpx>=0.27.0",
     "structlog>=24.2.0",
     "bcrypt>=4.0.0",
+    "apscheduler>=3.10.4",
+    "pywebview>=5.0.0",
 ]
 
 [project.optional-dependencies]

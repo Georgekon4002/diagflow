@@ -33,6 +33,7 @@ alembic/versions/*.py
 !alembic/versions/__init__.py
 
 ## SQLite Databases & Raw Production Data (Ignore binary databases and raw SQL dumps)
+diagflow.db
 db/*.db
 *.sqlite
 *.sqlite3
@@ -61,10 +62,6 @@ scratch*
 docs/
 db/server.txt
 niki/
-
-## Agent Local Instructions & Handoff
-GEMINI.md
-HANDOFF.md
 
 ## Agent Local Instructions & Handoff
 GEMINI.md

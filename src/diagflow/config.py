@@ -49,13 +49,12 @@ class Settings(BaseSettings):
 
 
     # ── Rule Engine Weights ──
-    # These control the relative importance of each scoring factor.
-    # Rule hierarchy: availability(hard) → capacity(hard) → skills(hard) → history → partnership → lab → capacity(weight)
+    # Aligned with diagflow_db.get_system_weights() defaults.
     # Sum ≈ 1.0 for interpretability; scores are clamped to [0, 1] internally.
-    weight_partnership: float = Field(default=0.35, ge=0.0, le=1.0)
-    weight_patient_history: float = Field(default=0.20, ge=0.0, le=1.0)
+    weight_partnership: float = Field(default=0.20, ge=0.0, le=1.0)
+    weight_patient_history: float = Field(default=0.35, ge=0.0, le=1.0)
     weight_skills: float = Field(default=0.20, ge=0.0, le=1.0)  # Weighted bonus (hard filter handled in filters.py)
-    weight_lab: float = Field(default=0.15, ge=0.0, le=1.0)  # Lab preference — now weighted, not hard filter
+    weight_lab: float = Field(default=0.15, ge=0.0, le=1.0)  # Lab preference — weighted, not hard filter
     weight_capacity: float = Field(default=0.10, ge=0.0, le=1.0)
 
     # ── Load Balancing ──
@@ -64,11 +63,26 @@ class Settings(BaseSettings):
     # Default: 0.05 = 5 percentage points. Set to 0.0 to disable (strict score ordering).
     score_tie_tolerance: float = Field(default=0.05, ge=0.0, le=1.0)
 
+    # ── Security / CORS ──
+    cors_origins: str = Field(
+        default="http://localhost:8000,http://127.0.0.1:8000,http://localhost:8080,http://127.0.0.1:8080",
+        description="Comma-separated list of allowed CORS origins.",
+    )
+    admin_session_ttl_minutes: int = Field(
+        default=480,
+        ge=5,
+        description="Admin session token lifetime in minutes (default 8 hours).",
+    )
+    sql_echo: bool = Field(
+        default=False,
+        description="Enable verbose SQLAlchemy SQL echo logging (keep False in production).",
+    )
+
     # ── Application ──
-    app_host: str = Field(default="0.0.0.0")
-    app_port: int = Field(default=8000)
+    app_host: str = Field(default="127.0.0.1")
+    app_port: int = Field(default=8080)
     app_env: str = Field(default="development")
-    log_level: str = Field(default="DEBUG")
+    log_level: str = Field(default="INFO")
 
     model_config = {
         "env_file": str(_env_file) if _env_file.exists() else ".env",

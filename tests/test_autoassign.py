@@ -231,8 +231,9 @@ class TestPamakristosAndExclusiveCases:
                 "preferred_diagnostician_name": "Exclusive Dr"
             }
         }
-        
-        with patch("diagflow.db.diagflow_db.upsert_local_assignment") as mock_upsert:
+
+        with patch("diagflow.db.diagflow_db.get_all_diagnosticians", return_value=[{"id": 42, "name": "Exclusive Dr", "active": True}]), \
+             patch("diagflow.db.diagflow_db.upsert_local_assignment") as mock_upsert:
             exams = _get_pending_exams_from_db()
             assert len(exams) == 0
             assert mock_upsert.called
